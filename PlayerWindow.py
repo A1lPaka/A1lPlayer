@@ -177,6 +177,20 @@ class PlayerWindow(QWidget):
     def set_audio_track(self, track_id: int) -> bool:
         return self.engine.set_audio_track(track_id)
 
+    def get_audio_channel_modes(self) -> list[tuple[str, str]]:
+        return [
+            ("stereo", "Stereo"),
+            ("left", "Left"),
+            ("right", "Right"),
+            ("reverse_stereo", "Reverse Stereo"),
+        ]
+
+    def get_current_audio_channel(self) -> str:
+        return self.engine.get_current_audio_mode()
+
+    def set_audio_channel(self, channel: str) -> bool:
+        return self.engine.set_audio_mode(channel)
+
     def get_subtitle_tracks(self) -> list[tuple[int, str]]:
         raw_tracks = self.engine.get_subtitle_tracks()
         return [

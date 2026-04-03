@@ -93,6 +93,15 @@ class MainWindow(QMainWindow):
     def set_audio_track(self, track_id: int) -> bool:
         return self.player_controls.set_audio_track(track_id)
 
+    def get_audio_channel_modes(self) -> list[tuple[str, str]]:
+        return self.player_controls.get_audio_channel_modes()
+
+    def get_current_audio_channel(self) -> str:
+        return self.player_controls.get_current_audio_channel()
+
+    def set_audio_channel(self, channel: str) -> bool:
+        return self.player_controls.set_audio_channel(channel)
+
     def get_subtitle_tracks(self) -> list[tuple[int, str]]:
         return self.player_controls.get_subtitle_tracks()
 

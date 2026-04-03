@@ -1,3 +1,4 @@
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QMainWindow
 from ThemeColor import ThemeColor
 from utils import Metrics
@@ -45,7 +46,8 @@ class MenuBarConfigurator:
 
         self.audio_device_menu = audio_menu.addMenu("Audio Device")
 
-        self.stereo_mode_menu = audio_menu.addMenu("Stereo Mode") # stereo, mono, left, right, reverse stereo
+        self.stereo_mode_menu = audio_menu.addMenu("Stereo Mode")
+        self._init_stereo_mode_menu()
 
         # Subtitles
         subtitles_menu = self.menu_bar.addMenu("Subtitles")
@@ -179,6 +181,23 @@ class MenuBarConfigurator:
                 lambda checked=False, tid=track_id: self._on_select_subtitle_track(tid)
             )
 
+    def _init_stereo_mode_menu(self):
+        self.stereo_mode_group = QActionGroup(self.stereo_mode_menu)
+        self.stereo_mode_group.setExclusive(True)
+        self.stereo_mode_actions: dict[str, object] = {}
+
+        current_channel = self.main_window.get_current_audio_channel()
+
+        for channel_id, title in self.main_window.get_audio_channel_modes():
+            action = self.stereo_mode_menu.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(channel_id == current_channel)
+            action.triggered.connect(
+                lambda checked=False, cid=channel_id: self._on_select_audio_channel(cid)
+            )
+            self.stereo_mode_group.addAction(action)
+            self.stereo_mode_actions[channel_id] = action
+
     def _on_open_recent_item(self, path: str):
         self.main_window.open_recent_media(path)
 
@@ -187,6 +206,12 @@ class MenuBarConfigurator:
 
     def _on_select_subtitle_track(self, track_id: int):
         self.main_window.set_subtitle_track(track_id)
+
+    def _on_select_audio_channel(self, channel: str):
+        if self.main_window.set_audio_channel(channel):
+            action = self.stereo_mode_actions.get(channel)
+            if action is not None:
+                action.setChecked(True)
 
     def _on_clear_recent(self):
         self.main_window.clear_recent_media()

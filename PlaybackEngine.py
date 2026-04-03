@@ -11,26 +11,59 @@ class PlaybackEngine(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self.instance = vlc.Instance()
-        self.player = self.instance.media_player_new()
-
         self._desired_volume = 100
         self._desired_muted = False
         self._last_volume_before_mute = self._desired_volume
+        self._desired_audio_mode = "stereo"
+        self._current_media_path: str | None = None
+        self._bound_win_id: int | None = None
+        self._audio_modes = {
+            "stereo": {
+                "stereo_mode": 1,
+                "channel": int(vlc.AudioOutputChannel.Stereo.value),
+            },
+            "reverse_stereo": {
+                "stereo_mode": 2,
+                "channel": int(vlc.AudioOutputChannel.RStereo.value),
+            },
+            "left": {
+                "stereo_mode": 3,
+                "channel": int(vlc.AudioOutputChannel.Left.value),
+            },
+            "right": {
+                "stereo_mode": 4,
+                "channel": int(vlc.AudioOutputChannel.Right.value),
+            },
+        }
+        self._create_backend()
+
+        self.playing.connect(self.sync_audio_to_player)
+
+    def _create_backend(self):
+        self.instance = vlc.Instance(
+            f"--stereo-mode={self._audio_modes[self._desired_audio_mode]['stereo_mode']}"
+        )
+        self.player = self.instance.media_player_new()
 
         event_manager = self.player.event_manager()
         event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_vlc_playing_event)
         event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
 
-        self.playing.connect(self.sync_audio_to_player)
+        if self._bound_win_id is not None:
+            self.bind_video_output(self._bound_win_id)
+
+    def _get_runtime_audio_channel(self, mode: str) -> int | None:
+        return self._audio_modes[mode]["channel"]
 
     def bind_video_output(self, win_id: int):
+        self._bound_win_id = win_id
         if os.name == "nt":
             self.player.set_hwnd(win_id)
         elif os.name == "posix":
             self.player.set_xwindow(win_id)
 
     def load_media(self, media_path: str):
+        self._current_media_path = media_path
         media = self.instance.media_new(media_path)
         self.player.set_media(media)
 
@@ -76,6 +109,25 @@ class PlaybackEngine(QObject):
     def set_audio_track(self, track_id: int) -> bool:
         return self.player.audio_set_track(int(track_id)) == 0
 
+    def get_current_audio_mode(self) -> str:
+        return self._desired_audio_mode
+
+    def set_audio_mode(self, mode: str) -> bool:
+        mode = str(mode)
+        if mode not in self._audio_modes:
+            return False
+
+        if mode == self._desired_audio_mode:
+            return True
+
+        self._desired_audio_mode = mode
+
+        runtime_channel = self._get_runtime_audio_channel(mode)
+        if runtime_channel is not None:
+            return self.player.audio_set_channel(runtime_channel) == 0
+
+        return True
+
     def get_subtitle_tracks(self):
         return self.player.video_get_spu_description() or []
 
@@ -108,9 +160,14 @@ class PlaybackEngine(QObject):
     def sync_audio_to_player(self):
         self.player.audio_set_volume(self._desired_volume)
         self.player.audio_set_mute(self._desired_muted)
+        desired_channel = self._get_runtime_audio_channel(self._desired_audio_mode)
+        if desired_channel is not None:
+            self.player.audio_set_channel(desired_channel)
 
         QTimer.singleShot(150, lambda: self.player.audio_set_volume(self._desired_volume))
         QTimer.singleShot(150, lambda: self.player.audio_set_mute(self._desired_muted))
+        if desired_channel is not None:
+            QTimer.singleShot(150, lambda: self.player.audio_set_channel(desired_channel))
 
     def _on_vlc_playing_event(self, event):
         self.playing.emit()
