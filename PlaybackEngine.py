@@ -148,8 +148,6 @@ class PlaybackEngine(QObject):
         return devices
 
     def get_current_audio_device(self) -> str:
-        if self._desired_audio_device_id is not None:
-            return self._desired_audio_device_id
         current_device_id = self._decode_vlc_text(self.player.audio_output_device_get())
         return current_device_id or AUDIO_DEVICE_DEFAULT_ID
 

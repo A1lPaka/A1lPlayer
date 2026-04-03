@@ -10,6 +10,9 @@ __pycache__/StatusBar.cpython-313.pyc
 __pycache__/ThemeColor.cpython-313.pyc
 assets/test.mp4
 assets/test2.mp4
+assets/test3.mp4
 assets/svg_minify.py
 desktop.ini
 Plan.txt
+__pycache__/
+*.py[cod]
