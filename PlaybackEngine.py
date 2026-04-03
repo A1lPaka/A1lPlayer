@@ -4,6 +4,9 @@ import vlc
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+VLC_AUDIO_CHANNEL_MONO = 7
+AUDIO_DEVICE_DEFAULT_ID = "__default__"
+
 
 class PlaybackEngine(QObject):
     playing = Signal()
@@ -15,24 +18,26 @@ class PlaybackEngine(QObject):
         self._desired_muted = False
         self._last_volume_before_mute = self._desired_volume
         self._desired_audio_mode = "stereo"
+        self._desired_audio_device_id: str | None = None
         self._current_media_path: str | None = None
         self._bound_win_id: int | None = None
         self._audio_modes = {
             "stereo": {
-                "stereo_mode": 1,
                 "channel": int(vlc.AudioOutputChannel.Stereo.value),
             },
             "reverse_stereo": {
-                "stereo_mode": 2,
                 "channel": int(vlc.AudioOutputChannel.RStereo.value),
             },
             "left": {
-                "stereo_mode": 3,
                 "channel": int(vlc.AudioOutputChannel.Left.value),
             },
             "right": {
-                "stereo_mode": 4,
                 "channel": int(vlc.AudioOutputChannel.Right.value),
+            },
+            "mono": {
+                # python-vlc does not expose Mono in AudioOutputChannel,
+                # but libVLC accepts the raw channel id 7 for mono mode.
+                "channel": VLC_AUDIO_CHANNEL_MONO,
             },
         }
         self._create_backend()
@@ -40,9 +45,7 @@ class PlaybackEngine(QObject):
         self.playing.connect(self.sync_audio_to_player)
 
     def _create_backend(self):
-        self.instance = vlc.Instance(
-            f"--stereo-mode={self._audio_modes[self._desired_audio_mode]['stereo_mode']}"
-        )
+        self.instance = vlc.Instance()
         self.player = self.instance.media_player_new()
 
         event_manager = self.player.event_manager()
@@ -54,6 +57,20 @@ class PlaybackEngine(QObject):
 
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
         return self._audio_modes[mode]["channel"]
+
+    def _decode_vlc_text(self, value) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode(errors="ignore")
+        return str(value)
+
+    def _iter_vlc_linked_list(self, head):
+        node = head
+        while node:
+            item = node.contents
+            yield item
+            node = item.next
 
     def bind_video_output(self, win_id: int):
         self._bound_win_id = win_id
@@ -109,6 +126,39 @@ class PlaybackEngine(QObject):
     def set_audio_track(self, track_id: int) -> bool:
         return self.player.audio_set_track(int(track_id)) == 0
 
+    def get_audio_devices(self) -> list[tuple[str, str]]:
+        devices: list[tuple[str, str]] = []
+        seen_device_ids: set[str] = set()
+
+        for device_item in self._iter_vlc_linked_list(self.player.audio_output_device_enum()):
+            raw_device_id = self._decode_vlc_text(device_item.device)
+            device_title = self._decode_vlc_text(device_item.description)
+            normalized_device_id = raw_device_id or AUDIO_DEVICE_DEFAULT_ID
+            normalized_title = device_title or "Default Device"
+
+            if normalized_device_id in seen_device_ids:
+                continue
+
+            devices.append((normalized_device_id, normalized_title))
+            seen_device_ids.add(normalized_device_id)
+
+        if AUDIO_DEVICE_DEFAULT_ID not in seen_device_ids:
+            devices.insert(0, (AUDIO_DEVICE_DEFAULT_ID, "Default Device"))
+
+        return devices
+
+    def get_current_audio_device(self) -> str:
+        if self._desired_audio_device_id is not None:
+            return self._desired_audio_device_id
+        current_device_id = self._decode_vlc_text(self.player.audio_output_device_get())
+        return current_device_id or AUDIO_DEVICE_DEFAULT_ID
+
+    def set_audio_device(self, device_id: str) -> bool:
+        normalized_device_id = None if device_id == AUDIO_DEVICE_DEFAULT_ID else str(device_id)
+        self._desired_audio_device_id = normalized_device_id
+        self.player.audio_output_device_set(None, normalized_device_id)
+        return True
+
     def get_current_audio_mode(self) -> str:
         return self._desired_audio_mode
 
@@ -160,12 +210,14 @@ class PlaybackEngine(QObject):
     def sync_audio_to_player(self):
         self.player.audio_set_volume(self._desired_volume)
         self.player.audio_set_mute(self._desired_muted)
+        self.player.audio_output_device_set(None, self._desired_audio_device_id)
         desired_channel = self._get_runtime_audio_channel(self._desired_audio_mode)
         if desired_channel is not None:
             self.player.audio_set_channel(desired_channel)
 
         QTimer.singleShot(150, lambda: self.player.audio_set_volume(self._desired_volume))
         QTimer.singleShot(150, lambda: self.player.audio_set_mute(self._desired_muted))
+        QTimer.singleShot(150, lambda: self.player.audio_output_device_set(None, self._desired_audio_device_id))
         if desired_channel is not None:
             QTimer.singleShot(150, lambda: self.player.audio_set_channel(desired_channel))
 

@@ -45,6 +45,7 @@ class MenuBarConfigurator:
         self.audio_track_menu.aboutToShow.connect(self._rebuild_audio_track_menu)
 
         self.audio_device_menu = audio_menu.addMenu("Audio Device")
+        self.audio_device_menu.aboutToShow.connect(self._rebuild_audio_device_menu)
 
         self.stereo_mode_menu = audio_menu.addMenu("Stereo Mode")
         self._init_stereo_mode_menu()
@@ -145,6 +146,8 @@ class MenuBarConfigurator:
 
     def _rebuild_audio_track_menu(self):
         self.audio_track_menu.clear()
+        self.audio_track_group = QActionGroup(self.audio_track_menu)
+        self.audio_track_group.setExclusive(True)
         tracks = self.main_window.get_audio_tracks()
 
         if not tracks:
@@ -161,9 +164,34 @@ class MenuBarConfigurator:
             action.triggered.connect(
                 lambda checked=False, tid=track_id: self._on_select_audio_track(tid)
             )
+            self.audio_track_group.addAction(action)
+
+    def _rebuild_audio_device_menu(self):
+        self.audio_device_menu.clear()
+        self.audio_device_group = QActionGroup(self.audio_device_menu)
+        self.audio_device_group.setExclusive(True)
+        devices = self.main_window.get_audio_devices()
+
+        if not devices:
+            empty_action = self.audio_device_menu.addAction("No audio devices")
+            empty_action.setEnabled(False)
+            return
+
+        current_device = self.main_window.get_current_audio_device()
+
+        for device_id, title in devices:
+            action = self.audio_device_menu.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(device_id == current_device)
+            action.triggered.connect(
+                lambda checked=False, did=device_id: self._on_select_audio_device(did)
+            )
+            self.audio_device_group.addAction(action)
 
     def _rebuild_subtitle_track_menu(self):
         self.subtitle_track_menu.clear()
+        self.subtitle_track_group = QActionGroup(self.subtitle_track_menu)
+        self.subtitle_track_group.setExclusive(True)
         tracks = self.main_window.get_subtitle_tracks()
 
         if not tracks:
@@ -180,6 +208,7 @@ class MenuBarConfigurator:
             action.triggered.connect(
                 lambda checked=False, tid=track_id: self._on_select_subtitle_track(tid)
             )
+            self.subtitle_track_group.addAction(action)
 
     def _init_stereo_mode_menu(self):
         self.stereo_mode_group = QActionGroup(self.stereo_mode_menu)
@@ -203,6 +232,9 @@ class MenuBarConfigurator:
 
     def _on_select_audio_track(self, track_id: int):
         self.main_window.set_audio_track(track_id)
+
+    def _on_select_audio_device(self, device_id: str):
+        self.main_window.set_audio_device(device_id)
 
     def _on_select_subtitle_track(self, track_id: int):
         self.main_window.set_subtitle_track(track_id)
