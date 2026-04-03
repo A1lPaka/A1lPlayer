@@ -1,12 +1,9 @@
-import os
-
-import vlc
-
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint
 from PySide6.QtGui import QPalette, QColor, QCursor
 from PySide6.QtWidgets import QWidget
 from PySide6.QtSvgWidgets import QSvgWidget
 
+from PlaybackEngine import PlaybackEngine
 from PlaybackPlaylist import PlaybackPlaylist
 from PlayerControls import PlayerControls, TimePopup
 from utils import Metrics, res_path
@@ -14,8 +11,6 @@ from ThemeColor import ThemeColor
 
 
 class PlayerWindow(QWidget):
-    _vlc_playing = Signal()
-    _vlc_media_ended = Signal()
     open_file_requested = Signal()
     media_finished = Signal(str)
 
@@ -28,35 +23,16 @@ class PlayerWindow(QWidget):
         self.metrics = metrics
         self.theme_color = theme_color
 
-        self._init_vlc()
+        self.engine = PlaybackEngine(self)
         self._init_state()
         self._init_video_frame()
         self._init_controls()
         self._init_audio()
         self._init_timer()
 
-    def _init_vlc(self):
-        self.instance = vlc.Instance()
-        self.player = self.instance.media_player_new()
-        event_manager = self.player.event_manager()
-        event_manager.event_attach(
-            vlc.EventType.MediaPlayerPlaying,
-            self._on_vlc_playing_event,
-        )
-        event_manager.event_attach(
-            vlc.EventType.MediaPlayerEndReached,
-            self._on_vlc_media_ended_event,
-        )
-        self._vlc_playing.connect(self._sync_audio_to_player)
-        self._vlc_media_ended.connect(self._handle_media_end)
-
     def _init_state(self):
         self._video_bound = False
         self._resume_after_seek = False
-
-        self._desired_volume = 100
-        self._desired_muted = False
-        self._last_volume_before_mute = self._desired_volume
 
         self.playback_playlist = PlaybackPlaylist()
         
@@ -98,11 +74,10 @@ class PlayerWindow(QWidget):
         self.time_popup.hide()
 
     def _init_audio(self):
-        self._desired_volume = self.controls.current_volume_percent()
-        self._last_volume_before_mute = self._desired_volume
-        self._apply_desired_volume()
-        self.controls.toggle_muted(self._desired_muted)
-        self._apply_desired_mute()
+        initial_volume = self.controls.current_volume_percent()
+        self.engine.set_volume(initial_volume)
+        self.engine.set_last_volume_before_mute(initial_volume)
+        self.controls.toggle_muted(self.engine.is_muted())
 
     def _init_timer(self):
         self.position_timer = QTimer(self)
@@ -110,6 +85,7 @@ class PlayerWindow(QWidget):
         self.position_timer.timeout.connect(self.update_timing)
         self.position_timer.start()
         self.update_timing()
+        self.engine.media_ended.connect(self._handle_media_end)
 
     # ────────────────────────── Qt events ────────────────────────────────
 
@@ -128,12 +104,7 @@ class PlayerWindow(QWidget):
         super().showEvent(event)
         
         if not self._video_bound:
-            if os.name == "nt":
-                self.player.set_hwnd(int(self.video_frame.winId()))
-
-            elif os.name == "posix":
-                self.player.set_xwindow(int(self.video_frame.winId()))
-
+            self.engine.bind_video_output(int(self.video_frame.winId()))
             self._video_bound = True
 
     def resizeEvent(self, event):
@@ -175,16 +146,16 @@ class PlayerWindow(QWidget):
 
         return {
             "path": current_path,
-            "position_ms": int(self.player.get_time()),
-            "total_ms": int(self.player.get_length()),
+            "position_ms": self.engine.get_time(),
+            "total_ms": self.engine.get_length(),
         }
 
     def play_loaded_media(self, start_position_ms: int = 0):
         self.video_placeholder.hide()
-        self._sync_audio_to_player()
-        self.player.play()
+        self.engine.sync_audio_to_player()
+        self.engine.play()
         if start_position_ms > 0:
-            QTimer.singleShot(0, lambda: self.player.set_time(start_position_ms))
+            QTimer.singleShot(0, lambda: self.engine.set_time(start_position_ms))
         self.controls.toggle_play_pause(True)
 
     def set_exit_after_current(self, enabled: bool):
@@ -194,54 +165,54 @@ class PlayerWindow(QWidget):
         return self._exit_after_current
 
     def get_audio_tracks(self) -> list[tuple[int, str]]:
-        raw_tracks = self.player.audio_get_track_description() or []
+        raw_tracks = self.engine.get_audio_tracks()
         return [
             (int(track_id), self._format_track_label(track_id, track_name, "Audio"))
             for track_id, track_name in raw_tracks
         ]
 
     def get_current_audio_track(self) -> int:
-        return int(self.player.audio_get_track())
+        return self.engine.get_current_audio_track()
 
     def set_audio_track(self, track_id: int) -> bool:
-        return self.player.audio_set_track(int(track_id)) == 0
+        return self.engine.set_audio_track(track_id)
 
     def get_subtitle_tracks(self) -> list[tuple[int, str]]:
-        raw_tracks = self.player.video_get_spu_description() or []
+        raw_tracks = self.engine.get_subtitle_tracks()
         return [
             (int(track_id), self._format_track_label(track_id, track_name, "Subtitle"))
             for track_id, track_name in raw_tracks
         ]
 
     def get_current_subtitle_track(self) -> int:
-        return int(self.player.video_get_spu())
+        return self.engine.get_current_subtitle_track()
 
     def set_subtitle_track(self, track_id: int) -> bool:
-        return self.player.video_set_spu(int(track_id)) == 0
+        return self.engine.set_subtitle_track(track_id)
 
     def update_timing(self):  
-        current_ms = self.player.get_time()  
-        total_ms = self.player.get_length()  
+        current_ms = self.engine.get_time()
+        total_ms = self.engine.get_length()
         self.controls.update_timing(current_ms, total_ms)
 
     # ─────────────────────── playback control slots ────────────
 
     def on_play_pause(self):  
-        if self.player.get_media() is None:
+        if self.engine.get_media() is None:
             self.open_file_requested.emit()
             return
 
         self.controls.toggle_progress_seekable(True)
-        if self.player.get_state() == vlc.State.Playing:  
-            self.player.pause()  
+        if self.engine.is_playing():
+            self.engine.pause()
             self.controls.toggle_play_pause(False)  
         else:  
-            self._sync_audio_to_player()  
-            self.player.play()  
+            self.engine.sync_audio_to_player()
+            self.engine.play()
             self.controls.toggle_play_pause(True)  
 
     def on_stop(self):  
-        self.player.stop()
+        self.engine.stop()
         self._apply_stop_state()
 
     def on_fullscreen(self):
@@ -263,33 +234,33 @@ class PlayerWindow(QWidget):
             self.play_loaded_media()
 
     def on_seek_hold(self, direction: str):
-        current_ms = self.player.get_time()
+        current_ms = self.engine.get_time()
         if current_ms < 0:
             return
         step_ms = -10_000 if direction == "left" else 10_000
         new_ms = max(0, current_ms + step_ms)
-        total_ms = self.player.get_length()
+        total_ms = self.engine.get_length()
         if total_ms > 0:
-            self.player.set_position(new_ms / total_ms)
+            self.engine.set_position(new_ms / total_ms)
 
     # ─────────────────────── seek slots ──────────────────────────────
 
     def on_seek_started(self):
-        self._resume_after_seek = self.player.get_state() == vlc.State.Playing  
+        self._resume_after_seek = self.engine.is_playing()
         if self._resume_after_seek:  
-            self.player.pause()  
+            self.engine.pause()
 
     def on_seek(self, value: float):  
-        if self.player.is_seekable(): 
-            self.player.set_position(max(0.0, min(1.0, value))) 
+        if self.engine.is_seekable():
+            self.engine.set_position(max(0.0, min(1.0, value)))
 
     def on_seek_finished(self):  
         if self._resume_after_seek:  
-            self.player.play()  
+            self.engine.play()
         self._resume_after_seek = False  
 
     def on_progress_hover_changed(self, ratio: float):
-        total_ms = self.player.get_length()
+        total_ms = self.engine.get_length()
         if total_ms <= 0:
             self.time_popup.hide()
             return
@@ -306,49 +277,30 @@ class PlayerWindow(QWidget):
     # ─────────────────────── volume and mute slots ───────────────────────
 
     def on_volume_changed(self, volume: int): 
-        self._desired_volume = max(0, min(100, volume)) 
-        if self._desired_volume > 0: 
-            self._last_volume_before_mute = self._desired_volume 
-            if self._desired_muted: 
-                self._desired_muted = False  
-                self.controls.toggle_muted(False) 
-                self._apply_desired_mute()  
-        self._apply_desired_volume()  
+        desired_volume = max(0, min(100, volume))
+        self.engine.set_volume(desired_volume)
+        if desired_volume > 0:
+            self.engine.set_last_volume_before_mute(desired_volume)
+            if self.engine.is_muted():
+                self.engine.set_muted(False)
+                self.controls.toggle_muted(False)
+        self.engine.sync_audio_to_player()
 
     def on_mute(self):  
-        if not self._desired_muted:  
-            if self._desired_volume > 0:  
-                self._last_volume_before_mute = self._desired_volume  
-            self._desired_volume = 0  
-            self._desired_muted = True  
-        else:  
-            self._desired_muted = False  
-            self._desired_volume = max(1, self._last_volume_before_mute)   
-        self.controls.volume_controls.volume_bar.set_volume(self._desired_volume / 100.0) 
-        self._apply_desired_volume() 
-        self._apply_desired_mute()  
-        self.controls.toggle_muted(self._desired_muted)   
+        if not self.engine.is_muted():
+            desired_volume = self.engine.get_desired_volume()
+            if desired_volume > 0:
+                self.engine.set_last_volume_before_mute(desired_volume)
+            self.engine.set_volume(0)
+            self.engine.set_muted(True)
+        else:
+            self.engine.set_muted(False)
+            self.engine.set_volume(max(1, self.engine.get_last_volume_before_mute()))
+        self.controls.volume_controls.volume_bar.set_volume(self.engine.get_desired_volume() / 100.0)
+        self.engine.sync_audio_to_player()
+        self.controls.toggle_muted(self.engine.is_muted())
 
     # ─────────────────────── private helper methods ─────────────
-
-    def _apply_desired_volume(self): 
-        self.player.audio_set_volume(self._desired_volume) 
-
-    def _apply_desired_mute(self): 
-        self.player.audio_set_mute(self._desired_muted) 
-
-    def _sync_audio_to_player(self):  
-        self._apply_desired_volume()  
-        self._apply_desired_mute()  
-        
-        QTimer.singleShot(150, self._apply_desired_volume)  
-        QTimer.singleShot(150, self._apply_desired_mute)  
-
-    def _on_vlc_playing_event(self, event):  
-        self._vlc_playing.emit()  
-
-    def _on_vlc_media_ended_event(self, event):
-        self._vlc_media_ended.emit()
 
     def _handle_media_end(self):
         finished_path = self.current_media_path()
@@ -356,7 +308,7 @@ class PlayerWindow(QWidget):
             self.media_finished.emit(finished_path)
 
         if self._exit_after_current:
-            self.player.stop()
+            self.engine.stop()
             self._apply_stop_state()
 
             from PySide6.QtWidgets import QApplication
@@ -366,15 +318,14 @@ class PlayerWindow(QWidget):
         if self._play_next_from_playlist():
             return
 
-        self.player.stop()
+        self.engine.stop()
         self._apply_stop_state()
 
     def _load_current_media(self) -> bool:
         media_path = self.playback_playlist.current_path()
         if media_path is None:
             return False
-        media = self.instance.media_new(media_path)
-        self.player.set_media(media)
+        self.engine.load_media(media_path)
         self.video_placeholder.hide()
         self.controls.toggle_progress_seekable(True)
         return True
@@ -392,8 +343,8 @@ class PlayerWindow(QWidget):
         self._position_video_placeholder()
         self.controls.toggle_play_pause(False)
         self.controls.toggle_progress_seekable(False)
-        current_ms = self.player.get_time()
-        total_ms = self.player.get_length()
+        current_ms = self.engine.get_time()
+        total_ms = self.engine.get_length()
         self.controls.update_timing(current_ms, total_ms)
 
     def _position_video_placeholder(self):
