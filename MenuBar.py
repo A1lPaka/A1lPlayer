@@ -54,6 +54,7 @@ class MenuBarConfigurator:
         subtitles_menu = self.menu_bar.addMenu("Subtitles")
 
         self.open_subtitle_action = subtitles_menu.addAction("Open Subtitle")
+        self.open_subtitle_action.triggered.connect(self._on_open_subtitle)
 
         self.generate_subtitle_action = subtitles_menu.addAction("Generate Subtitle") # using OpenAI Whisper
 
@@ -124,6 +125,9 @@ class MenuBarConfigurator:
 
     def _on_open_folder(self):
         self.main_window.open_folder()
+
+    def _on_open_subtitle(self):
+        self.main_window.open_subtitle()
 
     def _rebuild_recent_menu(self):
         self.open_recent_action.clear()

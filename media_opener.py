@@ -9,6 +9,7 @@ from utils import _format_ms, _normalize_path
 
 class MediaOpener:
     _MEDIA_FILTER = "Media Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mp3 *.wav *.flac *.m4a *.aac);;All Files (*)"
+    _SUBTITLE_FILTER = "Subtitle Files (*.srt *.ass *.ssa *.sub *.vtt);;All Files (*)"
     _MEDIA_EXTENSIONS = {
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
         ".mp3", ".wav", ".flac", ".m4a", ".aac",
@@ -152,6 +153,19 @@ class MediaOpener:
             self._add_recent_path(path)
             return True
         return False
+
+    def open_subtitle(self) -> bool:
+        subtitle_path, _ = QFileDialog.getOpenFileName(
+            self._parent,
+            "Open Subtitle",
+            self._last_open_dir(),
+            self._SUBTITLE_FILTER,
+        )
+        if not subtitle_path:
+            return False
+
+        self._save_last_open_dir(subtitle_path)
+        return self._player.open_subtitle_file(subtitle_path)
 
     def _resolve_start_position_ms(self, path: str) -> int:
         if self._settings is None:

@@ -185,6 +185,11 @@ class PlaybackEngine(QObject):
     def set_subtitle_track(self, track_id: int) -> bool:
         return self.player.video_set_spu(int(track_id)) == 0
 
+    def open_subtitle_file(self, subtitle_path: str) -> bool:
+        if not subtitle_path or self.get_media() is None:
+            return False
+        return self.player.video_set_subtitle_file(str(subtitle_path)) == 0
+
     def set_volume(self, volume: int):
         self._desired_volume = max(0, min(100, volume))
         self.player.audio_set_volume(self._desired_volume)

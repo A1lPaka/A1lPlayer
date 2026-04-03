@@ -214,6 +214,9 @@ class PlayerWindow(QWidget):
     def set_subtitle_track(self, track_id: int) -> bool:
         return self.engine.set_subtitle_track(track_id)
 
+    def open_subtitle_file(self, subtitle_path: str) -> bool:
+        return self.engine.open_subtitle_file(subtitle_path)
+
     def update_timing(self):  
         current_ms = self.engine.get_time()
         total_ms = self.engine.get_length()

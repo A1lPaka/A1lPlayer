@@ -72,6 +72,9 @@ class MainWindow(QMainWindow):
     def open_folder(self):
         self.media_opener.open_folder()
 
+    def open_subtitle(self) -> bool:
+        return self.media_opener.open_subtitle()
+
     def _on_media_finished(self, path: str):
         self.media_opener.clear_saved_position(path)
 
