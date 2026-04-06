@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtSvgWidgets import QSvgWidget
 
 from PlaybackEngine import PlaybackEngine
+from PlayerFullscreenController import PlayerFullscreenController
 from PlaybackPlaylist import PlaybackPlaylist
 from PlayerControls import PlayerControls, TimePopup
 from utils import Metrics, res_path
@@ -41,6 +42,7 @@ class PlayerWindow(QWidget):
 
     def _init_video_frame(self):
         self.video_frame = QWidget(self)
+        self.video_frame.setMouseTracking(True)
         self.video_frame.setAutoFillBackground(True)
         palette = self.video_frame.palette()
         palette.setColor(QPalette.Window, QColor(0, 0, 0))
@@ -73,6 +75,16 @@ class PlayerWindow(QWidget):
 
         self.time_popup = TimePopup(None, metrics=self.metrics, theme_color=self.theme_color)
         self.time_popup.hide()
+        self.fullscreen_controller = PlayerFullscreenController(
+            self,
+            self.video_frame,
+            self.controls,
+            self.time_popup,
+            has_media_loaded=self.has_media_loaded,
+            toggle_play_pause=self.on_play_pause,
+            request_fullscreen=self.on_fullscreen,
+        )
+        self.fullscreen_controller.apply_metrics(self.metrics)
 
     def _init_audio(self):
         initial_volume = self.controls.current_volume_percent()
@@ -96,6 +108,7 @@ class PlayerWindow(QWidget):
         self.time_popup.apply_metrics(metrics)
 
         self.updateGeometry()
+        self.fullscreen_controller.apply_metrics(metrics)
         self._position_video_placeholder()
         if self.time_popup.isVisible():
             self._position_time_popup()
@@ -116,15 +129,8 @@ class PlayerWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        
-        width = self.width()
-        height = self.height()
-        
-        controls_height = max(60, int(self.metrics.icon_size * 3.5))
-        video_height = max(0, height - controls_height)
-        
-        self.video_frame.setGeometry(0, 0, width, video_height)
-        self.controls.setGeometry(0, video_height, width, controls_height)
+
+        self.fullscreen_controller.handle_resize()
         self._position_video_placeholder()
 
         if self.time_popup.isVisible():
@@ -170,6 +176,12 @@ class PlayerWindow(QWidget):
 
     def is_exit_after_current_enabled(self) -> bool:
         return self._exit_after_current
+
+    def has_media_loaded(self) -> bool:
+        return self.engine.get_media() is not None
+
+    def set_fullscreen_mode(self, fullscreen: bool):
+        self.fullscreen_controller.set_fullscreen_mode(fullscreen)
 
     def get_audio_tracks(self) -> list[tuple[int, str]]:
         raw_tracks = self.engine.get_audio_tracks()
@@ -250,6 +262,8 @@ class PlayerWindow(QWidget):
         self._apply_stop_state()
 
     def on_fullscreen(self):
+        if not self.fullscreen_controller.is_fullscreen() and not self.has_media_loaded():
+            return
         self.fullscreen_requested.emit()
 
     def on_pip(self):

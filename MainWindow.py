@@ -83,7 +83,10 @@ class MainWindow(QMainWindow):
         self._fullscreen_shortcuts.append(exit_fullscreen_shortcut)
 
     def toggle_fullscreen(self):
-        if self.is_fullscreen():
+        fullscreen = self.is_fullscreen()
+        if not fullscreen and not self.player_controls.has_media_loaded():
+            return
+        if fullscreen:
             self.showNormal()
         else:
             self.showFullScreen()
@@ -99,10 +102,12 @@ class MainWindow(QMainWindow):
         return self.isFullScreen()
 
     def _sync_fullscreen_ui(self):
+        fullscreen = self.is_fullscreen()
         menu_bar = self.menuBar()
         if menu_bar is not None:
-            menu_bar.setVisible(not self.is_fullscreen())
-        self.player_controls.controls.toggle_fullscreen(self.is_fullscreen())
+            menu_bar.setVisible(not fullscreen)
+        self.player_controls.set_fullscreen_mode(fullscreen)
+        self.player_controls.controls.toggle_fullscreen(fullscreen)
 
     def exit_after_current(self, enabled: bool):
         self.player_controls.set_exit_after_current(enabled)

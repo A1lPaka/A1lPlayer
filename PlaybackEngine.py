@@ -78,6 +78,7 @@ class PlaybackEngine(QObject):
             self.player.set_hwnd(win_id)
         elif os.name == "posix":
             self.player.set_xwindow(win_id)
+        self._disable_vout_input()
 
     def load_media(self, media_path: str):
         self._current_media_path = media_path
@@ -229,3 +230,14 @@ class PlaybackEngine(QObject):
 
     def _on_vlc_media_ended_event(self, event):
         self.media_ended.emit()
+
+    def _disable_vout_input(self):
+        try:
+            self.player.video_set_mouse_input(False)
+        except Exception:
+            pass
+
+        try:
+            self.player.video_set_key_input(False)
+        except Exception:
+            pass
