@@ -1,3 +1,4 @@
+import json
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
@@ -6,10 +7,13 @@ from PySide6.QtGui import QIcon
 from media_opener import MediaOpener
 from MenuBar import MenuBarConfigurator
 from PlayerWindow import PlayerWindow
+from ColorThemeDialog import ColorThemeDialog
 from utils import res_path, get_metrics
 from ThemeColor import ThemeColor
 
 class MainWindow(QMainWindow):
+    _THEME_SETTINGS_KEY = "theme/colors"
+
     def __init__(self, settings: QSettings | None = None):
         super().__init__()
         self.setWindowTitle("A1lPlayer")
@@ -21,8 +25,9 @@ class MainWindow(QMainWindow):
 
         self.metrics = get_metrics(self)
         self._screen_connected = False
+        self._theme_dialog: ColorThemeDialog | None = None
 
-        self.theme_color = ThemeColor()
+        self.theme_color = self._load_theme()
 
         # Создаём и добавляем PlayerControls
         self.player_controls = PlayerWindow(self.metrics, self.theme_color)
@@ -34,12 +39,15 @@ class MainWindow(QMainWindow):
         self.menu_bar_config = MenuBarConfigurator(self, self.metrics, self.theme_color)
 
         self.resize(self.metrics.window_width, self.metrics.window_height)
+        self.setMinimumSize(self.metrics.window_width // 2, self.metrics.window_height // 2)
         self.apply_metrics(self.metrics)
 
     def apply_metrics(self, metrics):
         self.metrics = metrics
         self.player_controls.apply_metrics(metrics)
         self.menu_bar_config.apply_metrics(metrics)
+        if self._theme_dialog is not None:
+            self._theme_dialog.apply_metrics(metrics)
         self.updateGeometry()
         self.update()
 
@@ -86,6 +94,64 @@ class MainWindow(QMainWindow):
 
     def clear_recent_media(self):
         self.media_opener.clear_recent_media()
+
+    def open_theme_dialog(self):
+        if self._theme_dialog is None:
+            self._theme_dialog = ColorThemeDialog(self.theme_color, self.metrics, self)
+            self._theme_dialog.themeApplied.connect(self._apply_theme_from_dialog)
+            self._theme_dialog.destroyed.connect(self._on_theme_dialog_destroyed)
+        elif not self._theme_dialog.isVisible():
+            self._theme_dialog.set_theme_color(self.theme_color)
+
+        self._theme_dialog.show()
+        self._theme_dialog.raise_()
+        self._theme_dialog.activateWindow()
+
+    def _apply_theme_from_dialog(self, theme_color: ThemeColor):
+        self.theme_color = theme_color
+        self.player_controls.apply_theme(self.theme_color)
+        self.menu_bar_config.theme_color = self.theme_color
+        self.menu_bar_config.setup_style()
+        self._save_theme()
+        if self._theme_dialog is not None:
+            self._theme_dialog.close()
+
+    def _on_theme_dialog_destroyed(self):
+        self._theme_dialog = None
+
+    def _load_theme(self) -> ThemeColor:
+        if self.settings is None:
+            return ThemeColor()
+
+        raw = self.settings.value(self._THEME_SETTINGS_KEY, "{}", type=str)
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return ThemeColor()
+
+        if not isinstance(data, dict):
+            return ThemeColor()
+
+        base_colors: dict[str, tuple[int, int, int]] = {}
+        for key, value in data.items():
+            if key not in ThemeColor.DEFAULTS:
+                continue
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                continue
+            if not all(isinstance(channel, (int, float)) for channel in value):
+                continue
+            base_colors[key] = tuple(int(channel) for channel in value)
+
+        return ThemeColor(base_colors)
+
+    def _save_theme(self):
+        if self.settings is None:
+            return
+
+        self.settings.setValue(
+            self._THEME_SETTINGS_KEY,
+            json.dumps(self.theme_color.base_colors(), ensure_ascii=True),
+        )
 
     def get_audio_tracks(self) -> list[tuple[int, str]]:
         return self.player_controls.get_audio_tracks()

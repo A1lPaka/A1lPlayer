@@ -19,6 +19,8 @@ class Metrics:
     icon_size: int
     font_size: int
     menu_width: int
+    theme_dialog_width: int
+    theme_dialog_height: int
 
 def res_path(relative_path: str) -> str:
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -45,7 +47,9 @@ def get_metrics(widget: QWidget) -> Metrics:
         icon_size = int(min_window_side / 70 * scale_factor)
         font_size = int(icon_size * 0.7)
         menu_width = int(min_window_side * 0.1)
-        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width)
+        theme_dialog_height = int(min_window_side / 1.75) 
+        theme_dialog_width = theme_dialog_height // 2
+        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height)
     
     geo = screen.geometry()
 
@@ -56,8 +60,10 @@ def get_metrics(widget: QWidget) -> Metrics:
     icon_size = int(min_window_side / 70 * scale_factor)
     font_size = int(icon_size * 0.7)
     menu_width = int(min_window_side * 0.1)
+    theme_dialog_height = int(min_window_side / 1.75)
+    theme_dialog_width = min_window_side // 2
 
-    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width)
+    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height)
 
 def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
         r, g, b = bg_color

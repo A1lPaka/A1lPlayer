@@ -63,6 +63,7 @@ class MenuBarConfigurator:
 
         # View
         self.theme_action = self.menu_bar.addAction("Theme")
+        self.theme_action.triggered.connect(self._on_open_theme_dialog)
 
     def _rgb(self, name: str) -> str:
         r, g, b = self.theme_color.get(name)
@@ -72,9 +73,9 @@ class MenuBarConfigurator:
         font = self.metrics.font_size
         width = self.metrics.menu_width
         bg_color = self._rgb("panel_bg_color")
-        hovered_color = self._rgb("text_button_color_hovered")
-        pressed_color = self._rgb("text_button_color_pressed")
-        separator_color = self._rgb("text_button_color_separator")
+        hovered_color = self._rgb("panel_bg_color_hovered")
+        pressed_color = self._rgb("panel_bg_color_pressed")
+        separator_color = self._rgb("panel_bg_color_separator")
         text_color = self._rgb("text_color")
         style = f"""
             QMenuBar {{
@@ -257,3 +258,6 @@ class MenuBarConfigurator:
 
     def _on_exit(self):
         self.main_window.close()
+
+    def _on_open_theme_dialog(self):
+        self.main_window.open_theme_dialog()

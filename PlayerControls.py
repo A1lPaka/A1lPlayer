@@ -18,11 +18,9 @@ class PlayerControls(QWidget):
         self.metrics = metrics
         self.theme_color = theme_color
 
-        self.current_time = QLabel("00:00", self)
-        self.current_time.setAlignment(Qt.AlignCenter)
+        self.current_time = QLabel("00:00", self, alignment=Qt.AlignCenter)
         self.progress_bar = ProgressBar(self, theme_color = self.theme_color)
-        self.total_time = QLabel("00:00", self)
-        self.total_time.setAlignment(Qt.AlignCenter)
+        self.total_time = QLabel("00:00", self, alignment=Qt.AlignCenter)
 
         self._setup_font()
 
@@ -57,6 +55,21 @@ class PlayerControls(QWidget):
         self.volume_controls.apply_metrics(scale_factor)
 
         self.updateGeometry()
+        self.update()
+
+    def apply_theme(self, theme_color: ThemeColor):
+        self.theme_color = theme_color
+        self._setup_font()
+        self.setup_style()
+
+        for button in self.buttons:
+            button.bg_color = self.theme_color.get("control_button_color")
+            button.bg_color_hovered = self.theme_color.get("control_button_color_hovered")
+            button.bg_color_pressed = self.theme_color.get("control_button_color_pressed")
+            button.update()
+
+        self.volume_controls.apply_theme(theme_color)
+        self.progress_bar.apply_theme(theme_color)
         self.update()
 
     def resizeEvent(self, event: QEvent):
@@ -151,8 +164,7 @@ class TimePopup(QWidget):
         self.metrics = metrics
         self.frame = TimePopupFrame(self, theme_color, scale_factor=self.metrics.scale_factor)
 
-        self.time_label = QLabel("00:00", self)
-        self.time_label.setAlignment(Qt.AlignCenter)
+        self.time_label = QLabel("00:00", self, alignment=Qt.AlignCenter)
         font_color = theme_color.get("time_popup_text_color")
         palette = self.time_label.palette()
         palette.setColor(QPalette.WindowText, QColor(*font_color))
@@ -191,6 +203,18 @@ class TimePopup(QWidget):
         self.frame.scale_factor = self.metrics.scale_factor
 
         self.updateGeometry()
+        self.update()
+
+    def apply_theme(self, theme_color: ThemeColor):
+        font_color = theme_color.get("time_popup_text_color")
+        palette = self.time_label.palette()
+        palette.setColor(QPalette.WindowText, QColor(*font_color))
+        self.time_label.setPalette(palette)
+
+        self.frame.bg_color = theme_color.get("time_popup_color")
+        self.frame.bg_color_hovered = self.frame.bg_color
+        self.frame.bg_color_pressed = self.frame.bg_color
+        self.frame.update()
         self.update()
 
 class BaseButton(QAbstractButton):
@@ -390,6 +414,15 @@ class VolumeControls(QWidget):
         self.updateGeometry()
         self.update()
 
+    def apply_theme(self, theme_color: ThemeColor):
+        self.volume_button.bg_color = theme_color.get("control_button_color")
+        self.volume_button.bg_color_hovered = theme_color.get("control_button_color_hovered")
+        self.volume_button.bg_color_pressed = theme_color.get("control_button_color_pressed")
+        self.volume_button.update()
+
+        self.volume_bar.apply_theme(theme_color)
+        self.update()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
 
@@ -423,6 +456,11 @@ class VolumeBar(QWidget):
 
     def set_volume(self, volume: float):
         self.volume = max(0, min(1.0, volume))
+        self.update()
+
+    def apply_theme(self, theme_color: ThemeColor):
+        self.active_bg_color = theme_color.get("volume_bar_color_active")
+        self.inactive_bg_color = theme_color.get("volume_bar_color_inactive")
         self.update()
 
     def paintEvent(self, event):
@@ -510,7 +548,7 @@ class ProgressBar(QWidget):
         self.setMouseTracking(True)
 
         self.active_bg_color = theme_color.get("progress_bar_color_active")
-        self.inactive_bg_color = theme_color.get("progress_bar_color_inactive")
+        self.inactive_bg_color = theme_color.get("control_button_color")
 
         self.value = 0.0
         self._dragging = False
@@ -523,6 +561,11 @@ class ProgressBar(QWidget):
 
     def set_value(self, value: float):
         self.value = max(0.0, min(1.0, value))
+        self.update()
+
+    def apply_theme(self, theme_color: ThemeColor):
+        self.active_bg_color = theme_color.get("progress_bar_color_active")
+        self.inactive_bg_color = theme_color.get("control_button_color")
         self.update()
 
     def paintEvent(self, event):

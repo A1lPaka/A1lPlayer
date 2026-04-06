@@ -100,6 +100,12 @@ class PlayerWindow(QWidget):
             self._position_time_popup()
         self.update()
 
+    def apply_theme(self, theme_color: ThemeColor):
+        self.theme_color = theme_color
+        self.controls.apply_theme(theme_color)
+        self.time_popup.apply_theme(theme_color)
+        self.update()
+
     def showEvent(self, event):
         super().showEvent(event)
         
@@ -377,7 +383,7 @@ class PlayerWindow(QWidget):
     def _position_video_placeholder(self):
         frame_width = self.video_frame.width()
         frame_height = self.video_frame.height()
-        logo_size = max(96, min(frame_width, frame_height) // 4)
+        logo_size = max(96, min(frame_width, frame_height) // 5)
         x = max(0, (frame_width - logo_size) // 2)
         y = max(0, (frame_height - logo_size) // 2)
         self.video_placeholder.setGeometry(x, y, logo_size, logo_size)
