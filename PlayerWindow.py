@@ -13,6 +13,7 @@ from ThemeColor import ThemeColor
 class PlayerWindow(QWidget):
     open_file_requested = Signal()
     media_finished = Signal(str)
+    fullscreen_requested = Signal()
 
     # ──────────────────────────── initialization ────────────────────────────
 
@@ -249,7 +250,7 @@ class PlayerWindow(QWidget):
         self._apply_stop_state()
 
     def on_fullscreen(self):
-        pass  # TODO: реализовать переключение полноэкранного режима
+        self.fullscreen_requested.emit()
 
     def on_pip(self):
         pass  # TODO: реализовать режим «картинка в картинке» (PiP)

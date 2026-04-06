@@ -1,8 +1,7 @@
-import json
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from media_opener import MediaOpener
 from MenuBar import MenuBarConfigurator
@@ -12,8 +11,6 @@ from utils import res_path, get_metrics
 from ThemeColor import ThemeColor
 
 class MainWindow(QMainWindow):
-    _THEME_SETTINGS_KEY = "theme/colors"
-
     def __init__(self, settings: QSettings | None = None):
         super().__init__()
         self.setWindowTitle("A1lPlayer")
@@ -27,16 +24,20 @@ class MainWindow(QMainWindow):
         self._screen_connected = False
         self._theme_dialog: ColorThemeDialog | None = None
 
-        self.theme_color = self._load_theme()
+        self.media_opener = MediaOpener(self, None, self.settings)
+        self.theme_color = self.media_opener.load_theme()
 
-        # Создаём и добавляем PlayerControls
+        self._fullscreen_shortcuts: list[QShortcut] = []
+        
         self.player_controls = PlayerWindow(self.metrics, self.theme_color)
         self.player_controls.open_file_requested.connect(self.open_file)
         self.player_controls.media_finished.connect(self._on_media_finished)
+        self.player_controls.fullscreen_requested.connect(self.toggle_fullscreen)
         self.setCentralWidget(self.player_controls)
 
-        self.media_opener = MediaOpener(self, self.player_controls, self.settings)
+        self.media_opener.set_player(self.player_controls)
         self.menu_bar_config = MenuBarConfigurator(self, self.metrics, self.theme_color)
+        self._init_shortcuts()
 
         self.resize(self.metrics.window_width, self.metrics.window_height)
         self.setMinimumSize(self.metrics.window_width // 2, self.metrics.window_height // 2)
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self.apply_metrics(get_metrics(self))
+        self._sync_fullscreen_ui()
 
         if not self._screen_connected:
             handle = self.windowHandle()
@@ -67,6 +69,40 @@ class MainWindow(QMainWindow):
 
     def on_screen_changed(self, screen):
         self.apply_metrics(get_metrics(self))
+
+    def _init_shortcuts(self):
+        for shortcut_text in ("F11", "Alt+Return", "Ctrl+Alt+Return"):
+            shortcut = QShortcut(QKeySequence(shortcut_text), self)
+            shortcut.setContext(Qt.WindowShortcut)
+            shortcut.activated.connect(self.toggle_fullscreen)
+            self._fullscreen_shortcuts.append(shortcut)
+
+        exit_fullscreen_shortcut = QShortcut(QKeySequence("Esc"), self)
+        exit_fullscreen_shortcut.setContext(Qt.WindowShortcut)
+        exit_fullscreen_shortcut.activated.connect(self.exit_fullscreen)
+        self._fullscreen_shortcuts.append(exit_fullscreen_shortcut)
+
+    def toggle_fullscreen(self):
+        if self.is_fullscreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        self._sync_fullscreen_ui()
+
+    def exit_fullscreen(self):
+        if not self.is_fullscreen():
+            return
+        self.showNormal()
+        self._sync_fullscreen_ui()
+
+    def is_fullscreen(self) -> bool:
+        return self.isFullScreen()
+
+    def _sync_fullscreen_ui(self):
+        menu_bar = self.menuBar()
+        if menu_bar is not None:
+            menu_bar.setVisible(not self.is_fullscreen())
+        self.player_controls.controls.toggle_fullscreen(self.is_fullscreen())
 
     def exit_after_current(self, enabled: bool):
         self.player_controls.set_exit_after_current(enabled)
@@ -112,46 +148,12 @@ class MainWindow(QMainWindow):
         self.player_controls.apply_theme(self.theme_color)
         self.menu_bar_config.theme_color = self.theme_color
         self.menu_bar_config.setup_style()
-        self._save_theme()
+        self.media_opener.save_theme(self.theme_color)
         if self._theme_dialog is not None:
             self._theme_dialog.close()
 
     def _on_theme_dialog_destroyed(self):
         self._theme_dialog = None
-
-    def _load_theme(self) -> ThemeColor:
-        if self.settings is None:
-            return ThemeColor()
-
-        raw = self.settings.value(self._THEME_SETTINGS_KEY, "{}", type=str)
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return ThemeColor()
-
-        if not isinstance(data, dict):
-            return ThemeColor()
-
-        base_colors: dict[str, tuple[int, int, int]] = {}
-        for key, value in data.items():
-            if key not in ThemeColor.DEFAULTS:
-                continue
-            if not isinstance(value, (list, tuple)) or len(value) != 3:
-                continue
-            if not all(isinstance(channel, (int, float)) for channel in value):
-                continue
-            base_colors[key] = tuple(int(channel) for channel in value)
-
-        return ThemeColor(base_colors)
-
-    def _save_theme(self):
-        if self.settings is None:
-            return
-
-        self.settings.setValue(
-            self._THEME_SETTINGS_KEY,
-            json.dumps(self.theme_color.base_colors(), ensure_ascii=True),
-        )
 
     def get_audio_tracks(self) -> list[tuple[int, str]]:
         return self.player_controls.get_audio_tracks()

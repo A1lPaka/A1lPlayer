@@ -4,6 +4,7 @@ import json
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
+from ThemeColor import ThemeColor
 from utils import _format_ms, _normalize_path
 
 
@@ -19,6 +20,7 @@ class MediaOpener:
     _MAX_RECENT_ITEMS = 10
     _MAX_SESSION_ITEMS = _MAX_RECENT_ITEMS
     _SESSION_POSITIONS_KEY = "session/file_positions"
+    _THEME_SETTINGS_KEY = "theme/colors"
     _COMPLETION_GRACE_MS = 2000
     _COMPLETION_GRACE_RATIO = 0.98
 
@@ -29,10 +31,15 @@ class MediaOpener:
         self._player = player_controls
         self._settings = settings
 
+    def set_player(self, player_controls):
+        self._player = player_controls
+
     # ─────────────────────────── public methods ───────────────────────────
 
     def save_time_session(self):
         if self._settings is None:
+            return
+        if self._player is None:
             return
 
         snapshot = self._player.get_session_snapshot()
@@ -57,6 +64,40 @@ class MediaOpener:
             data = dict(list(data.items())[-self._MAX_SESSION_ITEMS:])
 
         self._save_session_positions(data)
+
+    def load_theme(self) -> ThemeColor:
+        if self._settings is None:
+            return ThemeColor()
+
+        raw = self._settings.value(self._THEME_SETTINGS_KEY, "{}", type=str)
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return ThemeColor()
+
+        if not isinstance(data, dict):
+            return ThemeColor()
+
+        base_colors: dict[str, tuple[int, int, int]] = {}
+        for key, value in data.items():
+            if key not in ThemeColor.DEFAULTS:
+                continue
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                continue
+            if not all(isinstance(channel, (int, float)) for channel in value):
+                continue
+            base_colors[key] = tuple(int(channel) for channel in value)
+
+        return ThemeColor(base_colors)
+
+    def save_theme(self, theme_color: ThemeColor):
+        if self._settings is None:
+            return
+
+        self._settings.setValue(
+            self._THEME_SETTINGS_KEY,
+            json.dumps(theme_color.base_colors(), ensure_ascii=True),
+        )
 
     def clear_saved_position(self, path: str):
         if self._settings is None or not path:
