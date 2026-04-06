@@ -130,7 +130,7 @@ class ColorThemeDialog(QWidget):
         apply_theme_button_x = close_dialog_button_x - self.button_width - self.icon_size
         color_list_x = width - self.gap - self.theme_color_list_width
         color_list_y = sv_picker_y + self.hex_input_height
-        color_list_height = height - color_list_y - 4 * self.gap - 2 * self.button_height
+        color_list_height = height - color_list_y - 3 * self.gap - self.button_height
 
         interface_preview_frame_height = sv_picker_y - 2 * self.gap
         interface_preview_frame_width = width - 2 * self.gap

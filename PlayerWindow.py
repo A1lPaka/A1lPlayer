@@ -1,12 +1,12 @@
-from PySide6.QtCore import Qt, QTimer, Signal, QPoint
+from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
 from PySide6.QtGui import QPalette, QColor, QCursor
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QApplication
 from PySide6.QtSvgWidgets import QSvgWidget
 
 from PlaybackEngine import PlaybackEngine
 from PlayerFullscreenController import PlayerFullscreenController
 from PlaybackPlaylist import PlaybackPlaylist
-from PlayerControls import PlayerControls, TimePopup
+from PlayerControls import PlayerControls, TimePopup, SpeedPopup
 from utils import Metrics, res_path
 from ThemeColor import ThemeColor
 
@@ -15,6 +15,7 @@ class PlayerWindow(QWidget):
     open_file_requested = Signal()
     media_finished = Signal(str)
     fullscreen_requested = Signal()
+    SPEED_POPUP_AUTOHIDE_MS = 4000
 
     # ──────────────────────────── initialization ────────────────────────────
 
@@ -75,6 +76,18 @@ class PlayerWindow(QWidget):
 
         self.time_popup = TimePopup(None, metrics=self.metrics, theme_color=self.theme_color)
         self.time_popup.hide()
+        self.speed_popup = SpeedPopup(None, metrics=self.metrics, theme_color=self.theme_color)
+        self.speed_popup.set_speed(self.engine.get_rate())
+        self.controls.set_speed_value(self.engine.get_rate())
+        self.speed_popup.hide()
+        self.speed_popup_autohide_timer = QTimer(self)
+        self.speed_popup_autohide_timer.setSingleShot(True)
+        self.speed_popup_autohide_timer.setInterval(self.SPEED_POPUP_AUTOHIDE_MS)
+        self.speed_popup_autohide_timer.timeout.connect(self._on_speed_popup_autohide_timeout)
+        self.controls.speed_button.clicked.connect(self.toggle_speed_popup)
+        self.controls.speed_label.clicked.connect(self.toggle_speed_popup)
+        self.speed_popup.speed_changed.connect(self.on_speed_changed)
+        QApplication.instance().installEventFilter(self)
         self.fullscreen_controller = PlayerFullscreenController(
             self,
             self.video_frame,
@@ -106,18 +119,22 @@ class PlayerWindow(QWidget):
         self.metrics = metrics
         self.controls.apply_metrics(metrics)
         self.time_popup.apply_metrics(metrics)
+        self.speed_popup.apply_metrics(metrics)
 
         self.updateGeometry()
         self.fullscreen_controller.apply_metrics(metrics)
         self._position_video_placeholder()
         if self.time_popup.isVisible():
             self._position_time_popup()
+        if self.speed_popup.isVisible():
+            self._position_speed_popup()
         self.update()
 
     def apply_theme(self, theme_color: ThemeColor):
         self.theme_color = theme_color
         self.controls.apply_theme(theme_color)
         self.time_popup.apply_theme(theme_color)
+        self.speed_popup.apply_theme(theme_color)
         self.update()
 
     def showEvent(self, event):
@@ -135,6 +152,18 @@ class PlayerWindow(QWidget):
 
         if self.time_popup.isVisible():
             self._position_time_popup()
+        if self.speed_popup.isVisible():
+            self._position_speed_popup()
+
+    def eventFilter(self, watched, event):
+        if self.speed_popup.isVisible():
+            if event.type() == QEvent.MouseButtonPress:
+                global_pos = event.globalPosition().toPoint()
+                if self._click_outside_speed_popup(global_pos):
+                    self._hide_speed_popup()
+            elif event.type() == QEvent.MouseMove:
+                self._update_speed_popup_autohide(event.globalPosition().toPoint())
+        return super().eventFilter(watched, event)
 
     # ─────────────────────────── public methods ──────────────────────────
 
@@ -241,6 +270,16 @@ class PlayerWindow(QWidget):
         total_ms = self.engine.get_length()
         self.controls.update_timing(current_ms, total_ms)
 
+    def toggle_speed_popup(self):
+        if self.speed_popup.isVisible():
+            self._hide_speed_popup()
+            return
+        self.speed_popup.set_speed(self.engine.get_rate())
+        self._position_speed_popup()
+        self.speed_popup.show()
+        self.speed_popup.raise_()
+        self._update_speed_popup_autohide(QCursor.pos())
+
     # ─────────────────────── playback control slots ────────────
 
     def on_play_pause(self):  
@@ -321,6 +360,10 @@ class PlayerWindow(QWidget):
 
     def on_progress_hover_left(self):
         self.time_popup.hide()
+
+    def on_speed_changed(self, speed: float):
+        self.engine.set_rate(speed)
+        self.controls.set_speed_value(speed)
 
     # ─────────────────────── volume and mute slots ───────────────────────
 
@@ -428,3 +471,45 @@ class PlayerWindow(QWidget):
         x = max(min_x, min(max_x, x))
 
         self.time_popup.setGeometry(x, y, popup_w, popup_h)
+
+    def _click_outside_speed_popup(self, global_pos: QPoint) -> bool:
+        popup_rect = self.speed_popup.geometry()
+        button_top_left = self.controls.speed_button.mapToGlobal(QPoint(0, 0))
+        button_rect = self.controls.speed_button.rect().translated(button_top_left)
+        return not popup_rect.contains(global_pos) and not button_rect.contains(global_pos)
+
+    def _hide_speed_popup(self):
+        self.speed_popup_autohide_timer.stop()
+        self.speed_popup.hide()
+
+    def _is_cursor_in_speed_popup(self, global_pos: QPoint) -> bool:
+        return self.speed_popup.geometry().contains(global_pos)
+
+    def _update_speed_popup_autohide(self, global_pos: QPoint):
+        if self._is_cursor_in_speed_popup(global_pos):
+            self.speed_popup_autohide_timer.stop()
+            return
+        self.speed_popup_autohide_timer.start()
+
+    def _on_speed_popup_autohide_timeout(self):
+        if not self.speed_popup.isVisible():
+            return
+        if self._is_cursor_in_speed_popup(QCursor.pos()):
+            return
+        self._hide_speed_popup()
+
+    def _position_speed_popup(self):
+        popup_w, popup_h = self.speed_popup.preferred_size()
+
+        button_top_left = self.controls.speed_button.mapToGlobal(QPoint(0, 0))
+        button_center_x = button_top_left.x() + self.controls.speed_button.width() / 2.0
+        min_x = self.mapToGlobal(QPoint(0, 0)).x()
+        controls_top_global = self.controls.mapToGlobal(QPoint(0, 0)).y()
+
+        x = int(button_center_x - popup_w / 4.0)
+        y = int(controls_top_global - popup_h) - 2
+
+        max_x = min_x + self.width() - popup_w
+        x = max(min_x, min(max_x, x))
+
+        self.speed_popup.setGeometry(x, y, popup_w, popup_h)

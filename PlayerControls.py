@@ -4,13 +4,23 @@ from typing import Dict, List, Tuple
 
 import os
 
-from PySide6.QtWidgets import QWidget, QAbstractButton, QLabel
+from PySide6.QtWidgets import QWidget, QAbstractButton, QLabel, QSlider
 from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QPixmap, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QEvent
 
 from utils import Metrics, res_path, _format_ms
 from ThemeColor import ThemeColor
+
+class ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 class PlayerControls(QWidget):
     def __init__(self, parent: QWidget, metrics: Metrics, theme_color: ThemeColor | None = None):
@@ -22,8 +32,6 @@ class PlayerControls(QWidget):
         self.progress_bar = ProgressBar(self, theme_color = self.theme_color)
         self.total_time = QLabel("00:00", self, alignment=Qt.AlignCenter)
 
-        self._setup_font()
-
         sf = self.metrics.scale_factor
         self.play_pause_button = PlayPauseButton(self, theme_color=self.theme_color, scale_factor=sf)
         self.rewind_lbutton = RewindButton(self, direction="left", theme_color=self.theme_color, scale_factor=sf)
@@ -31,6 +39,9 @@ class PlayerControls(QWidget):
         self.rewind_rbutton = RewindButton(self, direction="right", theme_color=self.theme_color, scale_factor=sf)
         self.fullscreen_button = FullscreenButton(self, theme_color=self.theme_color, scale_factor=sf)
         self.pip_button = PiPButton(self, theme_color=self.theme_color, scale_factor=sf)
+
+        self.speed_label = ClickableLabel("x1.00", self, alignment=Qt.AlignCenter)
+        self.speed_button = SpeedButton(self, theme_color=self.theme_color, scale_factor=sf)
 
         self.volume_controls = VolumeControls(self, theme_color=self.theme_color, scale_factor=sf)
 
@@ -40,9 +51,10 @@ class PlayerControls(QWidget):
             self.stop_button,
             self.rewind_rbutton,
             self.fullscreen_button,
-            self.pip_button
+            self.pip_button,
         ]
 
+        self._setup_font()
         self.setup_style()
 
     def apply_metrics(self, metrics: Metrics):
@@ -52,6 +64,7 @@ class PlayerControls(QWidget):
         scale_factor = self.metrics.scale_factor
         for button in self.buttons:
             button.scale_factor = scale_factor
+        self.speed_button.scale_factor = scale_factor
         self.volume_controls.apply_metrics(scale_factor)
 
         self.updateGeometry()
@@ -67,6 +80,10 @@ class PlayerControls(QWidget):
             button.bg_color_hovered = self.theme_color.get("control_button_color_hovered")
             button.bg_color_pressed = self.theme_color.get("control_button_color_pressed")
             button.update()
+        self.speed_button.bg_color = self.theme_color.get("control_button_color")
+        self.speed_button.bg_color_hovered = self.theme_color.get("control_button_color_hovered")
+        self.speed_button.bg_color_pressed = self.theme_color.get("control_button_color_pressed")
+        self.speed_button.update()
 
         self.volume_controls.apply_theme(theme_color)
         self.progress_bar.apply_theme(theme_color)
@@ -93,6 +110,8 @@ class PlayerControls(QWidget):
 
         volume_controls_width = int(icon_size * 6)
         volume_controls_x = width - volume_controls_width - int(1.333 * icon_size)
+        speed_button_x = volume_controls_x - int(1.2 * icon_size) - gap - label_width
+        speed_label_x = volume_controls_x - gap - label_width
 
         self.current_time.setGeometry(gap, label_y, label_width, icon_size)
         self.progress_bar.setGeometry(gap + label_width, label_y, progress_bar_width, icon_size)
@@ -104,6 +123,8 @@ class PlayerControls(QWidget):
             button.setGeometry(button_x, buttons_y, icon_size, icon_size)
 
         self.volume_controls.setGeometry(volume_controls_x, buttons_y, volume_controls_width, icon_size)
+        self.speed_button.setGeometry(speed_button_x, buttons_y, int(1.2 * icon_size), icon_size)
+        self.speed_label.setGeometry(speed_label_x, buttons_y, label_width, icon_size)
 
     def setup_style(self):
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -121,9 +142,11 @@ class PlayerControls(QWidget):
         palette.setColor(QPalette.WindowText, QColor(*color))
         self.current_time.setPalette(palette)
         self.total_time.setPalette(palette)
+        self.speed_label.setPalette(palette)
 
         self.current_time.setFont(font)
         self.total_time.setFont(font)
+        self.speed_label.setFont(font)
 
     def toggle_play_pause(self, playing: bool):
         self.play_pause_button.set_playing(playing)
@@ -140,6 +163,9 @@ class PlayerControls(QWidget):
     def current_volume_percent(self) -> int:
         return int(round(self.volume_controls.volume_bar.volume * 100))
 
+    def set_speed_value(self, speed: float):
+        self.speed_label.setText(self._format_speed(speed))
+
     def update_timing(self, current_ms: int, total_ms: int):
         current_ms = current_ms if current_ms and current_ms > 0 else 0
         total_ms = total_ms if total_ms and total_ms > 0 else 0
@@ -151,6 +177,9 @@ class PlayerControls(QWidget):
             self.progress_bar.set_value(current_ms / total_ms)
         else:
             self.progress_bar.set_value(0.0)
+
+    def _format_speed(self, speed: float) -> str:
+        return f"x{float(speed):.2f}"
 
 class TimePopup(QWidget):
     def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeColor | None = None):
@@ -216,6 +245,133 @@ class TimePopup(QWidget):
         self.frame.bg_color_pressed = self.frame.bg_color
         self.frame.update()
         self.update()
+
+class SpeedPopup(QWidget):
+    speed_changed = Signal(float)
+
+    STEP_SIZE = 0.25
+    MIN_SPEED = 0.25
+    MAX_SPEED = 4.0
+    MIN_STEP = 1
+    MAX_STEP = 16
+    DEFAULT_STEP = 4
+
+    def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeColor | None = None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        self.metrics = metrics
+        self.theme_color = theme_color
+
+        self.speed_label = QLabel(self._format_speed(self._step_to_speed(self.DEFAULT_STEP)), self, alignment=Qt.AlignCenter)
+        self.speed_slider = QSlider(Qt.Horizontal, self)
+        self.speed_slider.setRange(self.MIN_STEP, self.MAX_STEP)
+        self.speed_slider.setSingleStep(1)
+        self.speed_slider.setPageStep(1)
+        self.speed_slider.setTickInterval(1)
+        self.speed_slider.setTickPosition(QSlider.TicksBelow)
+        self.speed_slider.setValue(self.DEFAULT_STEP)
+        self.speed_slider.valueChanged.connect(self._on_slider_value_changed)
+
+        self._setup_font()
+        self.apply_theme(theme_color)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+        width = self.width()
+        height = self.height()
+        gap = int(self.metrics.icon_size * 0.35)
+        label_height = self.metrics.icon_size
+        slider_height = max(1, height - label_height - gap * 3)
+
+        self.speed_label.setGeometry(gap, gap, width - gap * 2, label_height)
+        self.speed_slider.setGeometry(gap, gap * 2 + label_height, width - gap * 2, slider_height)
+
+    def preferred_size(self) -> tuple[int, int]:
+        width = max(1, int(self.metrics.icon_size * 6))
+        height = max(1, int(self.metrics.icon_size * 2.5))
+        return width, height
+
+    def set_speed(self, speed: float):
+        self.speed_slider.setValue(self._speed_to_step(speed))
+        self.speed_label.setText(self._format_speed(self.current_speed()))
+
+    def current_speed(self) -> float:
+        return self.speed_slider.value() * self.STEP_SIZE
+
+    def apply_metrics(self, metrics: Metrics):
+        self.metrics = metrics
+        self._setup_font()
+        self.updateGeometry()
+        self.update()
+
+    def apply_theme(self, theme_color: ThemeColor | None):
+        self.theme_color = theme_color
+        if theme_color is None:
+            return
+
+        panel_bg = QColor(*theme_color.get("panel_bg_color"))
+        text_color = QColor(*theme_color.get("text_color"))
+        active_color = QColor(*theme_color.get("progress_bar_color_active"))
+        inactive_color = QColor(*theme_color.get("control_button_color"))
+
+        palette = self.palette()
+        palette.setColor(QPalette.Window, panel_bg)
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        label_palette = self.speed_label.palette()
+        label_palette.setColor(QPalette.WindowText, text_color)
+        self.speed_label.setPalette(label_palette)
+
+        self.speed_slider.setStyleSheet(
+            f"""
+            QSlider::groove:horizontal {{
+                background: rgb({inactive_color.red()}, {inactive_color.green()}, {inactive_color.blue()});
+                height: 6px;
+                border-radius: 3px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: rgb({active_color.red()}, {active_color.green()}, {active_color.blue()});
+                height: 6px;
+                border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: transparent;
+                width: 0px;
+                margin: 0;
+                border-radius: 0px;
+            }}
+            QSlider::tick-mark:horizontal {{
+                background: rgb({text_color.red()}, {text_color.green()}, {text_color.blue()});
+                width: 1px;
+                height: 6px;
+            }}
+            """
+        )
+
+    def _setup_font(self):
+        font = self.speed_label.font()
+        font.setPixelSize(self.metrics.font_size)
+        self.speed_label.setFont(font)
+
+    def _on_slider_value_changed(self, step: int):
+        speed = step * self.STEP_SIZE
+        self.speed_label.setText(self._format_speed(speed))
+        self.speed_changed.emit(speed)
+
+    def _step_to_speed(self, step: int) -> float:
+        return step * self.STEP_SIZE
+
+    def _speed_to_step(self, speed: float) -> int:
+        clamped = max(self.MIN_SPEED, min(self.MAX_SPEED, float(speed)))
+        return int(round(clamped / self.STEP_SIZE))
+
+    def _format_speed(self, speed: float) -> str:
+        return f"x{speed:.2f}"
 
 class BaseButton(QAbstractButton):
     _pixmap_cache: Dict[Tuple[str, int, int, int, int], QPixmap] = {}
@@ -378,7 +534,13 @@ class StopButton(BaseButton):
 
     def _get_svg_filename(self) -> str:
         return "stop.svg"
+    
+class SpeedButton(BaseButton):
+    def __init__(self, parent: QWidget | None = None, theme_color: ThemeColor | None = None, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor)
 
+    def _get_svg_filename(self) -> str:
+        return "trackspeed.svg"
 
 class FullscreenButton(BaseButton):
     def __init__(self, parent: QWidget | None = None, theme_color: ThemeColor | None = None, scale_factor: float = 1.0):

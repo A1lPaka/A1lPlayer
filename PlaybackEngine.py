@@ -16,6 +16,7 @@ class PlaybackEngine(QObject):
         super().__init__(parent)
         self._desired_volume = 100
         self._desired_muted = False
+        self._desired_rate = 1.0
         self._last_volume_before_mute = self._desired_volume
         self._desired_audio_mode = "stereo"
         self._desired_audio_device_id: str | None = None
@@ -118,6 +119,14 @@ class PlaybackEngine(QObject):
     def set_position(self, position: float):
         self.player.set_position(position)
 
+    def set_rate(self, rate: float) -> bool:
+        clamped_rate = max(0.25, min(4.0, float(rate)))
+        self._desired_rate = clamped_rate
+        return self.player.set_rate(clamped_rate) == 0
+
+    def get_rate(self) -> float:
+        return self._desired_rate
+
     def get_audio_tracks(self):
         return self.player.audio_get_track_description() or []
 
@@ -212,6 +221,7 @@ class PlaybackEngine(QObject):
         self._last_volume_before_mute = max(0, min(100, volume))
 
     def sync_audio_to_player(self):
+        self.player.set_rate(self._desired_rate)
         self.player.audio_set_volume(self._desired_volume)
         self.player.audio_set_mute(self._desired_muted)
         self.player.audio_output_device_set(None, self._desired_audio_device_id)
@@ -219,6 +229,7 @@ class PlaybackEngine(QObject):
         if desired_channel is not None:
             self.player.audio_set_channel(desired_channel)
 
+        QTimer.singleShot(150, lambda: self.player.set_rate(self._desired_rate))
         QTimer.singleShot(150, lambda: self.player.audio_set_volume(self._desired_volume))
         QTimer.singleShot(150, lambda: self.player.audio_set_mute(self._desired_muted))
         QTimer.singleShot(150, lambda: self.player.audio_output_device_set(None, self._desired_audio_device_id))
