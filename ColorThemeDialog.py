@@ -20,6 +20,7 @@ class ColorThemeDialog(QWidget):
         self.setWindowTitle("Theme Colors")
 
         self._updating_ui = False
+        self._loaded_theme_color = ThemeColor(dict(theme_color.colors))
         self._theme_color = ThemeColor(dict(theme_color.colors))
         self._theme_keys = list(self._theme_color.DEFAULTS.keys())
         self._current_color = QColor(255, 255, 255)
@@ -102,6 +103,10 @@ class ColorThemeDialog(QWidget):
         self.reset_theme_button = QPushButton("Reset All", self)
         self.reset_theme_button.clicked.connect(self._reset_all_colors)
 
+        # Button to reset the entire theme to the built-in defaults.
+        self.reset_default_button = QPushButton("Reset Default", self)
+        self.reset_default_button.clicked.connect(self._reset_all_to_defaults)
+
         # Button to apply the current theme.
         self.apply_theme_button = QPushButton("Apply", self)
         self.apply_theme_button.clicked.connect(self._apply_and_close)
@@ -120,11 +125,12 @@ class ColorThemeDialog(QWidget):
         color_swatch_y = sv_picker_y + self.hex_input_height + self.icon_size
         reset_theme_button_y = height - self.button_height - self.gap
         reset_color_button_y = reset_theme_button_y - self.button_height - self.gap
+        reset_default_button_y = reset_color_button_y - self.button_height - self.gap
         close_dialog_button_x = width - self.gap - self.button_width
         apply_theme_button_x = close_dialog_button_x - self.button_width - self.icon_size
         color_list_x = width - self.gap - self.theme_color_list_width
         color_list_y = sv_picker_y + self.hex_input_height
-        color_list_height = height - color_list_y - 3 * self.gap - self.button_height
+        color_list_height = height - color_list_y - 4 * self.gap - 2 * self.button_height
 
         interface_preview_frame_height = sv_picker_y - 2 * self.gap
         interface_preview_frame_width = width - 2 * self.gap
@@ -133,6 +139,7 @@ class ColorThemeDialog(QWidget):
         self.hue_slider.setGeometry(self.hue_slider_x, sv_picker_y, self.button_height, self.sv_picker_size + self.picker_frame_offset)
         self.hex_input.setGeometry(self.hex_input_x, sv_picker_y + self.picker_frame_offset, self.button_width, self.hex_input_height)
         self.color_swatch.setGeometry(self.hex_input_x, color_swatch_y, self.button_width, self.color_swatch_height)
+        self.reset_default_button.setGeometry(self.hex_input_x, reset_default_button_y, self.button_width, self.button_height)
         self.reset_theme_button.setGeometry(self.hex_input_x, reset_theme_button_y, self.button_width, self.button_height)
         self.reset_color_button.setGeometry(self.hex_input_x, reset_color_button_y, self.button_width, self.button_height)
         self.close_dialog_button.setGeometry(close_dialog_button_x, reset_theme_button_y, self.button_width, self.button_height)
@@ -252,10 +259,16 @@ class ColorThemeDialog(QWidget):
         key = self._current_theme_key()
         if key is None:
             return
-        self._theme_color.set(key, self._theme_color.DEFAULTS[key])
+        self._theme_color.set(key, self._loaded_theme_color.get(key))
         self._sync_inputs_from_color(self._theme_qcolor(key))
 
     def _reset_all_colors(self):
+        self._theme_color = ThemeColor(dict(self._loaded_theme_color.colors))
+        key = self._current_theme_key()
+        if key is not None:
+            self._sync_inputs_from_color(self._theme_qcolor(key))
+
+    def _reset_all_to_defaults(self):
         self._theme_color = ThemeColor()
         key = self._current_theme_key()
         if key is not None:
