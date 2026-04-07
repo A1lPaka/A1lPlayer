@@ -6,22 +6,22 @@ from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QWidget
 
-from ThemeColor import ThemeColor
+from models.ThemeColor import ThemeState
 from utils import Metrics, get_metrics, res_path
-from PlayerControls import PlayPauseButton, StopButton, VolumeControls, ProgressBar, TimePopupFrame
+from ui.PlayerControls import PlayPauseButton, StopButton, VolumeControls, ProgressBar, TimePopupFrame
 
 
 class ColorThemeDialog(QWidget):
     themeApplied = Signal(object)
 
-    def __init__(self, theme_color: ThemeColor, metrics: Metrics, parent: QWidget | None = None):
+    def __init__(self, theme_color: ThemeState, metrics: Metrics, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowFlag(Qt.Window, True)
         self.setWindowTitle("Theme Colors")
 
         self._updating_ui = False
-        self._loaded_theme_color = ThemeColor(dict(theme_color.colors))
-        self._theme_color = ThemeColor(dict(theme_color.colors))
+        self._loaded_theme_color = ThemeState(dict(theme_color.colors))
+        self._theme_color = ThemeState(dict(theme_color.colors))
         self._theme_keys = list(self._theme_color.DEFAULTS.keys())
         self._current_color = QColor(255, 255, 255)
         self._metrics = metrics
@@ -48,8 +48,8 @@ class ColorThemeDialog(QWidget):
         self.button_height = max(18, int(self.icon_size * 1.5))
         self.theme_color_list_width = 2 * self.button_width + self.icon_size
 
-    def get_theme_color(self) -> ThemeColor:
-        return ThemeColor(dict(self._theme_color.colors))
+    def get_theme_color(self) -> ThemeState:
+        return ThemeState(dict(self._theme_color.colors))
 
     def apply_metrics(self, metrics: Metrics):
         self._metrics = metrics
@@ -59,8 +59,8 @@ class ColorThemeDialog(QWidget):
         self.resize(max(self.width(), self.minimumWidth()), max(self.height(), self.minimumHeight()))
         self.updateGeometry()
 
-    def set_theme_color(self, theme_color: ThemeColor):
-        self._theme_color = ThemeColor(dict(theme_color.colors))
+    def set_theme_color(self, theme_color: ThemeState):
+        self._theme_color = ThemeState(dict(theme_color.colors))
         key = self._current_theme_key()
         if key is not None:
             self._sync_inputs_from_color(self._theme_qcolor(key))
@@ -263,13 +263,13 @@ class ColorThemeDialog(QWidget):
         self._sync_inputs_from_color(self._theme_qcolor(key))
 
     def _reset_all_colors(self):
-        self._theme_color = ThemeColor(dict(self._loaded_theme_color.colors))
+        self._theme_color = ThemeState(dict(self._loaded_theme_color.colors))
         key = self._current_theme_key()
         if key is not None:
             self._sync_inputs_from_color(self._theme_qcolor(key))
 
     def _reset_all_to_defaults(self):
-        self._theme_color = ThemeColor()
+        self._theme_color = ThemeState()
         key = self._current_theme_key()
         if key is not None:
             self._sync_inputs_from_color(self._theme_qcolor(key))
@@ -404,7 +404,7 @@ class HueSlider(QWidget):
 
 
 class InterfacePreview(QWidget):
-    def __init__(self, theme_color: ThemeColor, metrics: Metrics, parent: QWidget | None = None):
+    def __init__(self, theme_color: ThemeState, metrics: Metrics, parent: QWidget | None = None):
         super().__init__(parent)
         self._theme_color = theme_color
         self._metrics = metrics
@@ -519,8 +519,8 @@ class InterfacePreview(QWidget):
         self.time_popup.setGeometry(popup_x, time_popup_y, self.popup_width, self.time_popup_height)
         self.time_popup_label.setGeometry(popup_x, time_popup_y, self.popup_width, self.icon_size)
 
-    def update_theme(self, theme_color: ThemeColor):
-        self._theme_color = ThemeColor(dict(theme_color.colors))
+    def update_theme(self, theme_color: ThemeState):
+        self._theme_color = ThemeState(dict(theme_color.colors))
         self._apply_palette()
         self._apply_controls()
         self.update()
@@ -580,7 +580,7 @@ if __name__ == "__main__":
     app.setWindowIcon(QIcon(res_path("assets/logo.ico")))
 
     preview_host = QWidget()
-    dialog = ColorThemeDialog(ThemeColor(), get_metrics(preview_host))
+    dialog = ColorThemeDialog(ThemeState(), get_metrics(preview_host))
     dialog.show()
 
     sys.exit(app.exec())

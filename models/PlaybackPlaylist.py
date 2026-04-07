@@ -1,7 +1,7 @@
 import os
 
 
-class PlaybackPlaylist:
+class PlaylistState:
     def __init__(self):
         self._paths: list[str] = []
         self._current_index = -1

@@ -1,14 +1,14 @@
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor, QCursor
 from PySide6.QtWidgets import QWidget, QApplication
+from shiboken6 import isValid
 
-from AnimatedVideoPlaceholder import AnimatedVideoPlaceholder
-from PlaybackEngine import PlaybackEngine
-from PlayerFullscreenController import PlayerFullscreenController
-from PlaybackPlaylist import PlaybackPlaylist
-from PlayerControls import PlayerControls, TimePopup, SpeedPopup
+from ui.AnimatedVideoPlaceholder import AnimatedVideoPlaceholder
+from controllers.PlayerFullscreenController import PlayerFullscreenController
+from controllers.PlayerPlaybackController import PlayerPlaybackController
+from ui.PlayerControls import PlayerControls, TimePopup, SpeedPopup
 from utils import Metrics
-from ThemeColor import ThemeColor
+from models.ThemeColor import ThemeState
 
 
 class PlayerWindow(QWidget):
@@ -16,60 +16,57 @@ class PlayerWindow(QWidget):
     media_drop_requested = Signal(object)
     media_finished = Signal(str)
     current_media_changed = Signal(str)
+    video_geometry_changed = Signal(int, int)
     fullscreen_requested = Signal()
+    pip_requested = Signal()
+    pip_exit_requested = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
 
-    # ──────────────────────────── initialization ────────────────────────────
-
-    def __init__(self, metrics: Metrics | None = None, theme_color: ThemeColor | None = None):
+    def __init__(self, metrics: Metrics | None = None, theme_color: ThemeState | None = None):
         super().__init__()
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAcceptDrops(True)
 
         self.metrics = metrics
         self.theme_color = theme_color
+        self.playback = PlayerPlaybackController(self)
 
-        self.engine = PlaybackEngine(self)
-        self._init_state()
+        self._video_bound = False
+        self._pip_active = False
+
         self._init_video_frame()
         self._init_controls()
         self._init_audio()
         self._init_timer()
 
-    def _init_state(self):
-        self._video_bound = False
-        self._resume_after_seek = False
-
-        self.playback_playlist = PlaybackPlaylist()
-        
-        self._exit_after_current = False
-
     def _init_video_frame(self):
         self.video_frame = QWidget(self)
+        self.video_frame.setAttribute(Qt.WA_NativeWindow, True)
         self.video_frame.setMouseTracking(True)
         self.video_frame.setAutoFillBackground(True)
         palette = self.video_frame.palette()
         palette.setColor(QPalette.Window, QColor(0, 0, 0))
         self.video_frame.setPalette(palette)
+        self.video_frame.winId()
 
         self.video_placeholder = AnimatedVideoPlaceholder(self.video_frame, self.metrics)
         self.video_placeholder.show_placeholder()
 
-    def _init_controls(self):  
-        self.controls = PlayerControls(self, self.metrics, self.theme_color)  
-        
-        self.controls.play_pause_button.clicked.connect(self.on_play_pause)  
-        self.controls.stop_button.clicked.connect(self.on_stop)  
+    def _init_controls(self):
+        self.controls = PlayerControls(self, self.metrics, self.theme_color)
+
+        self.controls.play_pause_button.clicked.connect(self.on_play_pause)
+        self.controls.stop_button.clicked.connect(self.on_stop)
         self.controls.progress_bar.seek_started.connect(self.on_seek_started)
         self.controls.progress_bar.value_changed.connect(self.on_seek)
         self.controls.progress_bar.seek_finished.connect(self.on_seek_finished)
         self.controls.progress_bar.hover_changed.connect(self.on_progress_hover_changed)
         self.controls.progress_bar.hover_left.connect(self.on_progress_hover_left)
-        self.controls.volume_controls.volume_bar.volume_changed.connect( 
-            lambda v: self.on_volume_changed(int(v * 100)) 
+        self.controls.volume_controls.volume_bar.volume_changed.connect(
+            lambda volume: self.on_volume_changed(int(volume * 100))
         )
-        self.controls.volume_controls.volume_button.clicked.connect(self.on_mute)  
-        self.controls.fullscreen_button.clicked.connect(self.on_fullscreen)  
+        self.controls.volume_controls.volume_button.clicked.connect(self.on_mute)
+        self.controls.fullscreen_button.clicked.connect(self.on_fullscreen)
         self.controls.pip_button.clicked.connect(self.on_pip)
         self.controls.rewind_lbutton.clicked.connect(self.on_prev)
         self.controls.rewind_rbutton.clicked.connect(self.on_next)
@@ -79,33 +76,44 @@ class PlayerWindow(QWidget):
         self.time_popup = TimePopup(None, metrics=self.metrics, theme_color=self.theme_color)
         self.time_popup.hide()
         self.speed_popup = SpeedPopup(None, metrics=self.metrics, theme_color=self.theme_color)
-        self.speed_popup.set_speed(self.engine.get_rate())
-        self.controls.set_speed_value(self.engine.get_rate())
+        self.speed_popup.set_speed(self.playback.get_rate())
+        self.controls.set_speed_value(self.playback.get_rate())
         self.speed_popup.hide()
+
         self.speed_popup_autohide_timer = QTimer(self)
         self.speed_popup_autohide_timer.setSingleShot(True)
         self.speed_popup_autohide_timer.setInterval(self.SPEED_POPUP_AUTOHIDE_MS)
         self.speed_popup_autohide_timer.timeout.connect(self._on_speed_popup_autohide_timeout)
+
         self.controls.speed_button.clicked.connect(self.toggle_speed_popup)
         self.controls.speed_label.clicked.connect(self.toggle_speed_popup)
         self.speed_popup.speed_changed.connect(self.on_speed_changed)
-        QApplication.instance().installEventFilter(self)
+
+        self._application = QApplication.instance()
+        if self._application is not None:
+            self._application.installEventFilter(self)
+
+        self.playback.playback_state_changed.connect(self._on_playback_state_changed)
+        self.playback.current_media_changed.connect(self._on_current_media_changed)
+        self.playback.media_finished.connect(self.media_finished.emit)
+        self.playback.video_geometry_changed.connect(self.video_geometry_changed.emit)
+        self.playback.exit_after_current_requested.connect(self._on_exit_after_current_requested)
+
         self.fullscreen_controller = PlayerFullscreenController(
             self,
             self.video_frame,
             self.controls,
             self.time_popup,
-            has_media_loaded=self.has_media_loaded,
+            has_media_loaded=self.playback.has_media_loaded,
             toggle_play_pause=self.on_play_pause,
             request_fullscreen=self.on_fullscreen,
         )
-        self.fullscreen_controller.apply_metrics(self.metrics)
+        self.fullscreen_controller.apply_metrics()
 
     def _init_audio(self):
         initial_volume = self.controls.current_volume_percent()
-        self.engine.set_volume(initial_volume)
-        self.engine.set_last_volume_before_mute(initial_volume)
-        self.controls.toggle_muted(self.engine.is_muted())
+        self.playback.configure_initial_audio(initial_volume)
+        self.controls.toggle_muted(self.playback.is_muted())
 
     def _init_timer(self):
         self.position_timer = QTimer(self)
@@ -113,9 +121,6 @@ class PlayerWindow(QWidget):
         self.position_timer.timeout.connect(self.update_timing)
         self.position_timer.start()
         self.update_timing()
-        self.engine.media_ended.connect(self._handle_media_end)
-
-    # ────────────────────────── Qt events ────────────────────────────────
 
     def apply_metrics(self, metrics: Metrics):
         self.metrics = metrics
@@ -124,7 +129,7 @@ class PlayerWindow(QWidget):
         self.speed_popup.apply_metrics(metrics)
 
         self.updateGeometry()
-        self.fullscreen_controller.apply_metrics(metrics)
+        self.fullscreen_controller.apply_metrics()
         self.video_placeholder.apply_metrics(metrics)
         if self.time_popup.isVisible():
             self._position_time_popup()
@@ -132,7 +137,7 @@ class PlayerWindow(QWidget):
             self._position_speed_popup()
         self.update()
 
-    def apply_theme(self, theme_color: ThemeColor):
+    def apply_theme(self, theme_color: ThemeState):
         self.theme_color = theme_color
         self.controls.apply_theme(theme_color)
         self.time_popup.apply_theme(theme_color)
@@ -141,9 +146,8 @@ class PlayerWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        
         if not self._video_bound:
-            self.engine.bind_video_output(int(self.video_frame.winId()))
+            self.bind_video_output()
             self._video_bound = True
 
     def resizeEvent(self, event):
@@ -170,85 +174,70 @@ class PlayerWindow(QWidget):
         super().dropEvent(event)
 
     def eventFilter(self, watched, event):
-        if self.speed_popup.isVisible():
+        speed_popup = self.speed_popup if hasattr(self, "speed_popup") and isValid(self.speed_popup) else None
+        if speed_popup is not None and speed_popup.isVisible():
             if event.type() == QEvent.MouseButtonPress:
                 global_pos = event.globalPosition().toPoint()
                 if self._click_outside_speed_popup(global_pos):
                     self._hide_speed_popup()
             elif event.type() == QEvent.MouseMove:
                 self._update_speed_popup_autohide(event.globalPosition().toPoint())
-        if self._is_user_activity_event(event):
+
+        if self._is_user_activity_event(event) and hasattr(self, "video_placeholder") and isValid(self.video_placeholder):
             self.video_placeholder.notify_activity()
         return super().eventFilter(watched, event)
 
-    # ─────────────────────────── public methods ──────────────────────────
-
     def load_playlist(self, file_paths: list[str], start_index: int = 0) -> bool:
-        if not self.playback_playlist.load(file_paths, start_index=start_index):
-            return False
-        return self._load_current_media()
+        return self.playback.load_playlist(file_paths, start_index=start_index)
 
     def open_paths(self, file_paths: list[str], start_index: int = 0, start_position_ms: int = 0) -> bool:
-        if not self.load_playlist(file_paths, start_index=start_index):
-            return False
-        self.play_loaded_media(start_position_ms=start_position_ms)
-        return True
+        return self.playback.open_paths(file_paths, start_index=start_index, start_position_ms=start_position_ms)
 
     def current_media_path(self) -> str | None:
-        return self.playback_playlist.current_path()
+        return self.playback.current_media_path()
 
     def get_session_snapshot(self) -> dict[str, int | str] | None:
-        current_path = self.current_media_path()
-        if current_path is None:
-            return None
-
-        return {
-            "path": current_path,
-            "position_ms": self.engine.get_time(),
-            "total_ms": self.engine.get_length(),
-        }
+        return self.playback.get_session_snapshot()
 
     def play_loaded_media(self, start_position_ms: int = 0):
-        self.video_placeholder.hide_placeholder()
-        self.engine.sync_audio_to_player()
-        self.engine.play()
-        if start_position_ms > 0:
-            QTimer.singleShot(0, lambda: self.engine.set_time(start_position_ms))
-        self.controls.toggle_play_pause(True)
+        self.playback.play_loaded_media(start_position_ms=start_position_ms)
 
     def set_exit_after_current(self, enabled: bool):
-        self._exit_after_current = bool(enabled)
+        self.playback.set_exit_after_current(enabled)
 
     def is_exit_after_current_enabled(self) -> bool:
-        return self._exit_after_current
+        return self.playback.is_exit_after_current_enabled()
 
     def has_media_loaded(self) -> bool:
-        return self.engine.get_media() is not None
+        return self.playback.has_media_loaded()
+
+    def can_activate_view_modes(self) -> bool:
+        return self.playback.can_activate_view_modes()
 
     def set_fullscreen_mode(self, fullscreen: bool):
-        self.fullscreen_controller.set_fullscreen_mode(fullscreen)
+        self._apply_fullscreen_ui(fullscreen)
 
     def get_audio_tracks(self) -> list[tuple[int, str]]:
-        raw_tracks = self.engine.get_audio_tracks()
+        raw_tracks = self.playback.get_audio_tracks()
         return [
             (int(track_id), self._format_track_label(track_id, track_name, "Audio"))
             for track_id, track_name in raw_tracks
         ]
 
     def get_current_audio_track(self) -> int:
-        return self.engine.get_current_audio_track()
+        return self.playback.get_current_audio_track()
 
     def set_audio_track(self, track_id: int) -> bool:
-        return self.engine.set_audio_track(track_id)
+        return self.playback.set_audio_track(track_id)
 
     def get_audio_devices(self) -> list[tuple[str, str]]:
-        return self.engine.get_audio_devices()
+        return self.playback.get_audio_devices()
 
     def get_current_audio_device(self) -> str:
-        return self.engine.get_current_audio_device()
+        return self.playback.get_current_audio_device()
 
     def set_audio_device(self, device_id: str) -> bool:
-        return self.engine.set_audio_device(device_id)
+        return self.playback.set_audio_device(device_id)
 
     def get_audio_channel_modes(self) -> list[tuple[str, str]]:
         return [
@@ -260,110 +249,82 @@ class PlayerWindow(QWidget):
         ]
 
     def get_current_audio_channel(self) -> str:
-        return self.engine.get_current_audio_mode()
+        return self.playback.get_current_audio_mode()
 
     def set_audio_channel(self, channel: str) -> bool:
-        return self.engine.set_audio_mode(channel)
+        return self.playback.set_audio_mode(channel)
 
     def get_subtitle_tracks(self) -> list[tuple[int, str]]:
-        raw_tracks = self.engine.get_subtitle_tracks()
+        raw_tracks = self.playback.get_subtitle_tracks()
         return [
             (int(track_id), self._format_track_label(track_id, track_name, "Subtitle"))
             for track_id, track_name in raw_tracks
         ]
 
     def get_current_subtitle_track(self) -> int:
-        return self.engine.get_current_subtitle_track()
+        return self.playback.get_current_subtitle_track()
 
     def set_subtitle_track(self, track_id: int) -> bool:
-        return self.engine.set_subtitle_track(track_id)
+        return self.playback.set_subtitle_track(track_id)
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
-        return self.engine.open_subtitle_file(subtitle_path)
+        return self.playback.open_subtitle_file(subtitle_path)
 
-    def update_timing(self):  
-        current_ms = self.engine.get_time()
-        total_ms = self.engine.get_length()
+    def update_timing(self):
+        current_ms, total_ms = self.playback.get_timing()
         self.controls.update_timing(current_ms, total_ms)
 
     def toggle_speed_popup(self):
         if self.speed_popup.isVisible():
             self._hide_speed_popup()
             return
-        self.speed_popup.set_speed(self.engine.get_rate())
+
+        self.speed_popup.set_speed(self.playback.get_rate())
         self._position_speed_popup()
         self.speed_popup.show()
         self.speed_popup.raise_()
         self._update_speed_popup_autohide(QCursor.pos())
 
-    # ─────────────────────── playback control slots ────────────
-
-    def on_play_pause(self):  
-        if self.engine.get_media() is None:
+    def on_play_pause(self):
+        if not self.playback.has_media_loaded():
             self.open_file_requested.emit()
             return
+        self.playback.toggle_play_pause()
 
-        self.controls.toggle_progress_seekable(True)
-        if self.engine.is_playing():
-            self.engine.pause()
-            self.controls.toggle_play_pause(False)  
-        else:  
-            self.engine.sync_audio_to_player()
-            self.engine.play()
-            self.controls.toggle_play_pause(True)  
-
-    def on_stop(self):  
-        self.engine.stop()
-        self._apply_stop_state()
+    def on_stop(self):
+        self.playback.stop()
+        self._request_pip_exit_if_needed()
 
     def on_fullscreen(self):
-        if not self.fullscreen_controller.is_fullscreen() and not self.has_media_loaded():
+        if not self.fullscreen_controller.is_fullscreen() and not self.can_activate_view_modes():
             return
         self.fullscreen_requested.emit()
 
     def on_pip(self):
-        pass  # TODO: реализовать режим «картинка в картинке» (PiP)
+        if not self.can_activate_view_modes():
+            return
+        self.pip_requested.emit()
 
     def on_prev(self):
-        if not self.playback_playlist.move_previous_wrap():
-            return
-        if self._load_current_media():
-            self.play_loaded_media()
+        self.playback.play_previous()
 
     def on_next(self):
-        if not self.playback_playlist.move_next_wrap():
-            return
-        if self._load_current_media():
-            self.play_loaded_media()
+        self.playback.play_next()
 
     def on_seek_hold(self, direction: str):
-        current_ms = self.engine.get_time()
-        if current_ms < 0:
-            return
-        step_ms = -10_000 if direction == "left" else 10_000
-        new_ms = max(0, current_ms + step_ms)
-        total_ms = self.engine.get_length()
-        if total_ms > 0:
-            self.engine.set_position(new_ms / total_ms)
-
-    # ─────────────────────── seek slots ──────────────────────────────
+        self.playback.seek_by_hold(direction)
 
     def on_seek_started(self):
-        self._resume_after_seek = self.engine.is_playing()
-        if self._resume_after_seek:  
-            self.engine.pause()
+        self.playback.begin_seek()
 
-    def on_seek(self, value: float):  
-        if self.engine.is_seekable():
-            self.engine.set_position(max(0.0, min(1.0, value)))
+    def on_seek(self, value: float):
+        self.playback.seek_to_ratio(value)
 
-    def on_seek_finished(self):  
-        if self._resume_after_seek:  
-            self.engine.play()
-        self._resume_after_seek = False  
+    def on_seek_finished(self):
+        self.playback.finish_seek()
 
     def on_progress_hover_changed(self, ratio: float):
-        total_ms = self.engine.get_length()
+        _, total_ms = self.playback.get_timing()
         if total_ms <= 0:
             self.time_popup.hide()
             return
@@ -378,81 +339,17 @@ class PlayerWindow(QWidget):
         self.time_popup.hide()
 
     def on_speed_changed(self, speed: float):
-        self.engine.set_rate(speed)
+        self.playback.set_rate(speed)
         self.controls.set_speed_value(speed)
 
-    # ─────────────────────── volume and mute slots ───────────────────────
+    def on_volume_changed(self, volume: int):
+        self.playback.set_volume(volume)
+        self.controls.toggle_muted(self.playback.is_muted())
 
-    def on_volume_changed(self, volume: int): 
-        desired_volume = max(0, min(100, volume))
-        self.engine.set_volume(desired_volume)
-        if desired_volume > 0:
-            self.engine.set_last_volume_before_mute(desired_volume)
-            if self.engine.is_muted():
-                self.engine.set_muted(False)
-                self.controls.toggle_muted(False)
-        self.engine.sync_audio_to_player()
-
-    def on_mute(self):  
-        if not self.engine.is_muted():
-            desired_volume = self.engine.get_desired_volume()
-            if desired_volume > 0:
-                self.engine.set_last_volume_before_mute(desired_volume)
-            self.engine.set_volume(0)
-            self.engine.set_muted(True)
-        else:
-            self.engine.set_muted(False)
-            self.engine.set_volume(max(1, self.engine.get_last_volume_before_mute()))
-        self.controls.volume_controls.volume_bar.set_volume(self.engine.get_desired_volume() / 100.0)
-        self.engine.sync_audio_to_player()
-        self.controls.toggle_muted(self.engine.is_muted())
-
-    # ─────────────────────── private helper methods ─────────────
-
-    def _handle_media_end(self):
-        finished_path = self.current_media_path()
-        if finished_path:
-            self.media_finished.emit(finished_path)
-
-        if self._exit_after_current:
-            self.engine.stop()
-            self._apply_stop_state()
-
-            from PySide6.QtWidgets import QApplication
-            QApplication.instance().quit()
-            return
-
-        if self._play_next_from_playlist():
-            return
-
-        self.engine.stop()
-        self._apply_stop_state()
-
-    def _load_current_media(self) -> bool:
-        media_path = self.playback_playlist.current_path()
-        if media_path is None:
-            return False
-        self.engine.load_media(media_path)
-        self.current_media_changed.emit(media_path)
-        self.video_placeholder.hide_placeholder()
-        self.controls.toggle_progress_seekable(True)
-        return True
-
-    def _play_next_from_playlist(self) -> bool:
-        if not self.playback_playlist.move_next_linear():
-            return False
-        if self._load_current_media():
-            self.play_loaded_media()
-            return True
-        return False
-
-    def _apply_stop_state(self):
-        self.video_placeholder.show_placeholder()
-        self.controls.toggle_play_pause(False)
-        self.controls.toggle_progress_seekable(False)
-        current_ms = self.engine.get_time()
-        total_ms = self.engine.get_length()
-        self.controls.update_timing(current_ms, total_ms)
+    def on_mute(self):
+        self.playback.toggle_mute()
+        self.controls.volume_controls.volume_bar.set_volume(self.playback.get_desired_volume() / 100.0)
+        self.controls.toggle_muted(self.playback.is_muted())
 
     def _is_user_activity_event(self, event) -> bool:
         return event.type() in {
@@ -530,3 +427,67 @@ class PlayerWindow(QWidget):
         x = max(min_x, min(max_x, x))
 
         self.speed_popup.setGeometry(x, y, popup_w, popup_h)
+
+    def is_pip_active(self) -> bool:
+        return self._pip_active
+
+    def set_pip_active(self, active: bool):
+        self._pip_active = bool(active)
+        self._apply_pip_ui(self._pip_active)
+
+    def bind_video_output(self):
+        self.video_frame.winId()
+        self.playback.bind_video_output(int(self.video_frame.winId()))
+
+    def _request_pip_exit_if_needed(self):
+        if self._pip_active:
+            self.pip_exit_requested.emit()
+
+    def get_video_dimensions(self) -> tuple[int, int] | None:
+        return self.playback.get_video_dimensions()
+
+    def _on_current_media_changed(self, path: str):
+        self._apply_loaded_ui()
+        self.current_media_changed.emit(path)
+
+    def _on_playback_state_changed(self, state: str):
+        if state == self.playback.STATE_STOPPED:
+            self._apply_stopped_ui()
+            return
+        if state == self.playback.STATE_PLAYING:
+            self._apply_playing_ui()
+            return
+        self._apply_paused_ui()
+
+    def _on_exit_after_current_requested(self):
+        QApplication.instance().quit()
+
+    def _apply_loaded_ui(self):
+        self.video_placeholder.hide_placeholder()
+        self.controls.toggle_progress_seekable(True)
+
+    def _apply_stopped_ui(self):
+        self.video_placeholder.show_placeholder()
+        self.controls.toggle_progress_seekable(False)
+        self.controls.toggle_play_pause(False)
+        self.update_timing()
+
+    def _apply_playing_ui(self):
+        self._apply_loaded_ui()
+        self.controls.toggle_play_pause(True)
+
+    def _apply_paused_ui(self):
+        self._apply_loaded_ui()
+        self.controls.toggle_play_pause(False)
+
+    def _apply_fullscreen_ui(self, fullscreen: bool):
+        self.fullscreen_controller.set_fullscreen_mode(fullscreen)
+        self.controls.toggle_fullscreen(fullscreen)
+
+    def _apply_pip_ui(self, active: bool):
+        self.fullscreen_controller.set_pip_mode(active)
+        self.controls.set_pip_mode(active)
+        if self.speed_popup.isVisible() and active:
+            self._hide_speed_popup()
+        self.updateGeometry()
+        self.update()

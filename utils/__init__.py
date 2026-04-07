@@ -1,11 +1,10 @@
-from typing import Dict
 from dataclasses import dataclass
 
-from PySide6.QtCore import QFile, QTextStream, QThread, Signal
-from PySide6.QtGui import QGuiApplication, QImage, QPixmap
-from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QWidget
 
-import os, sys
+import os
+import sys
 
 BASE_WIDTH = 1920
 BASE_HEIGHT = 1080
@@ -21,19 +20,11 @@ class Metrics:
     menu_width: int
     theme_dialog_width: int
     theme_dialog_height: int
+    pip_min_width: int
 
 def res_path(relative_path: str) -> str:
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base_path, relative_path)
-
-def load_stylesheet(path: str = ":/assets/style_2048.qss"):
-    file = QFile(path)
-    if not file.open(QFile.ReadOnly | QFile.Text):
-        return ""
-    stream = QTextStream(file)
-    css = stream.readAll()
-    file.close()
-    return css
 
 def get_metrics(widget: QWidget) -> Metrics:
     handle = widget.window().windowHandle() if widget.window() else None
@@ -49,7 +40,9 @@ def get_metrics(widget: QWidget) -> Metrics:
         menu_width = int(min_window_side * 0.1)
         theme_dialog_height = int(min_window_side / 1.75) 
         theme_dialog_width = theme_dialog_height // 2
-        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height)
+        pip_min_width = int(min_window_side / 5.2)
+
+        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
     
     geo = screen.geometry()
 
@@ -62,8 +55,9 @@ def get_metrics(widget: QWidget) -> Metrics:
     menu_width = int(min_window_side * 0.1)
     theme_dialog_height = int(min_window_side / 1.75)
     theme_dialog_width = min_window_side // 2
+    pip_min_width = int(min_window_side / 5.2)
 
-    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height)
+    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
 
 def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
         r, g, b = bg_color

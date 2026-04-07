@@ -1,10 +1,10 @@
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QMainWindow
-from ThemeColor import ThemeColor
+from models.ThemeColor import ThemeState
 from utils import Metrics
 
-class MenuBarConfigurator:
-    def __init__(self, parent: QMainWindow, metrics: Metrics | None = None, theme_color: ThemeColor | None = None):
+class MenuBarController:
+    def __init__(self, parent: QMainWindow, metrics: Metrics | None = None, theme_color: ThemeState | None = None):
         self.main_window = parent
         self.metrics = metrics
         self.theme_color = theme_color

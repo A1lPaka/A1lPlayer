@@ -5,12 +5,12 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from ThemeColor import ThemeColor
+from models.ThemeColor import ThemeState
 from utils import _format_ms, _normalize_path
-from PlayerWindow import PlayerWindow
+from ui.PlayerWindow import PlayerWindow
 
 
-class MediaOpener:
+class MediaService:
     _MEDIA_FILTER = "Media Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mp3 *.wav *.flac *.m4a *.aac);;All Files (*)"
     _SUBTITLE_FILTER = "Subtitle Files (*.srt *.ass *.ssa *.sub *.vtt);;All Files (*)"
     _MEDIA_EXTENSIONS = {
@@ -29,13 +29,13 @@ class MediaOpener:
 
     # ────────────────────────────── init ───────────────────────────────────
 
-    def __init__(self, parent: QWidget, player_controls: PlayerWindow | None, settings: QSettings | None):
+    def __init__(self, parent: QWidget, player_window: PlayerWindow | None, settings: QSettings | None):
         self._parent = parent
-        self._player = player_controls
+        self._player = player_window
         self._settings = settings
 
-    def set_player(self, player_controls: PlayerWindow):
-        self._player = player_controls
+    def set_player(self, player_window: PlayerWindow):
+        self._player = player_window
 
     # ─────────────────────────── public methods ───────────────────────────
 
@@ -68,22 +68,22 @@ class MediaOpener:
 
         self._save_session_positions(data)
 
-    def load_theme(self) -> ThemeColor:
+    def load_theme(self) -> ThemeState:
         if self._settings is None:
-            return ThemeColor()
+            return ThemeState()
 
         raw = self._settings.value(self._THEME_SETTINGS_KEY, "{}", type=str)
         try:
             data = json.loads(raw)
         except (TypeError, ValueError):
-            return ThemeColor()
+            return ThemeState()
 
         if not isinstance(data, dict):
-            return ThemeColor()
+            return ThemeState()
 
         base_colors: dict[str, tuple[int, int, int]] = {}
         for key, value in data.items():
-            if key not in ThemeColor.DEFAULTS:
+            if key not in ThemeState.DEFAULTS:
                 continue
             if not isinstance(value, (list, tuple)) or len(value) != 3:
                 continue
@@ -91,9 +91,9 @@ class MediaOpener:
                 continue
             base_colors[key] = tuple(int(channel) for channel in value)
 
-        return ThemeColor(base_colors)
+        return ThemeState(base_colors)
 
-    def save_theme(self, theme_color: ThemeColor):
+    def save_theme(self, theme_color: ThemeState):
         if self._settings is None:
             return
 

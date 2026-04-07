@@ -1,10 +1,7 @@
-import json
-import os
-
 from utils import _color_from_state
 
 
-class ThemeColor:
+class ThemeState:
     DEFAULTS = {
         "text_color": (255, 255, 255),
         "panel_bg_color": (35, 35, 35),
@@ -48,14 +45,8 @@ class ThemeColor:
         return self.colors.get(name)
 
     def set(self, name, value):
-        canonical_name = self._canonical_name(name)
-        self.colors[canonical_name] = value
-        self._update_derived_colors(canonical_name)
-
-    def save_to_file(self, path):
-        base_colors = self.base_colors()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(base_colors, f)
+        self.colors[name] = value
+        self._update_derived_colors(name)
 
     def base_colors(self) -> dict:
         return {k: v for k, v in self.colors.items() if k in self.DEFAULTS}
@@ -69,17 +60,3 @@ class ThemeColor:
         for source in sources:
             for derived_name, state in self.DERIVED_COLOR_BUILDERS.get(source, ()):
                 self.colors[derived_name] = _color_from_state(state, self.colors[source])
-
-    def _canonical_name(self, name: str) -> str:
-        return name
-
-    @classmethod
-    def load_from_file(cls, path):
-        if not os.path.exists(path):
-            return cls()
-        with open(path, "r", encoding="utf-8") as f:
-            colors = json.load(f)
-        for k, v in colors.items():
-            if isinstance(v, list):
-                colors[k] = tuple(v)
-        return cls(colors)

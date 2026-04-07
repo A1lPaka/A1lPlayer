@@ -8,9 +8,10 @@ VLC_AUDIO_CHANNEL_MONO = 7
 AUDIO_DEVICE_DEFAULT_ID = "__default__"
 
 
-class PlaybackEngine(QObject):
+class PlaybackService(QObject):
     playing = Signal()
     media_ended = Signal()
+    video_geometry_changed = Signal(int, int)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -22,6 +23,7 @@ class PlaybackEngine(QObject):
         self._desired_audio_device_id: str | None = None
         self._current_media_path: str | None = None
         self._bound_win_id: int | None = None
+        self._last_video_geometry: tuple[int, int] | None = None
         self._audio_modes = {
             "stereo": {
                 "channel": int(vlc.AudioOutputChannel.Stereo.value),
@@ -48,13 +50,15 @@ class PlaybackEngine(QObject):
     def _create_backend(self):
         self.instance = vlc.Instance()
         self.player = self.instance.media_player_new()
-
-        event_manager = self.player.event_manager()
-        event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_vlc_playing_event)
-        event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
+        self._attach_event_handlers()
 
         if self._bound_win_id is not None:
             self.bind_video_output(self._bound_win_id)
+
+    def _attach_event_handlers(self):
+        event_manager = self.player.event_manager()
+        event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_vlc_playing_event)
+        event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
 
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
         return self._audio_modes[mode]["channel"]
@@ -83,14 +87,12 @@ class PlaybackEngine(QObject):
 
     def load_media(self, media_path: str):
         self._current_media_path = media_path
+        self._last_video_geometry = None
         media = self.instance.media_new(media_path)
         self.player.set_media(media)
 
     def get_media(self):
         return self.player.get_media()
-
-    def get_state(self):
-        return self.player.get_state()
 
     def is_playing(self) -> bool:
         return self.player.get_state() == vlc.State.Playing
@@ -115,6 +117,21 @@ class PlaybackEngine(QObject):
 
     def get_length(self) -> int:
         return int(self.player.get_length())
+
+    def get_video_dimensions(self) -> tuple[int, int] | None:
+        try:
+            size = self.player.video_get_size(0)
+        except Exception:
+            return None
+
+        if not size or len(size) < 2:
+            return None
+
+        width = int(size[0] or 0)
+        height = int(size[1] or 0)
+        if width <= 0 or height <= 0:
+            return None
+        return width, height
 
     def set_position(self, position: float):
         self.player.set_position(position)
@@ -238,6 +255,7 @@ class PlaybackEngine(QObject):
 
     def _on_vlc_playing_event(self, event):
         self.playing.emit()
+        self._schedule_video_geometry_probe()
 
     def _on_vlc_media_ended_event(self, event):
         self.media_ended.emit()
@@ -252,3 +270,16 @@ class PlaybackEngine(QObject):
             self.player.video_set_key_input(False)
         except Exception:
             pass
+
+    def _schedule_video_geometry_probe(self, attempts: int = 12, delay_ms: int = 120):
+        if attempts <= 0:
+            return
+
+        geometry = self.get_video_dimensions()
+        if geometry is not None:
+            if geometry != self._last_video_geometry:
+                self._last_video_geometry = geometry
+                self.video_geometry_changed.emit(*geometry)
+            return
+
+        QTimer.singleShot(delay_ms, lambda: self._schedule_video_geometry_probe(attempts - 1, delay_ms))
