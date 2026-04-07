@@ -17,6 +17,7 @@ class ColorThemeDialog(QWidget):
     def __init__(self, theme_color: ThemeState, metrics: Metrics, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowFlag(Qt.Window, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle("Theme Colors")
 
         self._updating_ui = False

@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         self._fullscreen_shortcuts: list[QShortcut] = []
         
         self.player_window = PlayerWindow(self.metrics, self.theme_state)
-        self.player_window.open_file_requested.connect(self.open_file)
+        self.player_window.open_file_requested.connect(self.media_service.open_file)
         self.player_window.media_drop_requested.connect(self._handle_player_drop_event)
         self.player_window.media_finished.connect(self._on_media_finished)
         self.player_window.current_media_changed.connect(self._on_current_media_changed)
@@ -52,7 +52,13 @@ class MainWindow(QMainWindow):
         )
 
         self.media_service.set_player(self.player_window)
-        self.menu_bar_controller = MenuBarController(self, self.metrics, self.theme_state)
+        self.menu_bar_controller = MenuBarController(
+            main_window=self,
+            player_window=self.player_window,
+            media_service=self.media_service,
+            metrics=self.metrics,
+            theme_color=self.theme_state,
+        )
         self._init_shortcuts()
 
         self.resize(self.metrics.window_width, self.metrics.window_height)
@@ -152,21 +158,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(player_window)
         self.sync_fullscreen_ui()
 
-    def exit_after_current(self, enabled: bool):
-        self.player_window.set_exit_after_current(enabled)
-
-    def is_exit_after_current_enabled(self) -> bool:
-        return self.player_window.is_exit_after_current_enabled()
-
-    def open_file(self):
-        self.media_service.open_file()
-
-    def open_folder(self):
-        self.media_service.open_folder()
-
-    def open_subtitle(self) -> bool:
-        return self.media_service.open_subtitle()
-
     def _handle_player_drop_event(self, event):
         if isinstance(event, QDragEnterEvent):
             self.media_service.handle_drag_enter_event(event)
@@ -187,15 +178,6 @@ class MainWindow(QMainWindow):
     def _update_window_title(self, media_path: str | None = None):
         self.setWindowTitle(build_window_title(media_path, base_title=self._BASE_WINDOW_TITLE, max_media_title_length=self._MAX_MEDIA_TITLE_LENGTH))
 
-    def get_recent_media(self) -> list[str]:
-        return self.media_service.get_recent_media()
-
-    def open_recent_media(self, path: str) -> bool:
-        return self.media_service.open_recent_media(path)
-
-    def clear_recent_media(self):
-        self.media_service.clear_recent_media()
-
     def toggle_pip(self):
         self.pip_controller.toggle_pip()
 
@@ -214,8 +196,7 @@ class MainWindow(QMainWindow):
     def _apply_theme_from_dialog(self, theme_color: ThemeState):
         self.theme_state = theme_color
         self.player_window.apply_theme(self.theme_state)
-        self.menu_bar_controller.theme_color = self.theme_state
-        self.menu_bar_controller.setup_style()
+        self.menu_bar_controller.apply_theme(self.theme_state)
         self.media_service.save_theme(self.theme_state)
         self.pip_controller.apply_theme(self.theme_state)
         if self._theme_dialog is not None:
@@ -229,42 +210,6 @@ class MainWindow(QMainWindow):
 
     def exit_pip(self):
         self.pip_controller.exit_pip()
-
-    def get_audio_tracks(self) -> list[tuple[int, str]]:
-        return self.player_window.get_audio_tracks()
-
-    def get_current_audio_track(self) -> int:
-        return self.player_window.get_current_audio_track()
-
-    def set_audio_track(self, track_id: int) -> bool:
-        return self.player_window.set_audio_track(track_id)
-
-    def get_audio_devices(self) -> list[tuple[str, str]]:
-        return self.player_window.get_audio_devices()
-
-    def get_current_audio_device(self) -> str:
-        return self.player_window.get_current_audio_device()
-
-    def set_audio_device(self, device_id: str) -> bool:
-        return self.player_window.set_audio_device(device_id)
-
-    def get_audio_channel_modes(self) -> list[tuple[str, str]]:
-        return self.player_window.get_audio_channel_modes()
-
-    def get_current_audio_channel(self) -> str:
-        return self.player_window.get_current_audio_channel()
-
-    def set_audio_channel(self, channel: str) -> bool:
-        return self.player_window.set_audio_channel(channel)
-
-    def get_subtitle_tracks(self) -> list[tuple[int, str]]:
-        return self.player_window.get_subtitle_tracks()
-
-    def get_current_subtitle_track(self) -> int:
-        return self.player_window.get_current_subtitle_track()
-
-    def set_subtitle_track(self, track_id: int) -> bool:
-        return self.player_window.set_subtitle_track(track_id)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -394,6 +394,7 @@ class SpeedPopup(QWidget):
 
 class BaseButton(QAbstractButton):
     _pixmap_cache: Dict[Tuple[str, int, int, int, int], QPixmap] = {}
+    _MAX_PIXMAP_CACHE_ITEMS = 256
 
     def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0, var: str | None = None):
         super().__init__(parent)
@@ -446,6 +447,8 @@ class BaseButton(QAbstractButton):
         pixmap = QPixmap.fromImage(image)
         pixmap.setDevicePixelRatio(dpr)
         self._pixmap_cache[cache_key] = pixmap
+        while len(self._pixmap_cache) > self._MAX_PIXMAP_CACHE_ITEMS:
+            self._pixmap_cache.pop(next(iter(self._pixmap_cache)))
         return pixmap
 
     def paintEvent(self, event):

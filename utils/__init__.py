@@ -39,7 +39,7 @@ def get_metrics(widget: QWidget) -> Metrics:
         font_size = int(icon_size * 0.7)
         menu_width = int(min_window_side * 0.1)
         theme_dialog_height = int(min_window_side / 1.75) 
-        theme_dialog_width = theme_dialog_height // 2
+        theme_dialog_width = min_window_side // 2
         pip_min_width = int(min_window_side / 5.2)
 
         return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
@@ -60,33 +60,33 @@ def get_metrics(widget: QWidget) -> Metrics:
     return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
 
 def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
-        r, g, b = bg_color
-        factor = (-1.0) if r < 145 or g < 145 or b < 145 else (1.0)
-        if state == "pressed":
-            return (
-                max(0, min(255, int(r - (r * 0.3) * factor))),
-                max(0, min(255, int(g - (g * 0.3) * factor))),
-                max(0, min(255, int(b - (b * 0.3) * factor))),
-            )
-        if state == "hovered":
-            return (
-                max(0, min(255, int(r - (r * 0.15) * factor))),
-                max(0, min(255, int(g - (g * 0.15) * factor))),
-                max(0, min(255, int(b - (b * 0.15) * factor))),
-            )
-        if state == "inactive":
-            return (
-                max(0, min(255, int(0.3 * r))),
-                max(0, min(255, int(0.3 * g))),
-                max(0, min(255, int(0.3 * b))),
-            )
-        if state == "separator":
-            return (
-                max(0, min(255, int(r - (r * 0.6) * factor))),
-                max(0, min(255, int(g - (g * 0.6) * factor))),
-                max(0, min(255, int(b - (b * 0.6) * factor))),
-            )
-        return bg_color
+    r, g, b = bg_color
+    factor = (-1.0) if r < 145 or g < 145 or b < 145 else (1.0)
+    if state == "pressed":
+        return (
+            max(0, min(255, int(r - (r * 0.3) * factor))),
+            max(0, min(255, int(g - (g * 0.3) * factor))),
+            max(0, min(255, int(b - (b * 0.3) * factor))),
+        )
+    if state == "hovered":
+        return (
+            max(0, min(255, int(r - (r * 0.15) * factor))),
+            max(0, min(255, int(g - (g * 0.15) * factor))),
+            max(0, min(255, int(b - (b * 0.15) * factor))),
+        )
+    if state == "inactive":
+        return (
+            max(0, min(255, int(0.3 * r))),
+            max(0, min(255, int(0.3 * g))),
+            max(0, min(255, int(0.3 * b))),
+        )
+    if state == "separator":
+        return (
+            max(0, min(255, int(r - (r * 0.6) * factor))),
+            max(0, min(255, int(g - (g * 0.6) * factor))),
+            max(0, min(255, int(b - (b * 0.6) * factor))),
+        )
+    return bg_color
 
 def _format_ms(ms: int) -> str:
     total_seconds = max(0, ms // 1000)
