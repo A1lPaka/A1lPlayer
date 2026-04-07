@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
-from PySide6.QtGui import QPalette, QColor, QCursor
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor, QCursor
 from PySide6.QtWidgets import QWidget, QApplication
 from PySide6.QtSvgWidgets import QSvgWidget
 
@@ -13,7 +13,9 @@ from ThemeColor import ThemeColor
 
 class PlayerWindow(QWidget):
     open_file_requested = Signal()
+    media_drop_requested = Signal(object)
     media_finished = Signal(str)
+    current_media_changed = Signal(str)
     fullscreen_requested = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
 
@@ -22,6 +24,7 @@ class PlayerWindow(QWidget):
     def __init__(self, metrics: Metrics | None = None, theme_color: ThemeColor | None = None):
         super().__init__()
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
 
         self.metrics = metrics
         self.theme_color = theme_color
@@ -154,6 +157,18 @@ class PlayerWindow(QWidget):
             self._position_time_popup()
         if self.speed_popup.isVisible():
             self._position_speed_popup()
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        self.media_drop_requested.emit(event)
+        if event.isAccepted():
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        self.media_drop_requested.emit(event)
+        if event.isAccepted():
+            return
+        super().dropEvent(event)
 
     def eventFilter(self, watched, event):
         if self.speed_popup.isVisible():
@@ -417,6 +432,7 @@ class PlayerWindow(QWidget):
         if media_path is None:
             return False
         self.engine.load_media(media_path)
+        self.current_media_changed.emit(media_path)
         self.video_placeholder.hide()
         self.controls.toggle_progress_seekable(True)
         return True

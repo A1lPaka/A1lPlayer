@@ -42,7 +42,7 @@ def get_metrics(widget: QWidget) -> Metrics:
     if screen is None:
         min_window_side = min(BASE_WIDTH, BASE_HEIGHT)
         scale_factor = 1.0
-        window_width = int(min_window_side * 0.7)
+        window_width = int(min_window_side * 0.8)
         window_height = int(min_window_side * 0.5)
         icon_size = int(min_window_side / 70 * scale_factor)
         font_size = int(icon_size * 0.7)
@@ -55,7 +55,7 @@ def get_metrics(widget: QWidget) -> Metrics:
 
     min_window_side = min(geo.width(), geo.height())
     scale_factor = screen.devicePixelRatio()
-    window_width = int(min_window_side * 0.7)
+    window_width = int(min_window_side * 0.8)
     window_height = int(min_window_side * 0.5)
     icon_size = int(min_window_side / 70 * scale_factor)
     font_size = int(icon_size * 0.7)
@@ -104,3 +104,20 @@ def _format_ms(ms: int) -> str:
 
 def _normalize_path(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
+
+def build_window_title(
+    media_path: str | None = None,
+    base_title: str = "A1lPlayer",
+    max_media_title_length: int = 36,
+) -> str:
+    if not media_path:
+        return base_title
+
+    media_name = os.path.splitext(os.path.basename(media_path))[0].strip()
+    if not media_name:
+        return base_title
+
+    if len(media_name) > max_media_title_length:
+        media_name = f"{media_name[:max_media_title_length].rstrip()}..."
+
+    return f"{base_title}: {media_name}"

@@ -1,22 +1,26 @@
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 
 from media_opener import MediaOpener
 from MenuBar import MenuBarConfigurator
 from PlayerWindow import PlayerWindow
 from ColorThemeDialog import ColorThemeDialog
-from utils import res_path, get_metrics
+from utils import res_path, get_metrics, build_window_title
 from ThemeColor import ThemeColor
 
 class MainWindow(QMainWindow):
+    _BASE_WINDOW_TITLE = "A1lPlayer"
+    _MAX_MEDIA_TITLE_LENGTH = 36
+
     def __init__(self, settings: QSettings | None = None):
         super().__init__()
-        self.setWindowTitle("A1lPlayer")
+        self._update_window_title()
         self.setWindowIcon(QIcon(res_path("assets/logo.ico")))
         self.setObjectName("mainWindow")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
 
         self.settings = settings
 
@@ -31,7 +35,9 @@ class MainWindow(QMainWindow):
         
         self.player_controls = PlayerWindow(self.metrics, self.theme_color)
         self.player_controls.open_file_requested.connect(self.open_file)
+        self.player_controls.media_drop_requested.connect(self._handle_player_drop_event)
         self.player_controls.media_finished.connect(self._on_media_finished)
+        self.player_controls.current_media_changed.connect(self._on_current_media_changed)
         self.player_controls.fullscreen_requested.connect(self.toggle_fullscreen)
         self.setCentralWidget(self.player_controls)
 
@@ -66,6 +72,16 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.media_opener.save_time_session()
         super().closeEvent(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if self.media_opener.handle_drag_enter_event(event):
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        if self.media_opener.handle_drop_event(event):
+            return
+        super().dropEvent(event)
 
     def on_screen_changed(self, screen):
         self.apply_metrics(get_metrics(self))
@@ -124,8 +140,21 @@ class MainWindow(QMainWindow):
     def open_subtitle(self) -> bool:
         return self.media_opener.open_subtitle()
 
+    def _handle_player_drop_event(self, event):
+        if isinstance(event, QDragEnterEvent):
+            self.media_opener.handle_drag_enter_event(event)
+            return
+        if isinstance(event, QDropEvent):
+            self.media_opener.handle_drop_event(event)
+
     def _on_media_finished(self, path: str):
         self.media_opener.clear_saved_position(path)
+
+    def _on_current_media_changed(self, path: str):
+        self._update_window_title(path)
+
+    def _update_window_title(self, media_path: str | None = None):
+        self.setWindowTitle(build_window_title(media_path, base_title=self._BASE_WINDOW_TITLE, max_media_title_length=self._MAX_MEDIA_TITLE_LENGTH))
 
     def get_recent_media(self) -> list[str]:
         return self.media_opener.get_recent_media()
