@@ -1,13 +1,13 @@
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor, QCursor
 from PySide6.QtWidgets import QWidget, QApplication
-from PySide6.QtSvgWidgets import QSvgWidget
 
+from AnimatedVideoPlaceholder import AnimatedVideoPlaceholder
 from PlaybackEngine import PlaybackEngine
 from PlayerFullscreenController import PlayerFullscreenController
 from PlaybackPlaylist import PlaybackPlaylist
 from PlayerControls import PlayerControls, TimePopup, SpeedPopup
-from utils import Metrics, res_path
+from utils import Metrics
 from ThemeColor import ThemeColor
 
 
@@ -52,9 +52,8 @@ class PlayerWindow(QWidget):
         palette.setColor(QPalette.Window, QColor(0, 0, 0))
         self.video_frame.setPalette(palette)
 
-        self.video_placeholder = QSvgWidget(res_path("assets/logo.svg"), self.video_frame)
-        self.video_placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.video_placeholder.show()
+        self.video_placeholder = AnimatedVideoPlaceholder(self.video_frame, self.metrics)
+        self.video_placeholder.show_placeholder()
 
     def _init_controls(self):  
         self.controls = PlayerControls(self, self.metrics, self.theme_color)  
@@ -126,7 +125,7 @@ class PlayerWindow(QWidget):
 
         self.updateGeometry()
         self.fullscreen_controller.apply_metrics(metrics)
-        self._position_video_placeholder()
+        self.video_placeholder.apply_metrics(metrics)
         if self.time_popup.isVisible():
             self._position_time_popup()
         if self.speed_popup.isVisible():
@@ -151,7 +150,7 @@ class PlayerWindow(QWidget):
         super().resizeEvent(event)
 
         self.fullscreen_controller.handle_resize()
-        self._position_video_placeholder()
+        self.video_placeholder.refresh_position()
 
         if self.time_popup.isVisible():
             self._position_time_popup()
@@ -178,6 +177,8 @@ class PlayerWindow(QWidget):
                     self._hide_speed_popup()
             elif event.type() == QEvent.MouseMove:
                 self._update_speed_popup_autohide(event.globalPosition().toPoint())
+        if self._is_user_activity_event(event):
+            self.video_placeholder.notify_activity()
         return super().eventFilter(watched, event)
 
     # ─────────────────────────── public methods ──────────────────────────
@@ -208,7 +209,7 @@ class PlayerWindow(QWidget):
         }
 
     def play_loaded_media(self, start_position_ms: int = 0):
-        self.video_placeholder.hide()
+        self.video_placeholder.hide_placeholder()
         self.engine.sync_audio_to_player()
         self.engine.play()
         if start_position_ms > 0:
@@ -433,7 +434,7 @@ class PlayerWindow(QWidget):
             return False
         self.engine.load_media(media_path)
         self.current_media_changed.emit(media_path)
-        self.video_placeholder.hide()
+        self.video_placeholder.hide_placeholder()
         self.controls.toggle_progress_seekable(True)
         return True
 
@@ -446,21 +447,21 @@ class PlayerWindow(QWidget):
         return False
 
     def _apply_stop_state(self):
-        self.video_placeholder.show()
-        self._position_video_placeholder()
+        self.video_placeholder.show_placeholder()
         self.controls.toggle_play_pause(False)
         self.controls.toggle_progress_seekable(False)
         current_ms = self.engine.get_time()
         total_ms = self.engine.get_length()
         self.controls.update_timing(current_ms, total_ms)
 
-    def _position_video_placeholder(self):
-        frame_width = self.video_frame.width()
-        frame_height = self.video_frame.height()
-        logo_size = max(96, min(frame_width, frame_height) // 5)
-        x = max(0, (frame_width - logo_size) // 2)
-        y = max(0, (frame_height - logo_size) // 2)
-        self.video_placeholder.setGeometry(x, y, logo_size, logo_size)
+    def _is_user_activity_event(self, event) -> bool:
+        return event.type() in {
+            QEvent.MouseMove,
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonDblClick,
+            QEvent.Wheel,
+            QEvent.KeyPress,
+        }
 
     def _format_track_label(self, track_id, track_name, prefix: str) -> str:
         if isinstance(track_name, bytes):
