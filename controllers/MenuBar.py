@@ -17,8 +17,8 @@ class MenuBarController:
         main_window: QMainWindow,
         player_window: PlayerWindow,
         media_service: MediaService,
-        metrics: Metrics | None = None,
-        theme_color: ThemeState | None = None,
+        metrics: Metrics | None,
+        theme_color: ThemeState,
     ):
         self.main_window = main_window
         self.player_window = player_window
@@ -49,7 +49,7 @@ class MenuBarController:
 
         self.exit_after_action = media_menu.addAction("Exit After Current")
         self.exit_after_action.setCheckable(True)
-        self.exit_after_action.setChecked(self.player_window.is_exit_after_current_enabled())
+        self.exit_after_action.setChecked(self.player_window.playback.is_exit_after_current_enabled())
         self.exit_after_action.toggled.connect(self._on_exit_after_current)
 
         self.exit_action = media_menu.addAction("Exit")
@@ -181,7 +181,7 @@ class MenuBarController:
             empty_action.setEnabled(False)
             return
 
-        current_track = self.player_window.get_current_audio_track()
+        current_track = self.player_window.playback.get_current_audio_track()
 
         for track_id, title in tracks:
             action = self.audio_track_menu.addAction(title)
@@ -196,14 +196,14 @@ class MenuBarController:
         self.audio_device_menu.clear()
         self.audio_device_group = QActionGroup(self.audio_device_menu)
         self.audio_device_group.setExclusive(True)
-        devices = self.player_window.get_audio_devices()
+        devices = self.player_window.playback.get_audio_devices()
 
         if not devices:
             empty_action = self.audio_device_menu.addAction("No audio devices")
             empty_action.setEnabled(False)
             return
 
-        current_device = self.player_window.get_current_audio_device()
+        current_device = self.player_window.playback.get_current_audio_device()
 
         for device_id, title in devices:
             action = self.audio_device_menu.addAction(title)
@@ -225,7 +225,7 @@ class MenuBarController:
             empty_action.setEnabled(False)
             return
 
-        current_track = self.player_window.get_current_subtitle_track()
+        current_track = self.player_window.playback.get_current_subtitle_track()
 
         for track_id, title in tracks:
             action = self.subtitle_track_menu.addAction(title)
@@ -241,7 +241,7 @@ class MenuBarController:
         self.stereo_mode_group.setExclusive(True)
         self.stereo_mode_actions: dict[str, object] = {}
 
-        current_channel = self.player_window.get_current_audio_channel()
+        current_channel = self.player_window.playback.get_current_audio_mode()
 
         for channel_id, title in self.player_window.get_audio_channel_modes():
             action = self.stereo_mode_menu.addAction(title)
@@ -257,16 +257,16 @@ class MenuBarController:
         self.media_service.open_recent_media(path)
 
     def _on_select_audio_track(self, track_id: int):
-        self.player_window.set_audio_track(track_id)
+        self.player_window.playback.set_audio_track(track_id)
 
     def _on_select_audio_device(self, device_id: str):
-        self.player_window.set_audio_device(device_id)
+        self.player_window.playback.set_audio_device(device_id)
 
     def _on_select_subtitle_track(self, track_id: int):
-        self.player_window.set_subtitle_track(track_id)
+        self.player_window.playback.set_subtitle_track(track_id)
 
     def _on_select_audio_channel(self, channel: str):
-        if self.player_window.set_audio_channel(channel):
+        if self.player_window.playback.set_audio_mode(channel):
             action = self.stereo_mode_actions.get(channel)
             if action is not None:
                 action.setChecked(True)
@@ -275,7 +275,7 @@ class MenuBarController:
         self.media_service.clear_recent_media()
 
     def _on_exit_after_current(self, checked: bool):
-        self.player_window.set_exit_after_current(checked)
+        self.player_window.playback.set_exit_after_current(checked)
 
     def _on_exit(self):
         self.main_window.close()

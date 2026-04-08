@@ -8,6 +8,7 @@ from models.PlaybackPlaylist import PlaylistState
 
 class PlayerPlaybackController(QObject):
     STATE_STOPPED = "stopped"
+    STATE_OPENING = "opening"
     STATE_PAUSED = "paused"
     STATE_PLAYING = "playing"
 
@@ -24,8 +25,12 @@ class PlayerPlaybackController(QObject):
 
         self._resume_after_seek = False
         self._exit_after_current = False
+        self._pending_start_position_ms = 0
         self._playback_state = self.STATE_STOPPED
 
+        self.engine.playing.connect(self._handle_engine_playing)
+        self.engine.paused.connect(self._handle_engine_paused)
+        self.engine.stopped.connect(self._handle_engine_stopped)
         self.engine.media_ended.connect(self._handle_media_end)
         self.engine.video_geometry_changed.connect(self.video_geometry_changed)
 
@@ -55,23 +60,28 @@ class PlayerPlaybackController(QObject):
         return True
 
     def play_loaded_media(self, start_position_ms: int = 0):
+        self._pending_start_position_ms = max(0, int(start_position_ms))
         self.engine.sync_audio_to_player()
         self.engine.play()
-        if start_position_ms > 0:
-            QTimer.singleShot(0, lambda: self.engine.set_time(start_position_ms))
-        self._set_playback_state(self.STATE_PLAYING)
+        self._set_playback_state(self.STATE_OPENING)
 
     def toggle_play_pause(self):
         if self.engine.is_playing():
-            self.engine.pause()
-            self._set_playback_state(self.STATE_PAUSED)
+            self.pause()
             return
 
+        self.play()
+
+    def play(self):
         self.engine.sync_audio_to_player()
         self.engine.play()
-        self._set_playback_state(self.STATE_PLAYING)
+        self._set_playback_state(self.STATE_OPENING)
+
+    def pause(self):
+        self.engine.pause()
 
     def stop(self):
+        self._pending_start_position_ms = 0
         self.engine.stop()
         self._set_playback_state(self.STATE_STOPPED)
 
@@ -103,7 +113,7 @@ class PlayerPlaybackController(QObject):
     def finish_seek(self):
         if self._resume_after_seek:
             self.engine.play()
-            self._set_playback_state(self.STATE_PLAYING)
+            self._set_playback_state(self.STATE_OPENING)
         self._resume_after_seek = False
 
     def seek_by_hold(self, direction: str):
@@ -117,6 +127,17 @@ class PlayerPlaybackController(QObject):
         if total_ms > 0:
             self.engine.set_position(new_ms / total_ms)
 
+    def seek_by_ms(self, delta_ms: int):
+        current_ms = self.engine.get_time()
+        if current_ms < 0:
+            return
+
+        total_ms = self.engine.get_length()
+        target_ms = max(0, current_ms + int(delta_ms))
+        if total_ms > 0:
+            target_ms = min(target_ms, total_ms)
+            self.engine.set_position(target_ms / total_ms)
+
     def set_exit_after_current(self, enabled: bool):
         self._exit_after_current = bool(enabled)
 
@@ -125,6 +146,9 @@ class PlayerPlaybackController(QObject):
 
     def has_media_loaded(self) -> bool:
         return self.engine.get_media() is not None
+
+    def is_playing(self) -> bool:
+        return self.engine.is_playing()
 
     def can_activate_view_modes(self) -> bool:
         return self.has_media_loaded() and self._playback_state != self.STATE_STOPPED
@@ -213,6 +237,7 @@ class PlayerPlaybackController(QObject):
         return self.engine.get_video_dimensions()
 
     def _handle_media_end(self):
+        self._pending_start_position_ms = 0
         finished_path = self.current_media_path()
         if finished_path:
             self.media_finished.emit(finished_path)
@@ -241,8 +266,35 @@ class PlayerPlaybackController(QObject):
             return False
 
         self.engine.load_media(media_path)
+        self._set_playback_state(self.STATE_OPENING)
         self.current_media_changed.emit(media_path)
         return True
+
+    def _handle_engine_playing(self):
+        self._set_playback_state(self.STATE_PLAYING)
+        if self._pending_start_position_ms > 0:
+            self._apply_pending_start_position()
+
+    def _handle_engine_paused(self):
+        self._set_playback_state(self.STATE_PAUSED)
+
+    def _handle_engine_stopped(self):
+        self._set_playback_state(self.STATE_STOPPED)
+
+    def _apply_pending_start_position(self, attempts: int = 8, delay_ms: int = 100):
+        if self._pending_start_position_ms <= 0:
+            return
+        if attempts <= 0:
+            self._pending_start_position_ms = 0
+            return
+
+        total_ms = self.engine.get_length()
+        if total_ms > 0:
+            self.engine.set_time(min(self._pending_start_position_ms, total_ms))
+            self._pending_start_position_ms = 0
+            return
+
+        QTimer.singleShot(delay_ms, lambda: self._apply_pending_start_position(attempts - 1, delay_ms))
 
     def _set_playback_state(self, state: str):
         if self._playback_state == state:

@@ -2,7 +2,7 @@ import os
 
 import vlc
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
 
 VLC_AUDIO_CHANNEL_MONO = 7
 AUDIO_DEVICE_DEFAULT_ID = "__default__"
@@ -10,6 +10,8 @@ AUDIO_DEVICE_DEFAULT_ID = "__default__"
 
 class PlaybackService(QObject):
     playing = Signal()
+    paused = Signal()
+    stopped = Signal()
     media_ended = Signal()
     video_geometry_changed = Signal(int, int)
 
@@ -58,6 +60,8 @@ class PlaybackService(QObject):
     def _attach_event_handlers(self):
         event_manager = self.player.event_manager()
         event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_vlc_playing_event)
+        event_manager.event_attach(vlc.EventType.MediaPlayerPaused, self._on_vlc_paused_event)
+        event_manager.event_attach(vlc.EventType.MediaPlayerStopped, self._on_vlc_stopped_event)
         event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
 
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
@@ -254,10 +258,32 @@ class PlaybackService(QObject):
             QTimer.singleShot(150, lambda: self.player.audio_set_channel(desired_channel))
 
     def _on_vlc_playing_event(self, event):
+        QMetaObject.invokeMethod(self, "_emit_playing_from_qt_thread", Qt.QueuedConnection)
+
+    def _on_vlc_paused_event(self, event):
+        QMetaObject.invokeMethod(self, "_emit_paused_from_qt_thread", Qt.QueuedConnection)
+
+    def _on_vlc_stopped_event(self, event):
+        QMetaObject.invokeMethod(self, "_emit_stopped_from_qt_thread", Qt.QueuedConnection)
+
+    def _on_vlc_media_ended_event(self, event):
+        QMetaObject.invokeMethod(self, "_emit_media_ended_from_qt_thread", Qt.QueuedConnection)
+
+    @Slot()
+    def _emit_playing_from_qt_thread(self):
         self.playing.emit()
         self._schedule_video_geometry_probe()
 
-    def _on_vlc_media_ended_event(self, event):
+    @Slot()
+    def _emit_paused_from_qt_thread(self):
+        self.paused.emit()
+
+    @Slot()
+    def _emit_stopped_from_qt_thread(self):
+        self.stopped.emit()
+
+    @Slot()
+    def _emit_media_ended_from_qt_thread(self):
         self.media_ended.emit()
 
     def _disable_vout_input(self):

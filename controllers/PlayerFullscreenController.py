@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QTimer, Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
+from shiboken6 import isValid
 
 
 class PlayerFullscreenController(QObject):
@@ -33,10 +34,13 @@ class PlayerFullscreenController(QObject):
 
         self._is_fullscreen = False
         self._is_pip = False
+        self._controls_forced_hidden = False
         self._controls_visible = True
         self._controls_animation_target_visible = True
         self._cursor_hidden = False
         self._pending_fullscreen_controls_show = False
+        self._click_candidate = False
+        self._press_global_pos = QPoint()
 
         self._controls_hide_timer = QTimer(self)
         self._controls_hide_timer.setSingleShot(True)
@@ -72,9 +76,19 @@ class PlayerFullscreenController(QObject):
         self._is_pip = bool(pip)
         self._apply_immersive_mode_state()
 
+    def set_controls_forced_hidden(self, hidden: bool):
+        self._controls_forced_hidden = bool(hidden)
+        self._apply_immersive_mode_state()
+
     def _apply_immersive_mode_state(self):
         self._controls_animation.stop()
         self._controls_hide_timer.stop()
+
+        if self._controls_forced_hidden:
+            self._pending_fullscreen_controls_show = False
+            self._set_controls_visible(False, animate=False)
+            self.update_layout()
+            return
 
         if self._is_immersive():
             self._pending_fullscreen_controls_show = True
@@ -93,30 +107,38 @@ class PlayerFullscreenController(QObject):
         return self._is_fullscreen or self._is_pip
 
     def eventFilter(self, watched, event):
+        if watched is None or event is None:
+            return False
+        if not isValid(self) or not self._has_live_widgets():
+            return False
+        if isinstance(watched, QWidget) and not isValid(watched):
+            return False
+
         if event.type() in (QEvent.MouseMove, QEvent.Enter):
             self._handle_pointer_activity()
-        elif (
-            event.type() == QEvent.MouseButtonPress
-            and event.button() == Qt.LeftButton
-            and self._is_video_area_widget(watched)
-        ):
-            self._single_click_timer.start()
-        elif (
-            event.type() == QEvent.MouseButtonDblClick
-            and event.button() == Qt.LeftButton
-            and self._is_video_area_widget(watched)
-        ):
-            self._single_click_timer.stop()
-            if not self._is_pip:
-                self._request_fullscreen()
-            event.accept()
-            return True
+        if not self._is_video_area_widget(watched):
+            return super().eventFilter(watched, event)
+
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            return self._handle_video_mouse_press(watched, event)
+        if event.type() == QEvent.MouseMove and event.buttons() & Qt.LeftButton:
+            return self._handle_video_mouse_move(watched, event)
+        if event.type() == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+            return self._handle_video_mouse_double_click(event)
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            return self._handle_video_mouse_release(event)
         return super().eventFilter(watched, event)
 
     def update_layout(self):
         width = self._host.width()
         height = self._host.height()
         controls_height = self._controls.preferred_height()
+
+        if self._controls_forced_hidden:
+            self._video_frame.setGeometry(0, 0, width, height)
+            self._controls.setGeometry(0, height, width, controls_height)
+            self._controls.hide()
+            return
 
         if self._is_immersive():
             self._video_frame.setGeometry(0, 0, width, height)
@@ -142,28 +164,80 @@ class PlayerFullscreenController(QObject):
             child.installEventFilter(self)
 
     def _handle_pointer_activity(self):
-        if not self._is_immersive():
+        if not self._is_immersive() or self._controls_forced_hidden:
             return
         self._set_controls_visible(True, animate=True)
         self._controls_hide_timer.start()
 
     def _is_video_area_widget(self, widget: QWidget) -> bool:
+        if not self._has_live_widgets() or widget is None:
+            return False
+        if isinstance(widget, QWidget) and not isValid(widget):
+            return False
         return widget is self._video_frame or self._video_frame.isAncestorOf(widget)
 
+    def _has_live_widgets(self) -> bool:
+        return (
+            isValid(self._host)
+            and isValid(self._video_frame)
+            and isValid(self._controls)
+            and isValid(self._time_popup)
+        )
+
+    def _handle_video_mouse_press(self, watched: QWidget, event) -> bool:
+        self._click_candidate = True
+        self._press_global_pos = watched.mapToGlobal(event.position().toPoint())
+        if not self._is_pip:
+            self._single_click_timer.start()
+        return False
+
+    def _handle_video_mouse_move(self, watched: QWidget, event) -> bool:
+        if not self._click_candidate:
+            return False
+
+        global_pos = watched.mapToGlobal(event.position().toPoint())
+        if (global_pos - self._press_global_pos).manhattanLength() >= QApplication.startDragDistance():
+            self._cancel_pending_single_click()
+        return False
+
+    def _handle_video_mouse_double_click(self, event) -> bool:
+        self._cancel_pending_single_click()
+        if self._is_pip:
+            return False
+
+        self._request_fullscreen()
+        event.accept()
+        return True
+
+    def _handle_video_mouse_release(self, event) -> bool:
+        should_toggle = self._is_pip and self._click_candidate
+        self._click_candidate = False
+        if not should_toggle:
+            return False
+
+        self._trigger_video_single_click()
+        event.accept()
+        return True
+
     def _trigger_video_single_click(self):
+        self._click_candidate = False
         if not self._has_media_loaded():
             return
         self._toggle_play_pause()
 
+    def _cancel_pending_single_click(self):
+        self._click_candidate = False
+        self._single_click_timer.stop()
+
     def _show_controls_after_fullscreen_ready(self):
-        if not self._is_immersive():
+        if not self._is_immersive() or self._controls_forced_hidden:
             return
         self.update_layout()
         self._set_controls_visible(True, animate=True)
         self._controls_hide_timer.start()
 
     def _hide_controls_if_idle(self):
-        if not self._is_immersive():
+        if not self._is_immersive() or self._controls_forced_hidden:
             return
         if self._controls.underMouse():
             self._controls_hide_timer.start()

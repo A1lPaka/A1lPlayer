@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMainWindow
 
 from ui.PiPWindow import PiPWindow
@@ -15,7 +16,7 @@ class PiPController:
         player_window: PlayerWindow,
         *,
         metrics: Metrics | None = None,
-        theme_color: ThemeState | None = None,
+        theme_color: ThemeState,
     ):
         self._host_window = host_window
         self._player_window = player_window
@@ -43,8 +44,12 @@ class PiPController:
         self.enter_pip()
 
     def enter_pip(self):
-        if self.is_active() or not self._player_window.can_activate_view_modes():
+        if self.is_active() or not self._player_window.playback.can_activate_view_modes():
             return
+
+        was_playing = self._player_window.playback.is_playing()
+        if was_playing:
+            self._player_window.pause()
 
         if self._host_window.isFullScreen():
             self._host_window.showNormal()
@@ -61,12 +66,16 @@ class PiPController:
         pip_window.show()
         pip_window.raise_()
         pip_window.activateWindow()
-        self._player_window.bind_video_output()
         self._host_window.hide()
+        self._rebind_video_output_after_view_switch(was_playing)
 
     def exit_pip(self):
         if not self.is_active():
             return
+
+        was_playing = self._player_window.playback.is_playing()
+        if was_playing:
+            self._player_window.pause()
 
         pip_window = self._ensure_pip_window()
         player_widget = pip_window.takeCentralWidget()
@@ -79,7 +88,7 @@ class PiPController:
         self._host_window.showNormal()
         self._host_window.raise_()
         self._host_window.activateWindow()
-        self._player_window.bind_video_output()
+        self._rebind_video_output_after_view_switch(was_playing)
 
     def toggle_fullscreen_window(self) -> bool:
         if not self.is_active():
@@ -98,7 +107,7 @@ class PiPController:
             return
 
         if width is None or height is None:
-            geometry = self._player_window.get_video_dimensions()
+            geometry = self._player_window.playback.get_video_dimensions()
             if geometry is None:
                 return
             width, height = geometry
@@ -111,3 +120,9 @@ class PiPController:
             self._pip_window.setWindowIcon(self._host_window.windowIcon())
             self._pip_window.closed.connect(self.exit_pip)
         return self._pip_window
+
+    def _rebind_video_output_after_view_switch(self, resume_playback: bool):
+        self._player_window.bind_video_output()
+        QTimer.singleShot(60, self._player_window.bind_video_output)
+        if resume_playback:
+            QTimer.singleShot(90, self._player_window.play)

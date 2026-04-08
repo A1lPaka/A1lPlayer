@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QRect, QPropertyAnimation, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QPushButton, QStyle, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QStyle, QWidget
 from shiboken6 import isValid
 
 from models.ThemeColor import ThemeState
@@ -28,7 +28,7 @@ class PiPWindow(QWidget):
     _EDGE_RIGHT = 4
     _EDGE_BOTTOM = 8
 
-    def __init__(self, metrics: Metrics, theme_color: ThemeState | None = None):
+    def __init__(self, metrics: Metrics, theme_color: ThemeState):
         super().__init__()
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
@@ -40,6 +40,7 @@ class PiPWindow(QWidget):
         self._aspect_ratio: float | None = None
         self._central_widget: QWidget | None = None
         self._active_edges = self._EDGE_NONE
+        self._drag_candidate = False
         self._dragging = False
         self._drag_offset = QPoint()
         self._press_global_pos = QPoint()
@@ -110,7 +111,7 @@ class PiPWindow(QWidget):
         self._layout_children()
         self._update_minimum_size()
 
-    def apply_theme(self, theme_color: ThemeState | None):
+    def apply_theme(self, theme_color: ThemeState):
         self.theme_color = theme_color
         self._apply_style()
         self._update_close_button_icon()
@@ -184,15 +185,17 @@ class PiPWindow(QWidget):
         edges = self._edges_at(local_pos)
         if edges != self._EDGE_NONE:
             self._active_edges = edges
+            self._drag_candidate = False
+            self._dragging = False
             self._press_global_pos = event.globalPosition().toPoint()
             self._press_geometry = self.geometry()
             event.accept()
             return True
-        if local_pos.y() <= self._TITLE_HEIGHT:
-            self._dragging = True
-            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-            return True
+
+        self._drag_candidate = True
+        self._dragging = False
+        self._press_global_pos = event.globalPosition().toPoint()
+        self._drag_offset = self._press_global_pos - self.frameGeometry().topLeft()
         return False
 
     def _handle_move(self, watched: QWidget, event) -> bool:
@@ -201,6 +204,16 @@ class PiPWindow(QWidget):
 
         if self._active_edges != self._EDGE_NONE:
             self._perform_resize(global_pos)
+            event.accept()
+            return True
+        if event.buttons() & Qt.LeftButton and self._drag_candidate:
+            if not self._dragging:
+                drag_distance = (global_pos - self._press_global_pos).manhattanLength()
+                if drag_distance < QApplication.startDragDistance():
+                    self._update_cursor(local_pos)
+                    return False
+                self._dragging = True
+            self.move(global_pos - self._drag_offset)
             event.accept()
             return True
         if self._dragging and event.buttons() & Qt.LeftButton:
@@ -212,10 +225,14 @@ class PiPWindow(QWidget):
         return False
 
     def _handle_release(self, watched: QWidget, event) -> bool:
-        if self._active_edges == self._EDGE_NONE and not self._dragging:
-            return False
+        was_dragging = self._dragging
+        was_resizing = self._active_edges != self._EDGE_NONE
         self._active_edges = self._EDGE_NONE
+        self._drag_candidate = False
         self._dragging = False
+
+        if not was_resizing and not was_dragging:
+            return False
         self._show_title_overlay_temporarily()
         self._update_cursor(self._event_pos_in_window(watched, event))
         event.accept()
@@ -437,8 +454,6 @@ class PiPWindow(QWidget):
         self._title_animation.start()
 
     def _theme_tuple(self, name: str, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
-        if self.theme_color is None:
-            return fallback
         color = self.theme_color.get(name)
         if isinstance(color, (tuple, list)) and len(color) >= 3:
             return int(color[0]), int(color[1]), int(color[2])

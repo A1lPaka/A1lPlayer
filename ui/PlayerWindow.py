@@ -22,7 +22,7 @@ class PlayerWindow(QWidget):
     pip_exit_requested = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
 
-    def __init__(self, metrics: Metrics | None = None, theme_color: ThemeState | None = None):
+    def __init__(self, metrics: Metrics | None, theme_color: ThemeState):
         super().__init__()
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAcceptDrops(True)
@@ -33,6 +33,7 @@ class PlayerWindow(QWidget):
 
         self._video_bound = False
         self._pip_active = False
+        self._chrome_hidden = False
 
         self._init_video_frame()
         self._init_controls()
@@ -88,10 +89,10 @@ class PlayerWindow(QWidget):
         self.controls.speed_button.clicked.connect(self.toggle_speed_popup)
         self.controls.speed_label.clicked.connect(self.toggle_speed_popup)
         self.speed_popup.speed_changed.connect(self.on_speed_changed)
-
-        self._application = QApplication.instance()
-        if self._application is not None:
-            self._application.installEventFilter(self)
+        self._install_local_event_filters(self)
+        self._install_local_event_filters(self.video_frame)
+        self._install_local_event_filters(self.controls)
+        self.speed_popup.installEventFilter(self)
 
         self.playback.playback_state_changed.connect(self._on_playback_state_changed)
         self.playback.current_media_changed.connect(self._on_current_media_changed)
@@ -121,6 +122,13 @@ class PlayerWindow(QWidget):
         self.position_timer.timeout.connect(self.update_timing)
         self.position_timer.start()
         self.update_timing()
+
+    def _set_position_timer_active(self, active: bool):
+        if active:
+            if not self.position_timer.isActive():
+                self.position_timer.start()
+            return
+        self.position_timer.stop()
 
     def apply_metrics(self, metrics: Metrics):
         self.metrics = metrics
@@ -187,32 +195,10 @@ class PlayerWindow(QWidget):
             self.video_placeholder.notify_activity()
         return super().eventFilter(watched, event)
 
-    def load_playlist(self, file_paths: list[str], start_index: int = 0) -> bool:
-        return self.playback.load_playlist(file_paths, start_index=start_index)
-
-    def open_paths(self, file_paths: list[str], start_index: int = 0, start_position_ms: int = 0) -> bool:
-        return self.playback.open_paths(file_paths, start_index=start_index, start_position_ms=start_position_ms)
-
-    def current_media_path(self) -> str | None:
-        return self.playback.current_media_path()
-
-    def get_session_snapshot(self) -> dict[str, int | str] | None:
-        return self.playback.get_session_snapshot()
-
-    def play_loaded_media(self, start_position_ms: int = 0):
-        self.playback.play_loaded_media(start_position_ms=start_position_ms)
-
-    def set_exit_after_current(self, enabled: bool):
-        self.playback.set_exit_after_current(enabled)
-
-    def is_exit_after_current_enabled(self) -> bool:
-        return self.playback.is_exit_after_current_enabled()
-
-    def has_media_loaded(self) -> bool:
-        return self.playback.has_media_loaded()
-
-    def can_activate_view_modes(self) -> bool:
-        return self.playback.can_activate_view_modes()
+    def _install_local_event_filters(self, widget: QWidget):
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def set_fullscreen_mode(self, fullscreen: bool):
         self._apply_fullscreen_ui(fullscreen)
@@ -224,21 +210,6 @@ class PlayerWindow(QWidget):
             for track_id, track_name in raw_tracks
         ]
 
-    def get_current_audio_track(self) -> int:
-        return self.playback.get_current_audio_track()
-
-    def set_audio_track(self, track_id: int) -> bool:
-        return self.playback.set_audio_track(track_id)
-
-    def get_audio_devices(self) -> list[tuple[str, str]]:
-        return self.playback.get_audio_devices()
-
-    def get_current_audio_device(self) -> str:
-        return self.playback.get_current_audio_device()
-
-    def set_audio_device(self, device_id: str) -> bool:
-        return self.playback.set_audio_device(device_id)
-
     def get_audio_channel_modes(self) -> list[tuple[str, str]]:
         return [
             ("stereo", "Stereo"),
@@ -248,27 +219,12 @@ class PlayerWindow(QWidget):
             ("reverse_stereo", "Reverse Stereo"),
         ]
 
-    def get_current_audio_channel(self) -> str:
-        return self.playback.get_current_audio_mode()
-
-    def set_audio_channel(self, channel: str) -> bool:
-        return self.playback.set_audio_mode(channel)
-
     def get_subtitle_tracks(self) -> list[tuple[int, str]]:
         raw_tracks = self.playback.get_subtitle_tracks()
         return [
             (int(track_id), self._format_track_label(track_id, track_name, "Subtitle"))
             for track_id, track_name in raw_tracks
         ]
-
-    def get_current_subtitle_track(self) -> int:
-        return self.playback.get_current_subtitle_track()
-
-    def set_subtitle_track(self, track_id: int) -> bool:
-        return self.playback.set_subtitle_track(track_id)
-
-    def open_subtitle_file(self, subtitle_path: str) -> bool:
-        return self.playback.open_subtitle_file(subtitle_path)
 
     def update_timing(self):
         current_ms, total_ms = self.playback.get_timing()
@@ -291,17 +247,27 @@ class PlayerWindow(QWidget):
             return
         self.playback.toggle_play_pause()
 
+    def play(self):
+        if not self.playback.has_media_loaded():
+            return
+        self.playback.play()
+
+    def pause(self):
+        if not self.playback.has_media_loaded():
+            return
+        self.playback.pause()
+
     def on_stop(self):
         self.playback.stop()
         self._request_pip_exit_if_needed()
 
     def on_fullscreen(self):
-        if not self.fullscreen_controller.is_fullscreen() and not self.can_activate_view_modes():
+        if not self.fullscreen_controller.is_fullscreen() and not self.playback.can_activate_view_modes():
             return
         self.fullscreen_requested.emit()
 
     def on_pip(self):
-        if not self.can_activate_view_modes():
+        if not self.playback.can_activate_view_modes():
             return
         self.pip_requested.emit()
 
@@ -342,14 +308,47 @@ class PlayerWindow(QWidget):
         self.playback.set_rate(speed)
         self.controls.set_speed_value(speed)
 
+    def adjust_speed(self, delta: float):
+        current_speed = self.playback.get_rate()
+        target_speed = max(0.25, min(4.0, current_speed + float(delta)))
+        self.playback.set_rate(target_speed)
+        self.controls.set_speed_value(target_speed)
+        if self.speed_popup.isVisible():
+            self.speed_popup.set_speed(target_speed)
+
+    def reset_speed(self):
+        self.playback.set_rate(1.0)
+        self.controls.set_speed_value(1.0)
+        if self.speed_popup.isVisible():
+            self.speed_popup.set_speed(1.0)
+
     def on_volume_changed(self, volume: int):
         self.playback.set_volume(volume)
+        self.controls.volume_controls.volume_bar.set_volume(self.playback.get_desired_volume() / 100.0)
         self.controls.toggle_muted(self.playback.is_muted())
+
+    def adjust_volume(self, delta_percent: int):
+        self.on_volume_changed(self.playback.get_desired_volume() + int(delta_percent))
 
     def on_mute(self):
         self.playback.toggle_mute()
         self.controls.volume_controls.volume_bar.set_volume(self.playback.get_desired_volume() / 100.0)
         self.controls.toggle_muted(self.playback.is_muted())
+
+    def seek_by_ms(self, delta_ms: int):
+        self.playback.seek_by_ms(delta_ms)
+        self.update_timing()
+
+    def set_chrome_hidden(self, hidden: bool):
+        self._chrome_hidden = bool(hidden)
+        self.fullscreen_controller.set_controls_forced_hidden(self._chrome_hidden)
+        if self.speed_popup.isVisible() and self._chrome_hidden:
+            self._hide_speed_popup()
+        self.updateGeometry()
+        self.update()
+
+    def is_chrome_hidden(self) -> bool:
+        return self._chrome_hidden
 
     def _is_user_activity_event(self, event) -> bool:
         return event.type() in {
@@ -443,9 +442,6 @@ class PlayerWindow(QWidget):
         if self._pip_active:
             self.pip_exit_requested.emit()
 
-    def get_video_dimensions(self) -> tuple[int, int] | None:
-        return self.playback.get_video_dimensions()
-
     def _on_current_media_changed(self, path: str):
         self._apply_loaded_ui()
         self.current_media_changed.emit(path)
@@ -467,16 +463,19 @@ class PlayerWindow(QWidget):
         self.controls.toggle_progress_seekable(True)
 
     def _apply_stopped_ui(self):
+        self._set_position_timer_active(False)
         self.video_placeholder.show_placeholder()
         self.controls.toggle_progress_seekable(False)
         self.controls.toggle_play_pause(False)
         self.update_timing()
 
     def _apply_playing_ui(self):
+        self._set_position_timer_active(True)
         self._apply_loaded_ui()
         self.controls.toggle_play_pause(True)
 
     def _apply_paused_ui(self):
+        self._set_position_timer_active(True)
         self._apply_loaded_ui()
         self.controls.toggle_play_pause(False)
 

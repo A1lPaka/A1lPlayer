@@ -23,7 +23,7 @@ class ClickableLabel(QLabel):
         super().mousePressEvent(event)
 
 class PlayerControls(QWidget):
-    def __init__(self, parent: QWidget, metrics: Metrics, theme_color: ThemeState | None = None):
+    def __init__(self, parent: QWidget, metrics: Metrics, theme_color: ThemeState):
         super().__init__(parent)
         self.metrics = metrics
         self.theme_color = theme_color
@@ -201,7 +201,7 @@ class PlayerControls(QWidget):
         return f"x{float(speed):.2f}"
 
 class TimePopup(QWidget):
-    def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeState | None = None):
+    def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeState):
         super().__init__(parent)
         self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -275,7 +275,7 @@ class SpeedPopup(QWidget):
     MAX_STEP = 16
     DEFAULT_STEP = 4
 
-    def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeState | None = None):
+    def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeState):
         super().__init__(parent)
         self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -327,10 +327,8 @@ class SpeedPopup(QWidget):
         self.updateGeometry()
         self.update()
 
-    def apply_theme(self, theme_color: ThemeState | None):
+    def apply_theme(self, theme_color: ThemeState):
         self.theme_color = theme_color
-        if theme_color is None:
-            return
 
         panel_bg = QColor(*theme_color.get("panel_bg_color"))
         text_color = QColor(*theme_color.get("text_color"))
@@ -396,7 +394,7 @@ class BaseButton(QAbstractButton):
     _pixmap_cache: Dict[Tuple[str, int, int, int, int], QPixmap] = {}
     _MAX_PIXMAP_CACHE_ITEMS = 256
 
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0, var: str | None = None):
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0, var: str | None = None):
         super().__init__(parent)
         self.setMouseTracking(True)
         self.bg_color = theme_color.get("time_popup_color") if var == "time_popup" else theme_color.get("control_button_color")
@@ -482,8 +480,8 @@ class BaseButton(QAbstractButton):
 
 
 class PlayPauseButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
         self.is_playing = False
 
     def set_playing(self, playing: bool):
@@ -495,13 +493,13 @@ class PlayPauseButton(BaseButton):
 
 
 class RewindButton(BaseButton):
-    seek_hold = Signal(str)  # направление: "left" или "right"
+    seek_hold = Signal(str)  
 
-    LONG_PRESS_DELAY = 500   # мс до активации перемотки
-    SEEK_INTERVAL    = 300   # мс между шагами перемотки при удержании
+    LONG_PRESS_DELAY = 500   
+    SEEK_INTERVAL    = 300   
 
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, direction: str = "left", scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, direction: str = "left", scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
         self.direction = direction
         self._is_long_press = False
 
@@ -551,22 +549,22 @@ class RewindButton(BaseButton):
 
 
 class StopButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
 
     def _get_svg_filename(self) -> str:
         return "stop.svg"
     
 class SpeedButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
 
     def _get_svg_filename(self) -> str:
         return "trackspeed.svg"
 
 class FullscreenButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
         self.is_fullscreen = False
 
     def set_fullscreen(self, fullscreen: bool):
@@ -577,15 +575,15 @@ class FullscreenButton(BaseButton):
         return "restore.svg" if self.is_fullscreen else "fullscreen.svg"
     
 class PiPButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
 
     def _get_svg_filename(self) -> str:
         return "pipopen.svg"
 
 
 class VolumeControls(QWidget):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
@@ -628,7 +626,7 @@ class VolumeControls(QWidget):
 class VolumeBar(QWidget):
     volume_changed = Signal(float)
 
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None):
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
@@ -655,7 +653,7 @@ class VolumeBar(QWidget):
         width = self.width()
         height = self.height()
 
-        interval_width = int(width / 10)
+        interval_width = max(1, int(width / 10))
         seg_width = int(interval_width * 0.8)
 
         active_seg = int(self.volume * 10)
@@ -693,7 +691,7 @@ class VolumeBar(QWidget):
 
     def _update_volume_from_pos(self, pos):
         width = self.width()
-        interval_width = int(width / 10)
+        interval_width = max(1, int(width / 10))
 
         if pos < 0:
             self.set_volume(0)
@@ -707,8 +705,8 @@ class VolumeBar(QWidget):
 
 
 class VolumeButton(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor)
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor)
         self.is_muted = False
 
     def set_muted(self, muted: bool):
@@ -723,10 +721,10 @@ class ProgressBar(QWidget):
     seek_started = Signal()
     value_changed = Signal(float)
     seek_finished = Signal()
-    hover_changed = Signal(float)   # ratio 0..1, при наведении без нажатия
-    hover_left = Signal()           # мышь покинула прогресс-бар
+    hover_changed = Signal(float)   
+    hover_left = Signal()          
 
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None):
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
@@ -807,8 +805,8 @@ class ProgressBar(QWidget):
         self.value_changed.emit(self.value)
 
 class TimePopupFrame(BaseButton):
-    def __init__(self, parent: QWidget | None = None, theme_color: ThemeState | None = None, scale_factor: float = 1.0):
-        super().__init__(parent, theme_color, scale_factor, var="time_popup")
+    def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0):
+        super().__init__(parent, theme_color, scale_factor=scale_factor, var="time_popup")
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
     def _get_svg_filename(self) -> str:
