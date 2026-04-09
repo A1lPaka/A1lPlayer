@@ -1,22 +1,24 @@
 import os
 
-from PySide6.QtCore import QSettings
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import QWidget
 
-from models.ThemeColor import ThemeState
 from services.MediaDialogs import MediaDialogs
 from services.MediaPathService import MediaPathService
 from services.MediaSettingsStore import MediaSettingsStore
 from ui.PlayerWindow import PlayerWindow
 
 
-class MediaService:
-    def __init__(self, parent: QWidget, player_window: PlayerWindow, settings: QSettings | None):
+class MediaLibraryService:
+    def __init__(
+        self,
+        parent,
+        player_window: PlayerWindow,
+        store: MediaSettingsStore,
+    ):
         self._player = player_window
         self._dialogs = MediaDialogs(parent)
         self._paths = MediaPathService()
-        self._store = MediaSettingsStore(settings)
+        self._store = store
 
     def save_time_session(self):
         snapshot = self._player.playback.get_session_snapshot()
@@ -28,12 +30,6 @@ class MediaService:
             int(snapshot["position_ms"]),
             int(snapshot["total_ms"]),
         )
-
-    def load_theme(self) -> ThemeState:
-        return self._store.load_theme()
-
-    def save_theme(self, theme_color: ThemeState):
-        self._store.save_theme(theme_color)
 
     def clear_saved_position(self, path: str):
         self._store.clear_saved_position(path)
@@ -75,7 +71,10 @@ class MediaService:
         if len(normalized_paths) == 1:
             start_position_ms = self._resolve_start_position_ms(normalized_paths[0])
 
-        if not self._player.playback.open_paths(normalized_paths, start_position_ms=start_position_ms):
+        if not self._player.playback.open_paths(
+            normalized_paths,
+            start_position_ms=start_position_ms,
+        ):
             return False
 
         self._store.save_last_open_dir(normalized_paths[0])
@@ -86,7 +85,9 @@ class MediaService:
     def can_accept_drag_event(self, event: QDragEnterEvent) -> bool:
         if not event.mimeData().hasUrls():
             return False
-        drop_data = self._paths.classify_drop_paths(self._paths.urls_to_local_paths(event.mimeData().urls()))
+        drop_data = self._paths.classify_drop_paths(
+            self._paths.urls_to_local_paths(event.mimeData().urls())
+        )
         return self._can_apply_drop_data(drop_data)
 
     def handle_drag_enter_event(self, event: QDragEnterEvent) -> bool:
@@ -134,7 +135,9 @@ class MediaService:
         if position_ms <= 0:
             return 0
 
-        return position_ms if self._dialogs.confirm_resume_playback(path, position_ms) else 0
+        if self._dialogs.confirm_resume_playback(path, position_ms):
+            return position_ms
+        return 0
 
     def _can_apply_drop_data(self, drop_data: dict[str, list[str]]) -> bool:
         if drop_data["media_paths"]:

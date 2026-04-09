@@ -1,4 +1,8 @@
 import os
+import shutil
+import tempfile
+import uuid
+from pathlib import Path
 
 import vlc
 
@@ -26,6 +30,7 @@ class PlaybackService(QObject):
         self._current_media_path: str | None = None
         self._bound_win_id: int | None = None
         self._last_video_geometry: tuple[int, int] | None = None
+        self._runtime_subtitle_copy_path: str | None = None
         self._audio_modes = {
             "stereo": {
                 "channel": int(vlc.AudioOutputChannel.Stereo.value),
@@ -90,6 +95,7 @@ class PlaybackService(QObject):
         self._disable_vout_input()
 
     def load_media(self, media_path: str):
+        self._cleanup_runtime_subtitle_copy()
         self._current_media_path = media_path
         self._last_video_geometry = None
         media = self.instance.media_new(media_path)
@@ -111,6 +117,7 @@ class PlaybackService(QObject):
         self.player.pause()
 
     def stop(self):
+        self._cleanup_runtime_subtitle_copy()
         self.player.stop()
 
     def set_time(self, position_ms: int):
@@ -219,7 +226,18 @@ class PlaybackService(QObject):
     def open_subtitle_file(self, subtitle_path: str) -> bool:
         if not subtitle_path or self.get_media() is None:
             return False
-        return self.player.video_set_subtitle_file(str(subtitle_path)) == 0
+
+        runtime_path = self._prepare_runtime_subtitle_copy(subtitle_path)
+        if runtime_path is None:
+            return False
+
+        self.player.video_set_spu(-1)
+        if self.player.video_set_subtitle_file(runtime_path) != 0:
+            self._remove_subtitle_copy(runtime_path)
+            return False
+
+        self._runtime_subtitle_copy_path = runtime_path
+        return True
 
     def set_volume(self, volume: int):
         self._desired_volume = max(0, min(100, volume))
@@ -309,3 +327,29 @@ class PlaybackService(QObject):
             return
 
         QTimer.singleShot(delay_ms, lambda: self._schedule_video_geometry_probe(attempts - 1, delay_ms))
+
+    def _prepare_runtime_subtitle_copy(self, subtitle_path: str) -> str | None:
+        source_path = Path(subtitle_path)
+        if not source_path.is_file():
+            return None
+
+        runtime_dir = Path(tempfile.gettempdir()) / "A1lPlayer" / "subtitles"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        runtime_copy_path = runtime_dir / f"{source_path.stem}_{uuid.uuid4().hex}{source_path.suffix}"
+        shutil.copyfile(source_path, runtime_copy_path)
+
+        self._cleanup_runtime_subtitle_copy()
+        return str(runtime_copy_path)
+
+    def _cleanup_runtime_subtitle_copy(self):
+        if not self._runtime_subtitle_copy_path:
+            return
+        self._remove_subtitle_copy(self._runtime_subtitle_copy_path)
+        self._runtime_subtitle_copy_path = None
+
+    def _remove_subtitle_copy(self, path: str | Path):
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass

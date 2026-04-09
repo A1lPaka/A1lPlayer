@@ -33,6 +33,9 @@ class ThemeState:
         "volume_bar_color_active": (
             ("volume_bar_color_inactive", "inactive"),
         ),
+        "text_color": (
+            ("text_color_inactive", "inactive"),
+        ),
     }
 
     def __init__(self, colors: dict = None):

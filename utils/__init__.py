@@ -21,6 +21,10 @@ class Metrics:
     theme_dialog_width: int
     theme_dialog_height: int
     pip_min_width: int
+    subtitle_dialog_width: int 
+    subtitle_dialog_height: int 
+    subtitle_progress_dialog_width: int
+    subtitle_progress_dialog_height: int
 
 def res_path(relative_path: str) -> str:
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,8 +45,12 @@ def get_metrics(widget: QWidget) -> Metrics:
         theme_dialog_height = int(min_window_side / 1.75) 
         theme_dialog_width = min_window_side // 2
         pip_min_width = int(min_window_side / 5.2)
+        subtitle_dialog_width = min_window_side // 2
+        subtitle_dialog_height = int(min_window_side * 0.3)
+        subtitle_progress_dialog_width = int(min_window_side * 0.4)
+        subtitle_progress_dialog_height = int(min_window_side * 0.3)
 
-        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
+        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width, subtitle_dialog_width, subtitle_dialog_height, subtitle_progress_dialog_width, subtitle_progress_dialog_height)
     
     geo = screen.geometry()
 
@@ -56,8 +64,12 @@ def get_metrics(widget: QWidget) -> Metrics:
     theme_dialog_height = int(min_window_side / 1.75)
     theme_dialog_width = min_window_side // 2
     pip_min_width = int(min_window_side / 5.2)
+    subtitle_dialog_width = min_window_side // 2
+    subtitle_dialog_height = int(min_window_side * 0.3)
+    subtitle_progress_dialog_width = int(min_window_side * 0.42)
+    subtitle_progress_dialog_height = int(min_window_side * 0.2)
 
-    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width)
+    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width, subtitle_dialog_width, subtitle_dialog_height, subtitle_progress_dialog_width, subtitle_progress_dialog_height)
 
 def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
     r, g, b = bg_color

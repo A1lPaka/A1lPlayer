@@ -451,14 +451,17 @@ class BaseButton(QAbstractButton):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        icon_rect = self._get_icon_rect()
-        icon_width = int(icon_rect.width())
-        icon_height = int(icon_rect.height())
-        pixmap = self._render_tinted_svg(self._get_svg_filename(), icon_width, icon_height, self._get_bg_color(), self.scale_factor)
-        painter.drawPixmap(int(icon_rect.x()), int(icon_rect.y()), pixmap)
+            icon_rect = self._get_icon_rect()
+            icon_width = int(icon_rect.width())
+            icon_height = int(icon_rect.height())
+            pixmap = self._render_tinted_svg(self._get_svg_filename(), icon_width, icon_height, self._get_bg_color(), self.scale_factor)
+            painter.drawPixmap(int(icon_rect.x()), int(icon_rect.y()), pixmap)
+        finally:
+            painter.end()
 
     def enterEvent(self, event: QEvent):
         self.is_hovered = True
@@ -647,23 +650,26 @@ class VolumeBar(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(Qt.NoPen)
 
-        width = self.width()
-        height = self.height()
+            width = self.width()
+            height = self.height()
 
-        interval_width = max(1, int(width / 10))
-        seg_width = int(interval_width * 0.8)
+            interval_width = max(1, int(width / 10))
+            seg_width = int(interval_width * 0.8)
 
-        active_seg = int(self.volume * 10)
+            active_seg = int(self.volume * 10)
 
-        for i in range(10):
-            x = int(i * interval_width)
-            color = self.active_bg_color if i < active_seg else self.inactive_bg_color
+            for i in range(10):
+                x = int(i * interval_width)
+                color = self.active_bg_color if i < active_seg else self.inactive_bg_color
 
-            painter.setBrush(QColor(*color))
-            painter.drawRect(x, 0, seg_width, height)
+                painter.setBrush(QColor(*color))
+                painter.drawRect(x, 0, seg_width, height)
+        finally:
+            painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -752,20 +758,23 @@ class ProgressBar(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setPen(Qt.NoPen)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            painter.setPen(Qt.NoPen)
 
-        width = self.width()
-        height = self.height()
+            width = self.width()
+            height = self.height()
 
-        bar_height = int(round(height * 0.6))
-        bar_y = int(round((height - bar_height) / 2.0))
+            bar_height = int(round(height * 0.6))
+            bar_y = int(round((height - bar_height) / 2.0))
 
-        painter.setBrush(QColor(*self.inactive_bg_color))
-        painter.drawRect(0, bar_y, width, bar_height)
+            painter.setBrush(QColor(*self.inactive_bg_color))
+            painter.drawRect(0, bar_y, width, bar_height)
 
-        painter.setBrush(QColor(*self.active_bg_color))
-        painter.drawRect(0, bar_y, int(round(width * self.value)), bar_height)
+            painter.setBrush(QColor(*self.active_bg_color))
+            painter.drawRect(0, bar_y, int(round(width * self.value)), bar_height)
+        finally:
+            painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton and not self._dragging:

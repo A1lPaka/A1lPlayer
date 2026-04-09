@@ -57,6 +57,7 @@ class ColorThemeDialog(QWidget):
         self._init_constants()
         self.interface_preview.apply_metrics(metrics)
         self.setMinimumSize(self._metrics.theme_dialog_width, self._metrics.theme_dialog_height)
+        self.setMaximumSize(self._metrics.theme_dialog_width * 1.5, self._metrics.theme_dialog_height * 1.5)
         self.resize(max(self.width(), self.minimumWidth()), max(self.height(), self.minimumHeight()))
         self.updateGeometry()
 
@@ -196,12 +197,8 @@ class ColorThemeDialog(QWidget):
             self.color_picker.set_sv(saturation, value)
             self.hex_input.setText(hex_color)
             self._last_submitted_hex = hex_color
-            self.color_swatch.setStyleSheet(
-                f"background-color: {color.name(QColor.HexRgb)}; border: 1px solid #666;"
-            )
-            self.interface_preview_frame.setStyleSheet(
-                "background-color: #666;"
-            )
+            self._update_color_swatch(color)
+            self._update_preview_frame()
             self.interface_preview.update_theme(self._theme_color)
         finally:
             self._updating_ui = False
@@ -279,6 +276,14 @@ class ColorThemeDialog(QWidget):
         self.themeApplied.emit(self.get_theme_color())
         self.close()
 
+    def _update_color_swatch(self, color: QColor):
+        self.color_swatch.setStyleSheet(
+            f"background-color: {color.name(QColor.HexRgb)}; border: 1px solid #666;"
+        )
+
+    def _update_preview_frame(self):
+        self.interface_preview_frame.setStyleSheet("background-color: #666;")
+
 class SaturationValuePicker(QWidget):
     colorChanged = Signal(float, float)
     CONTENT_MARGIN = 8
@@ -327,26 +332,29 @@ class SaturationValuePicker(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        rect = self._content_rect()
-        base_color = QColor.fromHsv(int(self._hue), 255, 255)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            rect = self._content_rect()
+            base_color = QColor.fromHsv(int(self._hue), 255, 255)
 
-        saturation_gradient = QLinearGradient(rect.topLeft(), rect.topRight())
-        saturation_gradient.setColorAt(0.0, QColor(255, 255, 255))
-        saturation_gradient.setColorAt(1.0, base_color)
-        painter.fillRect(rect, saturation_gradient)
+            saturation_gradient = QLinearGradient(rect.topLeft(), rect.topRight())
+            saturation_gradient.setColorAt(0.0, QColor(255, 255, 255))
+            saturation_gradient.setColorAt(1.0, base_color)
+            painter.fillRect(rect, saturation_gradient)
 
-        value_gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        value_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
-        value_gradient.setColorAt(1.0, QColor(0, 0, 0, 255))
-        painter.fillRect(rect, value_gradient)
+            value_gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+            value_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+            value_gradient.setColorAt(1.0, QColor(0, 0, 0, 255))
+            painter.fillRect(rect, value_gradient)
 
-        painter.setPen(QPen(QColor(255, 255, 255), 2))
-        handle_x = rect.left() + int(self._saturation * (rect.width() - 1))
-        handle_y = rect.top() + int((1.0 - self._value) * (rect.height() - 1))
-        painter.drawEllipse(QPoint(handle_x, handle_y), 6, 6)
-        painter.setPen(QPen(QColor(0, 0, 0), 1))
-        painter.drawEllipse(QPoint(handle_x, handle_y), 7, 7)
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            handle_x = rect.left() + int(self._saturation * (rect.width() - 1))
+            handle_y = rect.top() + int((1.0 - self._value) * (rect.height() - 1))
+            painter.drawEllipse(QPoint(handle_x, handle_y), 6, 6)
+            painter.setPen(QPen(QColor(0, 0, 0), 1))
+            painter.drawEllipse(QPoint(handle_x, handle_y), 7, 7)
+        finally:
+            painter.end()
 
 
 class HueSlider(QWidget):
@@ -385,23 +393,26 @@ class HueSlider(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        rect = self._content_rect()
+        try:
+            rect = self._content_rect()
 
-        hue_gradient = QLinearGradient(rect.bottomLeft(), rect.topLeft())
-        hue_gradient.setColorAt(0.0, QColor.fromHsv(0, 255, 255))
-        hue_gradient.setColorAt(1.0 / 6.0, QColor.fromHsv(60, 255, 255))
-        hue_gradient.setColorAt(2.0 / 6.0, QColor.fromHsv(120, 255, 255))
-        hue_gradient.setColorAt(3.0 / 6.0, QColor.fromHsv(180, 255, 255))
-        hue_gradient.setColorAt(4.0 / 6.0, QColor.fromHsv(240, 255, 255))
-        hue_gradient.setColorAt(5.0 / 6.0, QColor.fromHsv(300, 255, 255))
-        hue_gradient.setColorAt(1.0, QColor.fromHsv(359, 255, 255))
-        painter.fillRect(rect, hue_gradient)
+            hue_gradient = QLinearGradient(rect.bottomLeft(), rect.topLeft())
+            hue_gradient.setColorAt(0.0, QColor.fromHsv(0, 255, 255))
+            hue_gradient.setColorAt(1.0 / 6.0, QColor.fromHsv(60, 255, 255))
+            hue_gradient.setColorAt(2.0 / 6.0, QColor.fromHsv(120, 255, 255))
+            hue_gradient.setColorAt(3.0 / 6.0, QColor.fromHsv(180, 255, 255))
+            hue_gradient.setColorAt(4.0 / 6.0, QColor.fromHsv(240, 255, 255))
+            hue_gradient.setColorAt(5.0 / 6.0, QColor.fromHsv(300, 255, 255))
+            hue_gradient.setColorAt(1.0, QColor.fromHsv(359, 255, 255))
+            painter.fillRect(rect, hue_gradient)
 
-        painter.setPen(QPen(QColor(255, 255, 255), 2))
-        handle_y = rect.top() + int((1.0 - (self._hue / 359.0)) * (rect.height() - 1))
-        painter.drawLine(rect.left() - 4, handle_y, rect.right() + 4, handle_y)
-        painter.setPen(QPen(QColor(0, 0, 0), 1))
-        painter.drawLine(rect.left() - 4, handle_y + 2, rect.right() + 4, handle_y + 2)
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            handle_y = rect.top() + int((1.0 - (self._hue / 359.0)) * (rect.height() - 1))
+            painter.drawLine(rect.left() - 4, handle_y, rect.right() + 4, handle_y)
+            painter.setPen(QPen(QColor(0, 0, 0), 1))
+            painter.drawLine(rect.left() - 4, handle_y + 2, rect.right() + 4, handle_y + 2)
+        finally:
+            painter.end()
 
 
 class InterfacePreview(QWidget):

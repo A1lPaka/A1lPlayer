@@ -146,10 +146,13 @@ class PiPWindow(QWidget):
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setPen(QPen(self._FRAME_COLOR, 1))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            painter.setPen(QPen(self._FRAME_COLOR, 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        finally:
+            painter.end()
 
     def leaveEvent(self, event: QEvent):
         if self._active_edges == self._EDGE_NONE and not self._dragging:

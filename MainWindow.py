@@ -3,8 +3,10 @@ from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 
-from services.MediaService import MediaService
+from services.MediaLibraryService import MediaLibraryService
 from services.MediaSettingsStore import MediaSettingsStore
+from services.SubtitleGenerationService import SubtitleGenerationService
+from services.SubtitleMaker import SubtitleMaker
 from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
 from controllers.PlayerPiPController import PiPController
@@ -32,13 +34,15 @@ class MainWindow(QMainWindow):
         self._theme_dialog: ColorThemeDialog | None = None
         self._chrome_hidden = False
 
-        self.theme_state = MediaSettingsStore(self.settings).load_theme()
+        self.media_store = MediaSettingsStore(self.settings)
+        self.theme_state = self.media_store.load_theme()
 
         self._fullscreen_shortcuts: list[QShortcut] = []
         
         self.player_window = PlayerWindow(self.metrics, theme_color=self.theme_state)
-        self.media_service = MediaService(self, self.player_window, self.settings)
-        self.player_window.open_file_requested.connect(self.media_service.open_file)
+        self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
+        self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store)
+        self.player_window.open_file_requested.connect(self.media_library.open_file)
         self.player_window.media_drop_requested.connect(self._handle_player_drop_event)
         self.player_window.media_finished.connect(self._on_media_finished)
         self.player_window.current_media_changed.connect(self._on_current_media_changed)
@@ -57,7 +61,8 @@ class MainWindow(QMainWindow):
         self.menu_bar_controller = MenuBarController(
             main_window=self,
             player_window=self.player_window,
-            media_service=self.media_service,
+            media_library=self.media_library,
+            subtitle_service=self.subtitle_service,
             metrics=self.metrics,
             theme_color=self.theme_state,
         )
@@ -91,16 +96,17 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.pip_controller.is_active():
             self.exit_pip()
-        self.media_service.save_time_session()
+        self.media_library.save_time_session()
+        SubtitleMaker.clear_model_cache()
         super().closeEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if self.media_service.handle_drag_enter_event(event):
+        if self.media_library.handle_drag_enter_event(event):
             return
         super().dragEnterEvent(event)
 
     def dropEvent(self, event: QDropEvent):
-        if self.media_service.handle_drop_event(event):
+        if self.media_library.handle_drop_event(event):
             return
         super().dropEvent(event)
 
@@ -186,13 +192,13 @@ class MainWindow(QMainWindow):
 
     def _handle_player_drop_event(self, event):
         if isinstance(event, QDragEnterEvent):
-            self.media_service.handle_drag_enter_event(event)
+            self.media_library.handle_drag_enter_event(event)
             return
         if isinstance(event, QDropEvent):
-            self.media_service.handle_drop_event(event)
+            self.media_library.handle_drop_event(event)
 
     def _on_media_finished(self, path: str):
-        self.media_service.clear_saved_position(path)
+        self.media_library.clear_saved_position(path)
 
     def _on_current_media_changed(self, path: str):
         self._update_window_title(path)
@@ -228,7 +234,7 @@ class MainWindow(QMainWindow):
         self.theme_state = theme_color
         self.player_window.apply_theme(self.theme_state)
         self.menu_bar_controller.apply_theme(self.theme_state)
-        self.media_service.save_theme(self.theme_state)
+        self.media_store.save_theme(self.theme_state)
         self.pip_controller.apply_theme(self.theme_state)
         if self._theme_dialog is not None:
             self._theme_dialog.close()

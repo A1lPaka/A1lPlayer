@@ -34,6 +34,8 @@ class PlayerWindow(QWidget):
         self._video_bound = False
         self._pip_active = False
         self._chrome_hidden = False
+        self._subtitle_generation_ui_suspended = False
+        self._subtitle_generation_timer_was_active = False
 
         self._init_video_frame()
         self._init_controls()
@@ -227,6 +229,8 @@ class PlayerWindow(QWidget):
         ]
 
     def update_timing(self):
+        if self._subtitle_generation_ui_suspended:
+            return
         current_ms, total_ms = self.playback.get_timing()
         self.controls.update_timing(current_ms, total_ms)
 
@@ -256,6 +260,28 @@ class PlayerWindow(QWidget):
         if not self.playback.has_media_loaded():
             return
         self.playback.pause()
+
+    def suspend_for_subtitle_generation(self):
+        if self._subtitle_generation_ui_suspended:
+            return
+        self._subtitle_generation_ui_suspended = True
+        self._subtitle_generation_timer_was_active = self.position_timer.isActive()
+        self.position_timer.stop()
+        self.video_frame.setUpdatesEnabled(False)
+        self.controls.setUpdatesEnabled(False)
+
+    def resume_after_subtitle_generation(self):
+        if not self._subtitle_generation_ui_suspended:
+            return
+        self._subtitle_generation_ui_suspended = False
+        self.video_frame.setUpdatesEnabled(True)
+        self.controls.setUpdatesEnabled(True)
+        if self._subtitle_generation_timer_was_active:
+            self.position_timer.start()
+        self._subtitle_generation_timer_was_active = False
+        self.update_timing()
+        self.controls.update()
+        self.video_frame.update()
 
     def on_stop(self):
         self.playback.stop()

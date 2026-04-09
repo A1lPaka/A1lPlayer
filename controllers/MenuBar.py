@@ -8,7 +8,8 @@ from models.ThemeColor import ThemeState
 from utils import Metrics
 
 if TYPE_CHECKING:
-    from services.MediaService import MediaService
+    from services.MediaLibraryService import MediaLibraryService
+    from services.SubtitleGenerationService import SubtitleGenerationService
     from ui.PlayerWindow import PlayerWindow
 
 class MenuBarController:
@@ -16,13 +17,15 @@ class MenuBarController:
         self,
         main_window: QMainWindow,
         player_window: PlayerWindow,
-        media_service: MediaService,
+        media_library: MediaLibraryService,
+        subtitle_service: SubtitleGenerationService,
         metrics: Metrics | None,
         theme_color: ThemeState,
     ):
         self.main_window = main_window
         self.player_window = player_window
-        self.media_service = media_service
+        self.media_library = media_library
+        self.subtitle_service = subtitle_service
         self.metrics = metrics
         self.theme_color = theme_color
         self.setup()
@@ -72,8 +75,11 @@ class MenuBarController:
 
         self.open_subtitle_action = subtitles_menu.addAction("Open Subtitle")
         self.open_subtitle_action.triggered.connect(self._on_open_subtitle)
+        self.open_subtitle_action.setEnabled(self.player_window.playback.has_media_loaded())
 
-        self.generate_subtitle_action = subtitles_menu.addAction("Generate Subtitle") # using OpenAI Whisper
+        self.generate_subtitle_action = subtitles_menu.addAction("Generate Subtitle")
+        self.generate_subtitle_action.triggered.connect(self._on_generate_subtitle)
+        self.generate_subtitle_action.setEnabled(self.player_window.playback.has_media_loaded())
 
         self.subtitle_track_menu = subtitles_menu.addMenu("Subtitle Track")
         self.subtitle_track_menu.aboutToShow.connect(self._rebuild_subtitle_track_menu)
@@ -81,6 +87,9 @@ class MenuBarController:
         # View
         self.theme_action = self.menu_bar.addAction("Theme")
         self.theme_action.triggered.connect(self._on_open_theme_dialog)
+
+        self.player_window.playback.current_media_changed.connect(self._sync_media_actions)
+        self.player_window.playback.playback_state_changed.connect(self._sync_media_actions)
 
     def _rgb(self, name: str) -> str:
         r, g, b = self.theme_color.get(name)
@@ -94,6 +103,7 @@ class MenuBarController:
         pressed_color = self._rgb("panel_bg_color_pressed")
         separator_color = self._rgb("panel_bg_color_separator")
         text_color = self._rgb("text_color")
+        inactive_text_color = self._rgb("text_color_inactive")
         style = f"""
             QMenuBar {{
                 background-color: {bg_color};
@@ -111,6 +121,9 @@ class MenuBarController:
             QMenuBar::item:pressed {{
                 background-color: {pressed_color};
             }}
+            QMenuBar::item:disabled {{
+                color: {inactive_text_color};
+            }}
             QMenu {{
                 background-color: {bg_color};
                 border-top: 1px solid {separator_color};
@@ -125,6 +138,9 @@ class MenuBarController:
             QMenu::item:pressed {{
                 background-color: {pressed_color};
             }}
+            QMenu::item:disabled {{
+                color: {inactive_text_color};
+            }}
             QMenu::separator {{
                 height: 1px;
                 background-color: {separator_color};
@@ -132,6 +148,7 @@ class MenuBarController:
             }}
         """
         self.menu_bar.setStyleSheet(style)
+        self._sync_media_actions()
 
     def apply_metrics(self, metrics: Metrics):
         self.metrics = metrics
@@ -143,17 +160,25 @@ class MenuBarController:
 
 
     def _on_open_file(self):
-        self.media_service.open_file()
+        self.media_library.open_file()
 
     def _on_open_folder(self):
-        self.media_service.open_folder()
+        self.media_library.open_folder()
 
     def _on_open_subtitle(self):
-        self.media_service.open_subtitle()
+        self.media_library.open_subtitle()
+
+    def _on_generate_subtitle(self):
+        self.subtitle_service.generate_subtitle()
+
+    def _sync_media_actions(self, *_args):
+        has_media_loaded = self.player_window.playback.has_media_loaded()
+        self.open_subtitle_action.setEnabled(has_media_loaded)
+        self.generate_subtitle_action.setEnabled(has_media_loaded)
 
     def _rebuild_recent_menu(self):
         self.open_recent_action.clear()
-        items = self.media_service.get_recent_media()
+        items = self.media_library.get_recent_media()
 
         if not items:
             empty_action = self.open_recent_action.addAction("No recent media")
@@ -254,7 +279,7 @@ class MenuBarController:
             self.stereo_mode_actions[channel_id] = action
 
     def _on_open_recent_item(self, path: str):
-        self.media_service.open_recent_media(path)
+        self.media_library.open_recent_media(path)
 
     def _on_select_audio_track(self, track_id: int):
         self.player_window.playback.set_audio_track(track_id)
@@ -272,7 +297,7 @@ class MenuBarController:
                 action.setChecked(True)
 
     def _on_clear_recent(self):
-        self.media_service.clear_recent_media()
+        self.media_library.clear_recent_media()
 
     def _on_exit_after_current(self, checked: bool):
         self.player_window.playback.set_exit_after_current(checked)
