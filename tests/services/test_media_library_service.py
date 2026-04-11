@@ -1,8 +1,17 @@
+from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QWidget
 
 from services.MediaLibraryService import MediaLibraryService
 
 from tests.fakes import FakeMediaStore, FakePlayerWindow
+
+
+class _FakeDragEnterEvent:
+    def __init__(self, mime_data: QMimeData):
+        self._mime_data = mime_data
+
+    def mimeData(self):
+        return self._mime_data
 
 
 def test_recent_media_commits_only_after_confirmed_media(monkeypatch, workspace_tmp_path):
@@ -66,3 +75,91 @@ def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
 
     assert service.open_media_paths([media_path]) is True
     assert player.playback.last_open_paths["start_position_ms"] == 3210
+
+
+def test_drag_enter_accepts_supported_local_media_without_full_classification(monkeypatch, workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_path = workspace_tmp_path / "movie.mp4"
+    media_path.write_text("media")
+
+    monkeypatch.setattr(
+        service._paths,
+        "classify_drop_paths",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("drag-enter must stay cheap")),
+    )
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(media_path))])
+
+    assert service.can_accept_drag_event(_FakeDragEnterEvent(mime_data)) is True
+
+
+def test_drag_enter_accepts_local_directory_without_full_scan(monkeypatch, workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_dir = workspace_tmp_path / "library"
+    media_dir.mkdir()
+
+    collect_calls = 0
+
+    def fail_on_collect(_path):
+        nonlocal collect_calls
+        collect_calls += 1
+        raise AssertionError("drag-enter must not scan directories")
+
+    monkeypatch.setattr(service._paths, "collect_media_files", fail_on_collect)
+    monkeypatch.setattr(
+        service._paths,
+        "classify_drop_paths",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("drag-enter must not fully classify")),
+    )
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(media_dir))])
+
+    assert service.can_accept_drag_event(_FakeDragEnterEvent(mime_data)) is True
+    assert collect_calls == 0
+
+
+def test_drag_enter_rejects_unsupported_local_file(workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    text_path = workspace_tmp_path / "notes.txt"
+    text_path.write_text("hello")
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(text_path))])
+
+    assert service.can_accept_drag_event(_FakeDragEnterEvent(mime_data)) is False
+
+
+def test_drag_enter_rejects_non_local_urls():
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl("https://example.com/video.mp4")])
+
+    assert service.can_accept_drag_event(_FakeDragEnterEvent(mime_data)) is False
+
+
+def test_drop_still_scans_directory_and_opens_media(workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_dir = workspace_tmp_path / "library"
+    media_dir.mkdir()
+    first_media = media_dir / "a.mp4"
+    second_media = media_dir / "b.mkv"
+    subtitle = media_dir / "sub.srt"
+    first_media.write_text("a")
+    second_media.write_text("b")
+    subtitle.write_text("sub")
+
+    assert service.open_dropped_paths([str(media_dir)]) is True
+    assert player.playback.last_open_paths["file_paths"] == [str(first_media), str(second_media)]

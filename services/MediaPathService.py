@@ -30,6 +30,28 @@ class MediaPathService:
         file_paths.sort(key=lambda p: os.path.basename(p).lower())
         return file_paths
 
+    def cheap_classify_drag_paths(self, dropped_paths: list[str]) -> dict[str, list[str]]:
+        media_paths: list[str] = []
+        subtitle_paths: list[str] = []
+
+        for path in self.deduplicate_paths(dropped_paths):
+            if os.path.isdir(path):
+                media_paths.append(path)
+                continue
+            if not os.path.isfile(path):
+                continue
+
+            kind = self._classify_file_path(path)
+            if kind == "media":
+                media_paths.append(path)
+            elif kind == "subtitle":
+                subtitle_paths.append(path)
+
+        return {
+            "media_paths": media_paths,
+            "subtitle_paths": subtitle_paths,
+        }
+
     def classify_drop_paths(self, dropped_paths: list[str]) -> dict[str, list[str]]:
         media_paths: list[str] = []
         subtitle_paths: list[str] = []
@@ -45,11 +67,10 @@ class MediaPathService:
                 logger.exception("Failed to inspect dropped path | path=%s", path)
                 raise
 
-            _, ext = os.path.splitext(path)
-            ext = ext.lower()
-            if ext in self.MEDIA_EXTENSIONS:
+            kind = self._classify_file_path(path)
+            if kind == "media":
                 media_paths.append(path)
-            elif ext in self.SUBTITLE_EXTENSIONS:
+            elif kind == "subtitle":
                 subtitle_paths.append(path)
 
         return {
@@ -77,3 +98,20 @@ class MediaPathService:
             if local_path:
                 local_paths.append(local_path)
         return local_paths
+
+    def are_local_file_urls(self, urls) -> bool:
+        saw_url = False
+        for url in urls:
+            saw_url = True
+            if not url.isLocalFile() or not url.toLocalFile():
+                return False
+        return saw_url
+
+    def _classify_file_path(self, path: str) -> str | None:
+        _, ext = os.path.splitext(path)
+        ext = ext.lower()
+        if ext in self.MEDIA_EXTENSIONS:
+            return "media"
+        if ext in self.SUBTITLE_EXTENSIONS:
+            return "subtitle"
+        return None

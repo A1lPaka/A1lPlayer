@@ -157,14 +157,12 @@ class MediaLibraryService(QObject):
     def can_accept_drag_event(self, event: QDragEnterEvent) -> bool:
         if not event.mimeData().hasUrls():
             return False
-        try:
-            drop_data = self._paths.classify_drop_paths(
-                self._paths.urls_to_local_paths(event.mimeData().urls())
-            )
-        except OSError:
-            logger.exception("Failed to inspect drag-enter paths")
+        urls = event.mimeData().urls()
+        if not self._paths.are_local_file_urls(urls):
             return False
-        return self._can_apply_drop_data(drop_data)
+        return self._can_apply_drop_data(
+            self._paths.cheap_classify_drag_paths(self._paths.urls_to_local_paths(urls))
+        )
 
     def handle_drag_enter_event(self, event: QDragEnterEvent) -> bool:
         if not self.can_accept_drag_event(event):
