@@ -88,8 +88,7 @@ class MenuBarController:
         self.theme_action = self.menu_bar.addAction("Theme")
         self.theme_action.triggered.connect(self._on_open_theme_dialog)
 
-        self.player_window.playback.current_media_changed.connect(self._sync_media_actions)
-        self.player_window.playback.playback_state_changed.connect(self._sync_media_actions)
+        self.player_window.active_media_changed.connect(self._sync_media_actions)
 
     def _rgb(self, name: str) -> str:
         r, g, b = self.theme_color.get(name)
@@ -172,9 +171,13 @@ class MenuBarController:
         self.subtitle_service.generate_subtitle()
 
     def _sync_media_actions(self, *_args):
-        has_media_loaded = self.player_window.playback.has_media_loaded()
-        self.open_subtitle_action.setEnabled(has_media_loaded)
-        self.generate_subtitle_action.setEnabled(has_media_loaded)
+        has_active_media = self.player_window.playback.has_media_loaded()
+        self.open_subtitle_action.setEnabled(has_active_media)
+        self.generate_subtitle_action.setEnabled(has_active_media)
+        self.audio_track_menu.setEnabled(has_active_media)
+        self.audio_device_menu.setEnabled(has_active_media)
+        self.stereo_mode_menu.setEnabled(has_active_media)
+        self.subtitle_track_menu.setEnabled(has_active_media)
 
     def _rebuild_recent_menu(self):
         self.open_recent_action.clear()

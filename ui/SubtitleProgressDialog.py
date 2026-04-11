@@ -126,6 +126,10 @@ class SubtitleProgressDialog(QWidget):
     def set_details(self, text: str):
         self.details_label.setText(text)
 
+    def set_cancel_enabled(self, enabled: bool, button_text: str | None = None):
+        self.cancel_button.setEnabled(bool(enabled))
+        self.cancel_button.setText(button_text or "Cancel")
+
     def set_progress(self, value: int):
         bounded_value = max(0, min(100, int(value)))
         if self.progress_bar.minimum() == 0 and self.progress_bar.maximum() == 0:

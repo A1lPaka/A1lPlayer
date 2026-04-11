@@ -1,18 +1,37 @@
+import logging
 import sys
+from functools import partial
+from services.RuntimeInstallerMain import try_run_runtime_installer
+from services.RuntimeHelperMain import try_run_runtime_helper
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 
+from services.AppCloseCoordinator import AppCloseCoordinator
 from services.MediaLibraryService import MediaLibraryService
 from services.MediaSettingsStore import MediaSettingsStore
 from services.SubtitleGenerationService import SubtitleGenerationService
-from services.SubtitleMaker import SubtitleMaker
 from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
 from controllers.PlayerPiPController import PiPController
 from ui.ColorThemeDialog import ColorThemeDialog
+from ui.MessageBoxService import show_playback_error
 from utils import res_path, get_metrics, build_window_title
+from utils.LoggingSetup import configure_logging
 from models.ThemeColor import ThemeState
+
+
+logger = logging.getLogger(__name__)
+
+
+_runtime_installer_exit_code = try_run_runtime_installer(sys.argv[1:])
+if _runtime_installer_exit_code is not None:
+    raise SystemExit(_runtime_installer_exit_code)
+
+_runtime_helper_exit_code = try_run_runtime_helper(sys.argv[1:])
+if _runtime_helper_exit_code is not None:
+    raise SystemExit(_runtime_helper_exit_code)
+
 
 class MainWindow(QMainWindow):
     _BASE_WINDOW_TITLE = "A1lPlayer"
@@ -37,7 +56,8 @@ class MainWindow(QMainWindow):
         self.media_store = MediaSettingsStore(self.settings)
         self.theme_state = self.media_store.load_theme()
 
-        self._fullscreen_shortcuts: list[QShortcut] = []
+        self._window_shortcuts: list[QShortcut] = []
+        self._pip_shortcuts: list[QShortcut] = []
         
         self.player_window = PlayerWindow(self.metrics, theme_color=self.theme_state)
         self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
@@ -45,7 +65,8 @@ class MainWindow(QMainWindow):
         self.player_window.open_file_requested.connect(self.media_library.open_file)
         self.player_window.media_drop_requested.connect(self._handle_player_drop_event)
         self.player_window.media_finished.connect(self._on_media_finished)
-        self.player_window.current_media_changed.connect(self._on_current_media_changed)
+        self.player_window.active_media_changed.connect(self._on_active_media_changed)
+        self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
         self.player_window.fullscreen_requested.connect(self.toggle_fullscreen)
         self.player_window.pip_requested.connect(self.toggle_pip)
@@ -65,6 +86,13 @@ class MainWindow(QMainWindow):
             subtitle_service=self.subtitle_service,
             metrics=self.metrics,
             theme_color=self.theme_state,
+        )
+        self.app_close_coordinator = AppCloseCoordinator(
+            self,
+            self.subtitle_service,
+            self.media_library,
+            is_pip_active=self.pip_controller.is_active,
+            exit_pip=self.exit_pip,
         )
         self._init_shortcuts()
 
@@ -94,10 +122,11 @@ class MainWindow(QMainWindow):
                 self._screen_connected = True
 
     def closeEvent(self, event):
-        if self.pip_controller.is_active():
-            self.exit_pip()
-        self.media_library.save_time_session()
-        SubtitleMaker.clear_model_cache()
+        close_result = self.app_close_coordinator.attempt_close()
+        if not close_result.can_close:
+            event.ignore()
+            return
+        event.accept()
         super().closeEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -114,37 +143,43 @@ class MainWindow(QMainWindow):
         self.apply_metrics(get_metrics(self))
 
     def _init_shortcuts(self):
-        for shortcut_text in ("F11", "Alt+Return", "Ctrl+Alt+Return"):
-            shortcut = QShortcut(QKeySequence(shortcut_text), self)
-            shortcut.setContext(Qt.WindowShortcut)
-            shortcut.activated.connect(self.toggle_fullscreen)
-            self._fullscreen_shortcuts.append(shortcut)
+        self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.exit_fullscreen))
 
-        exit_fullscreen_shortcut = QShortcut(QKeySequence("Esc"), self)
-        exit_fullscreen_shortcut.setContext(Qt.WindowShortcut)
-        exit_fullscreen_shortcut.activated.connect(self.exit_fullscreen)
-        self._fullscreen_shortcuts.append(exit_fullscreen_shortcut)
-
-        shortcut_bindings = (
-            ("Space", self.player_window.on_play_pause),
-            ("Up", lambda: self.player_window.adjust_volume(10)),
-            ("Down", lambda: self.player_window.adjust_volume(-10)),
-            ("Left", lambda: self.player_window.seek_by_ms(-10_000)),
-            ("Right", lambda: self.player_window.seek_by_ms(10_000)),
-            ("Shift+Left", lambda: self.player_window.seek_by_ms(-5_000)),
-            ("Shift+Right", lambda: self.player_window.seek_by_ms(5_000)),
-            ("Ctrl+Left", lambda: self.player_window.seek_by_ms(-60_000)),
-            ("Ctrl+Right", lambda: self.player_window.seek_by_ms(60_000)),
-            ("+", lambda: self.player_window.adjust_speed(self._SPEED_STEP)),
-            ("-", lambda: self.player_window.adjust_speed(-self._SPEED_STEP)),
+    def _build_shortcut_bindings(self, escape_handler):
+        return (
+            ("F11", self.toggle_fullscreen),
+            ("Alt+Return", self.toggle_fullscreen),
+            ("Ctrl+Alt+Return", self.toggle_fullscreen),
+            ("Esc", escape_handler),
+            ("Space", self.player_window.player_actions.on_play_pause),
+            ("Up", partial(self.player_window.adjust_volume, 10)),
+            ("Down", partial(self.player_window.adjust_volume, -10)),
+            ("Left", partial(self.player_window.seek_by_ms, -10_000)),
+            ("Right", partial(self.player_window.seek_by_ms, 10_000)),
+            ("Shift+Left", partial(self.player_window.seek_by_ms, -5_000)),
+            ("Shift+Right", partial(self.player_window.seek_by_ms, 5_000)),
+            ("Ctrl+Left", partial(self.player_window.seek_by_ms, -60_000)),
+            ("Ctrl+Right", partial(self.player_window.seek_by_ms, 60_000)),
+            ("+", partial(self.player_window.adjust_speed, self._SPEED_STEP)),
+            ("-", partial(self.player_window.adjust_speed, -self._SPEED_STEP)),
             ("=", self.player_window.reset_speed),
             ("Ctrl+H", self.toggle_chrome_visibility),
         )
+
+    def init_pip_shortcuts(self, pip_window):
+        if self._pip_shortcuts:
+            return
+        self._register_shortcuts(pip_window, self._pip_shortcuts, self._build_shortcut_bindings(self.exit_pip))
+
+    def _register_shortcuts(self, parent, storage: list[QShortcut], shortcut_bindings):
         for shortcut_text, handler in shortcut_bindings:
-            shortcut = QShortcut(QKeySequence(shortcut_text), self)
-            shortcut.setContext(Qt.WindowShortcut)
-            shortcut.activated.connect(handler)
-            self._fullscreen_shortcuts.append(shortcut)
+            self._register_window_shortcut(parent, storage, shortcut_text, handler)
+
+    def _register_window_shortcut(self, parent, storage: list[QShortcut], shortcut_text: str, handler):
+        shortcut = QShortcut(QKeySequence(shortcut_text), parent)
+        shortcut.setContext(Qt.WindowShortcut)
+        shortcut.activated.connect(handler)
+        storage.append(shortcut)
 
     def toggle_fullscreen(self):
         if self.pip_controller.toggle_fullscreen_window():
@@ -200,12 +235,16 @@ class MainWindow(QMainWindow):
     def _on_media_finished(self, path: str):
         self.media_library.clear_saved_position(path)
 
-    def _on_current_media_changed(self, path: str):
+    def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)
         self.pip_controller.update_aspect_ratio()
 
     def _on_video_geometry_changed(self, width: int, height: int):
         self.pip_controller.update_aspect_ratio(width, height)
+
+    def _on_playback_error(self, path: str, message: str):
+        logger.warning("Playback error surfaced to UI | media=%s | message=%s", path or "<unknown>", message)
+        show_playback_error(self, message, path)
 
     def _update_window_title(self, media_path: str | None = None):
         self.setWindowTitle(build_window_title(media_path, base_title=self._BASE_WINDOW_TITLE, max_media_title_length=self._MAX_MEDIA_TITLE_LENGTH))
@@ -248,8 +287,11 @@ class MainWindow(QMainWindow):
     def exit_pip(self):
         self.pip_controller.exit_pip()
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+    app_argv = list(sys.argv if argv is None else argv)
+    log_file_path = configure_logging()
+    logger.info("Application startup initiated%s", f" | log_file={log_file_path}" if log_file_path else "")
+    app = QApplication(app_argv)
     app.setWindowIcon(QIcon(res_path("assets/logo.ico")))
 
     settings = QSettings("Cute_Alpaca_Club", "A1lPlayer")
@@ -257,4 +299,10 @@ if __name__ == "__main__":
     window = MainWindow(settings=settings)
     window.show()
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    logger.info("Application event loop finished | exit_code=%s", exit_code)
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

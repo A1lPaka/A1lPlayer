@@ -1,6 +1,4 @@
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
-
-from utils import _format_ms
+from PySide6.QtWidgets import QFileDialog, QWidget
 
 
 class MediaDialogs:
@@ -34,15 +32,3 @@ class MediaDialogs:
             self.SUBTITLE_FILTER,
         )
         return subtitle_path
-
-    def confirm_resume_playback(self, path: str, position_ms: int) -> bool:
-        msg = QMessageBox(self._parent)
-        msg.setWindowTitle("Resume playback")
-        msg.setText(
-            f"Resume playback for:\n{path}\n\n"
-            f"Last position: {_format_ms(position_ms)}\n\n"
-            "Continue from where you left off?"
-        )
-        msg.setIcon(QMessageBox.Icon.NoIcon)
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return msg.exec() == QMessageBox.StandardButton.Yes

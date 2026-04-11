@@ -30,7 +30,7 @@ from utils import Metrics, get_metrics, res_path
 
 @dataclass
 class SubtitleGenerationDialogResult:
-    audio_track_id: int | None
+    audio_stream_index: int | None
     audio_language: str | None
     device: str | None
     model_size: str
@@ -285,7 +285,7 @@ class SubtitleGenerationDialog(QWidget):
         self.generate_button.setGeometry(generate_button_x, button_y, self.button_width, self.button_height)
 
     def get_result(self) -> SubtitleGenerationDialogResult:
-        audio_track_id = self.audio_track_combo.currentData()
+        audio_stream_index = self.audio_track_combo.currentData()
         audio_language = self.audio_language_combo.currentData()
         device = self.device_combo.currentData()
         if audio_language == "auto":
@@ -294,7 +294,7 @@ class SubtitleGenerationDialog(QWidget):
             device = None
 
         return SubtitleGenerationDialogResult(
-            audio_track_id=int(audio_track_id) if audio_track_id is not None else None,
+            audio_stream_index=int(audio_stream_index) if audio_stream_index is not None else None,
             audio_language=audio_language,
             device=device,
             model_size=str(self.model_combo.currentData()),

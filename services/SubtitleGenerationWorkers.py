@@ -1,209 +1,342 @@
+import json
+import logging
+import os
+import signal
 import subprocess
-import sys
 import threading
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from services.SubtitleMaker import (
-    SubtitleGenerationCanceledError,
-    SubtitleGenerationEmptyResultError,
-    SubtitleMaker,
-    get_missing_windows_cuda_runtime_packages,
+from services.RuntimeExecution import build_runtime_helper_launch
+from services.RuntimeHelperProtocol import (
+    EVENT_CANCELED,
+    EVENT_FAILED,
+    EVENT_FINISHED,
+    EVENT_PROGRESS,
+    HELPER_SUBTITLE_GENERATION,
+    SubtitleGenerationRequest,
+)
+from services.SubprocessLifecycle import SubprocessLifecycleMixin
+from services.SubprocessWorkerSupport import (
+    BoundedLineBuffer,
+    CancelAwareWorkerMixin,
+    TerminalEventMixin,
+    build_exception_diagnostics,
+    build_process_diagnostics,
 )
 from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 
-class SubtitleGenerationWorker(QObject):
+logger = logging.getLogger(__name__)
+
+
+class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWorkerMixin, TerminalEventMixin):
     progress_changed = Signal(int)
     status_changed = Signal(str)
     details_changed = Signal(str)
     finished = Signal(str, bool)
-    failed = Signal(str)
+    failed = Signal(str, str)
     canceled = Signal()
+
+    _GRACEFUL_CANCEL_TIMEOUT_SECONDS = 1.5
 
     def __init__(self, media_path: str, options: SubtitleGenerationDialogResult):
         super().__init__()
-        self._media_path = media_path
-        self._options = options
-        self._cancel_event = threading.Event()
-        self._maker: SubtitleMaker | None = None
+        self._request = SubtitleGenerationRequest(
+            media_path=media_path,
+            audio_stream_index=options.audio_stream_index,
+            audio_language=options.audio_language,
+            device=options.device,
+            model_size=options.model_size,
+            output_format=options.output_format,
+            output_path=options.output_path,
+            auto_open_after_generation=options.auto_open_after_generation,
+        )
+        self._init_subprocess_lifecycle()
+        self._init_cancel_state()
+        self._init_terminal_event_state()
+        self._stderr_buffer = BoundedLineBuffer(max_lines=200)
 
     @Slot()
     def run(self):
-        try:
-            self.status_changed.emit("Preparing...")
-            self.progress_changed.emit(0)
-            self.details_changed.emit(self._build_details())
+        launch_spec = build_runtime_helper_launch(HELPER_SUBTITLE_GENERATION)
+        process: subprocess.Popen[str] | None = None
+        stderr_thread = None
 
-            if self._cancel_event.is_set():
-                self.canceled.emit()
-                return
+        self.status_changed.emit("Preparing...")
+        self.progress_changed.emit(0)
+        self.details_changed.emit(self._build_initial_details())
 
-            maker = SubtitleMaker(
-                model_size=self._options.model_size,
-                device=self._options.device,
-            )
-            self._maker = maker
-
-            segments = maker.transcribe_file(
-                self._media_path,
-                audio_track=self._options.audio_track_id,
-                language=self._options.audio_language,
-                progress_callback=self._on_progress,
-                cancel_event=self._cancel_event,
-            )
-
-            if self._cancel_event.is_set():
-                self.canceled.emit()
-                return
-
-            self.status_changed.emit("Saving subtitles...")
-            self.progress_changed.emit(97)
-            self.details_changed.emit(
-                self._build_details(stage="Saving", actual_device=maker.device)
-            )
-            maker.save_subtitles(
-                segments,
-                self._options.output_path,
-                self._options.output_format,
-            )
-            self.progress_changed.emit(100)
-            self.finished.emit(
-                self._options.output_path,
-                self._options.auto_open_after_generation,
-            )
-        except SubtitleGenerationCanceledError:
-            self.canceled.emit()
-        except SubtitleGenerationEmptyResultError as exc:
-            self.failed.emit(str(exc))
-        except Exception as exc:
-            self.failed.emit(str(exc))
-        finally:
-            self._maker = None
-
-    def cancel(self):
-        self._cancel_event.set()
-        if self._maker is not None:
-            self._maker.cancel()
-        self.status_changed.emit("Cancelling...")
-
-    def _on_progress(self, status: str, progress: int, details: str):
-        if self._cancel_event.is_set():
-            raise SubtitleGenerationCanceledError()
-        self.status_changed.emit(str(status))
-        self.progress_changed.emit(int(progress))
-        if details:
-            self.details_changed.emit(str(details))
-
-    def _build_details(
-        self,
-        stage: str | None = None,
-        actual_device: str | None = None,
-    ) -> str:
-        language_label = self._options.audio_language or "Auto detect"
-        if self._options.audio_track_id is None:
-            track_label = "Current / default"
-        else:
-            track_label = f"Track {int(self._options.audio_track_id) + 1}"
-        device_label = actual_device or self._options.device or "Auto"
-
-        lines = []
-        if stage is not None:
-            lines.append(f"Stage: {stage}")
-        lines.extend(
-            [
-                f"Media: {self._media_path}",
-                f"Audio: {track_label}",
-                f"Language: {language_label}",
-                f"Device: {device_label}",
-                f"Model: {self._options.model_size}",
-                f"Output: {self._options.output_path}",
-            ]
-        )
-        return "\n".join(lines)
-
-
-class CudaRuntimeInstallWorker(QObject):
-    status_changed = Signal(str)
-    details_changed = Signal(str)
-    finished = Signal()
-    failed = Signal(str)
-    canceled = Signal()
-
-    def __init__(self, packages: list[str]):
-        super().__init__()
-        self._packages = list(packages)
-        self._cancel_event = threading.Event()
-        self._process: object | None = None
-
-    @Slot()
-    def run(self):
-        self.status_changed.emit("Installing GPU runtime...")
-        self.details_changed.emit(
-            "Downloading required NVIDIA CUDA libraries...\n"
-            "This is needed once for CUDA subtitle generation.\n\n"
-            "Packages:\n"
-            + "\n".join(self._packages)
-        )
-
-        if self._cancel_event.is_set():
-            self.canceled.emit()
+        if self._is_cancel_requested():
+            logger.info("Subtitle generation subprocess worker canceled before launch | media=%s", self._request.media_path)
+            self._emit_canceled()
             return
 
         try:
+            logger.info(
+                "Launching subtitle generation helper subprocess | media=%s | output=%s | model=%s | requested_device=%s | audio_stream_index=%s | language=%s | execution_mode=%s",
+                self._request.media_path,
+                self._request.output_path,
+                self._request.model_size,
+                self._request.device or "auto",
+                self._request.audio_stream_index,
+                self._request.audio_language or "auto",
+                launch_spec.execution_mode,
+            )
             process = subprocess.Popen(
-                [sys.executable, "-m", "pip", "install", "--upgrade", *self._packages],
+                launch_spec.command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                cwd=launch_spec.cwd,
+                **self._subprocess_spawn_options(),
             )
             self._process = process
-            stdout_data, stderr_data = process.communicate()
+            if self._is_cancel_requested():
+                logger.info(
+                    "Subtitle generation subprocess received deferred cancel immediately after launch | media=%s | pid=%s",
+                    self._request.media_path,
+                    process.pid,
+                )
+                self._begin_termination()
+
+            stderr_thread = threading.Thread(
+                target=self._collect_stderr,
+                args=(process,),
+                daemon=True,
+            )
+            stderr_thread.start()
+
+            request_json = self._request.to_json()
+            if process.stdin is None:
+                raise RuntimeError("Subtitle generation process stdin is unavailable.")
+            process.stdin.write(request_json)
+            process.stdin.flush()
+            process.stdin.close()
+
+            self._read_stdout_events(process)
+            return_code = process.wait()
+
+            if stderr_thread is not None:
+                stderr_thread.join(timeout=1.0)
+
+            if self._terminal_event_already_emitted():
+                logger.info(
+                    "Subtitle generation subprocess finished after terminal event | media=%s | returncode=%s",
+                    self._request.media_path,
+                    return_code,
+                )
+                return
+
+            diagnostics = self._build_process_diagnostics(return_code)
+            if self._is_cancel_requested():
+                logger.info(
+                    "Subtitle generation subprocess exited during cancellation | media=%s | returncode=%s",
+                    self._request.media_path,
+                    return_code,
+                )
+                self._emit_canceled()
+                return
+
+            logger.error(
+                "Subtitle generation subprocess exited without terminal event | media=%s | returncode=%s | diagnostics=%s",
+                self._request.media_path,
+                return_code,
+                diagnostics or "<none>",
+            )
+            self._emit_failed(
+                "Subtitle generation stopped unexpectedly.",
+                diagnostics,
+            )
         except Exception as exc:
-            self.failed.emit(str(exc))
-            return
+            diagnostics = self._build_exception_diagnostics(exc)
+            logger.exception(
+                "Subtitle generation helper worker crashed | media=%s | output=%s",
+                self._request.media_path,
+                self._request.output_path,
+            )
+            self._emit_failed("Subtitle generation failed to start.", diagnostics)
         finally:
-            process = self._process
             self._process = None
-
-        if self._cancel_event.is_set():
-            self.canceled.emit()
-            return
-
-        if process is None or process.returncode is None:
-            self.failed.emit("GPU runtime installation did not finish correctly.")
-            return
-
-        if process.returncode != 0:
-            error_text = (
-                self._decode_process_output(stderr_data)
-                or self._decode_process_output(stdout_data)
-                or "Unknown pip error."
-            )
-            self.failed.emit(f"Failed to install GPU runtime:\n{error_text}")
-            return
-
-        missing_packages = get_missing_windows_cuda_runtime_packages()
-        if missing_packages:
-            self.failed.emit(
-                "GPU runtime installation finished, but required CUDA libraries are still missing:\n"
-                + "\n".join(missing_packages)
-            )
-            return
-
-        self.finished.emit()
+            if process is not None:
+                self._close_stream(process.stdin)
+                self._close_stream(process.stdout)
+                self._close_stream(process.stderr)
+            if stderr_thread is not None and stderr_thread.is_alive():
+                stderr_thread.join(timeout=0.5)
 
     def cancel(self):
-        self._cancel_event.set()
+        if not self._request_cancel():
+            logger.info("Repeated cancel request ignored for subtitle generation subprocess | media=%s", self._request.media_path)
+            return
+
+        logger.info("Cancel requested for subtitle generation subprocess | media=%s", self._request.media_path)
+        self.status_changed.emit("Cancellation requested...")
+        self.details_changed.emit(self._build_cancel_details())
+        self._begin_termination()
+
+    def force_stop(self):
+        if self._force_stop_requested:
+            logger.info(
+                "Repeated force-stop request ignored for subtitle generation subprocess | media=%s",
+                self._request.media_path,
+            )
+        else:
+            self._force_stop_requested = True
+            self._request_cancel()
+            logger.warning(
+                "Force-stop requested for subtitle generation subprocess | media=%s",
+                self._request.media_path,
+            )
+
         process = self._process
         if process is not None and process.poll() is None:
             try:
-                process.terminate()
-            except OSError:
-                pass
-        self.status_changed.emit("Cancelling GPU runtime installation...")
+                self._kill_process_tree(process)
+            except Exception:
+                logger.exception(
+                    "Failed to hard-stop subtitle generation subprocess immediately | media=%s | pid=%s",
+                    self._request.media_path,
+                    process.pid,
+                )
 
-    def _decode_process_output(self, payload: bytes | None) -> str:
-        if not payload:
-            return ""
-        return payload.decode("utf-8", errors="replace").strip()
+        self._begin_termination()
+
+    def _read_stdout_events(self, process: subprocess.Popen[str]):
+        if process.stdout is None:
+            raise RuntimeError("Subtitle generation process stdout is unavailable.")
+
+        for raw_line in process.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            self._handle_event_line(line)
+
+    def _handle_event_line(self, line: str):
+        try:
+            event = json.loads(line)
+        except Exception:
+            logger.warning(
+                "Subtitle generation subprocess emitted invalid JSON event | media=%s | line=%s",
+                self._request.media_path,
+                line,
+            )
+            self._stderr_buffer.append(f"Invalid stdout event: {line}")
+            return
+
+        event_type = str(event.get("event") or "").strip().lower()
+        if event_type == EVENT_PROGRESS:
+            self.status_changed.emit(str(event.get("status") or "Working..."))
+            self.progress_changed.emit(int(event.get("progress") or 0))
+            self.details_changed.emit(str(event.get("details") or ""))
+            return
+        if event_type == EVENT_FINISHED:
+            self._emit_finished(
+                str(event.get("output_path") or self._request.output_path),
+                bool(event.get("auto_open")),
+            )
+            return
+        if event_type == EVENT_FAILED:
+            self._emit_failed(
+                str(event.get("user_message") or "Subtitle generation failed."),
+                str(event.get("diagnostics") or ""),
+            )
+            return
+        if event_type == EVENT_CANCELED:
+            self._emit_canceled()
+            return
+
+        logger.warning(
+            "Subtitle generation subprocess emitted unknown event type | media=%s | event=%s",
+            self._request.media_path,
+            event_type or "<missing>",
+        )
+        self._stderr_buffer.append(f"Unknown stdout event: {line}")
+
+    def _emit_failed(self, user_message: str, diagnostics: str):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.failed.emit(str(user_message), str(diagnostics))
+
+    def _emit_canceled(self):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.canceled.emit()
+
+    def _emit_finished(self, output_path: str, auto_open: bool):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.finished.emit(str(output_path), bool(auto_open))
+
+    def _build_initial_details(self) -> str:
+        language_label = self._request.audio_language or "Auto detect"
+        if self._request.audio_stream_index is None:
+            track_label = "Current / default"
+        else:
+            track_label = f"Stream #{int(self._request.audio_stream_index)}"
+        device_label = self._request.device or "Auto"
+        return "\n".join(
+            [
+                f"Media: {self._request.media_path}",
+                f"Audio: {track_label}",
+                f"Language: {language_label}",
+                f"Device: {device_label}",
+                f"Model: {self._request.model_size}",
+                f"Output: {self._request.output_path}",
+            ]
+        )
+
+    def _build_cancel_details(self) -> str:
+        return "\n".join(
+            [
+                "Stopping subtitle generation subprocess.",
+                "The current transcription job will be terminated outside the GUI process.",
+                "",
+                self._build_initial_details(),
+            ]
+        )
+
+    def _collect_stderr(self, process: subprocess.Popen[str]):
+        if process.stderr is None:
+            return
+        try:
+            for line in process.stderr:
+                text = line.rstrip()
+                if text:
+                    self._stderr_buffer.append(text)
+        except OSError:
+            if not self._is_cancel_requested():
+                logger.debug("Subtitle generation stderr stream closed unexpectedly")
+
+    def _build_process_diagnostics(self, return_code: int | None) -> str:
+        return build_process_diagnostics(
+            return_code,
+            [(None, self._stderr_buffer.consume_text())],
+        )
+
+    def _build_exception_diagnostics(self, exc: BaseException) -> str:
+        return build_exception_diagnostics(
+            exc,
+            [(None, self._stderr_buffer.consume_text())],
+        )
+
+    def _request_graceful_stop(self, process: subprocess.Popen[str]):
+        if process.poll() is not None:
+            return
+
+        if os.name == "nt":
+            ctrl_break = getattr(signal, "CTRL_BREAK_EVENT", None)
+            if ctrl_break is not None:
+                process.send_signal(ctrl_break)
+                return
+            process.terminate()
+            return
+
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+
+    def _subprocess_log_name(self) -> str:
+        return "subtitle generation subprocess"

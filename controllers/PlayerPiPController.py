@@ -10,6 +10,8 @@ from utils import Metrics
 
 
 class PiPController:
+    _REBIND_FALLBACK_TIMEOUT_MS = 700
+
     def __init__(
         self,
         host_window: QMainWindow,
@@ -23,6 +25,17 @@ class PiPController:
         self._metrics = metrics
         self._theme_color = theme_color
         self._pip_window: PiPWindow | None = None
+        self._pending_transition_id = 0
+        self._pending_resume_after_rebind = False
+        self._pending_rebind_bound = False
+        self._awaiting_rebind_geometry = False
+        self._pending_geometry_slot = None
+        self._rebind_fallback_timer = QTimer(self._player_window)
+        self._rebind_fallback_timer.setSingleShot(True)
+        self._rebind_fallback_timer.setInterval(self._REBIND_FALLBACK_TIMEOUT_MS)
+        self._rebind_fallback_timer.timeout.connect(self._on_rebind_fallback_timeout)
+
+        self._player_window.video_host_ready.connect(self._on_video_host_ready)
 
     def is_active(self) -> bool:
         return self._player_window.is_pip_active()
@@ -67,7 +80,7 @@ class PiPController:
         pip_window.raise_()
         pip_window.activateWindow()
         self._host_window.hide()
-        self._rebind_video_output_after_view_switch(was_playing)
+        self._start_rebind_video_output_transition(was_playing)
 
     def exit_pip(self):
         if not self.is_active():
@@ -88,7 +101,7 @@ class PiPController:
         self._host_window.showNormal()
         self._host_window.raise_()
         self._host_window.activateWindow()
-        self._rebind_video_output_after_view_switch(was_playing)
+        self._start_rebind_video_output_transition(was_playing)
 
     def toggle_fullscreen_window(self) -> bool:
         if not self.is_active():
@@ -118,11 +131,83 @@ class PiPController:
         if self._pip_window is None:
             self._pip_window = PiPWindow(self._metrics, self._theme_color)
             self._pip_window.setWindowIcon(self._host_window.windowIcon())
+            self._host_window.init_pip_shortcuts(self._pip_window)
             self._pip_window.closed.connect(self.exit_pip)
         return self._pip_window
 
-    def _rebind_video_output_after_view_switch(self, resume_playback: bool):
+    def _start_rebind_video_output_transition(self, resume_playback: bool):
+        self._cancel_pending_rebind_transition()
+        self._pending_transition_id += 1
+        self._pending_resume_after_rebind = bool(resume_playback)
+        self._pending_rebind_bound = False
+        self._awaiting_rebind_geometry = bool(resume_playback)
+        if self._awaiting_rebind_geometry:
+            transition_id = self._pending_transition_id
+
+            def _geometry_slot(width: int, height: int):
+                self._on_video_geometry_changed(transition_id, width, height)
+
+            self._pending_geometry_slot = _geometry_slot
+            self._player_window.video_geometry_changed.connect(_geometry_slot)
+        self._rebind_fallback_timer.start()
+        self._try_bind_pending_video_output()
+
+    def _cancel_pending_rebind_transition(self):
+        if self._pending_geometry_slot is not None:
+            try:
+                self._player_window.video_geometry_changed.disconnect(self._pending_geometry_slot)
+            except (RuntimeError, TypeError):
+                pass
+            self._pending_geometry_slot = None
+        self._pending_resume_after_rebind = False
+        self._pending_rebind_bound = False
+        self._awaiting_rebind_geometry = False
+        self._rebind_fallback_timer.stop()
+
+    def _has_pending_rebind_transition(self) -> bool:
+        return self._pending_rebind_bound or self._awaiting_rebind_geometry or self._rebind_fallback_timer.isActive()
+
+    def _try_bind_pending_video_output(self):
+        if not self._has_pending_rebind_transition():
+            return
+        if self._pending_rebind_bound:
+            return
+        if not self._player_window.is_video_host_ready():
+            return
+
         self._player_window.bind_video_output()
-        QTimer.singleShot(60, self._player_window.bind_video_output)
-        if resume_playback:
-            QTimer.singleShot(90, self._player_window.play)
+        self._pending_rebind_bound = True
+
+        if not self._pending_resume_after_rebind:
+            self._complete_pending_rebind_transition()
+            return
+
+        self._player_window.play()
+
+    def _complete_pending_rebind_transition(self, transition_id: int | None = None):
+        if transition_id is not None and transition_id != self._pending_transition_id:
+            return
+        self._cancel_pending_rebind_transition()
+
+    def _on_video_host_ready(self):
+        self._try_bind_pending_video_output()
+
+    def _on_video_geometry_changed(self, transition_id: int, width: int, height: int):
+        if transition_id != self._pending_transition_id:
+            return
+        if width <= 0 or height <= 0:
+            return
+        if not self._pending_rebind_bound or not self._awaiting_rebind_geometry:
+            return
+        self._complete_pending_rebind_transition(transition_id)
+
+    def _on_rebind_fallback_timeout(self):
+        transition_id = self._pending_transition_id
+        if not self._has_pending_rebind_transition():
+            return
+        if not self._pending_rebind_bound and self._player_window.is_video_host_ready():
+            self._player_window.bind_video_output()
+            self._pending_rebind_bound = True
+        if self._pending_resume_after_rebind and not self._player_window.playback.is_playing():
+            self._player_window.play()
+        self._complete_pending_rebind_transition(transition_id)

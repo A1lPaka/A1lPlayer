@@ -1,6 +1,10 @@
 import os
+import logging
 
 from utils import _normalize_path
+
+
+logger = logging.getLogger(__name__)
 
 
 class MediaPathService:
@@ -12,12 +16,16 @@ class MediaPathService:
 
     def collect_media_files(self, folder_path: str) -> list[str]:
         file_paths: list[str] = []
-        for entry in os.scandir(folder_path):
-            if not entry.is_file():
-                continue
-            _, ext = os.path.splitext(entry.name)
-            if ext.lower() in self.MEDIA_EXTENSIONS:
-                file_paths.append(entry.path)
+        try:
+            for entry in os.scandir(folder_path):
+                if not entry.is_file():
+                    continue
+                _, ext = os.path.splitext(entry.name)
+                if ext.lower() in self.MEDIA_EXTENSIONS:
+                    file_paths.append(entry.path)
+        except OSError:
+            logger.exception("Failed to scan media folder | folder=%s", folder_path)
+            raise
 
         file_paths.sort(key=lambda p: os.path.basename(p).lower())
         return file_paths
@@ -27,11 +35,15 @@ class MediaPathService:
         subtitle_paths: list[str] = []
 
         for path in self.deduplicate_paths(dropped_paths):
-            if os.path.isdir(path):
-                media_paths.extend(self.collect_media_files(path))
-                continue
-            if not os.path.isfile(path):
-                continue
+            try:
+                if os.path.isdir(path):
+                    media_paths.extend(self.collect_media_files(path))
+                    continue
+                if not os.path.isfile(path):
+                    continue
+            except OSError:
+                logger.exception("Failed to inspect dropped path | path=%s", path)
+                raise
 
             _, ext = os.path.splitext(path)
             ext = ext.lower()
