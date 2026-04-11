@@ -145,8 +145,8 @@ class MainWindow(QMainWindow):
     def _init_shortcuts(self):
         self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.exit_fullscreen))
 
-    def _build_shortcut_bindings(self, escape_handler):
-        return (
+    def _build_shortcut_bindings(self, escape_handler, *, include_fullscreen: bool = True):
+        bindings = [
             ("F11", self.toggle_fullscreen),
             ("Alt+Return", self.toggle_fullscreen),
             ("Ctrl+Alt+Return", self.toggle_fullscreen),
@@ -164,12 +164,19 @@ class MainWindow(QMainWindow):
             ("-", partial(self.player_window.adjust_speed, -self._SPEED_STEP)),
             ("=", self.player_window.reset_speed),
             ("Ctrl+H", self.toggle_chrome_visibility),
-        )
+        ]
+        if not include_fullscreen:
+            bindings = [binding for binding in bindings if binding[0] not in {"F11", "Alt+Return", "Ctrl+Alt+Return"}]
+        return tuple(bindings)
 
     def init_pip_shortcuts(self, pip_window):
         if self._pip_shortcuts:
             return
-        self._register_shortcuts(pip_window, self._pip_shortcuts, self._build_shortcut_bindings(self.exit_pip))
+        self._register_shortcuts(
+            pip_window,
+            self._pip_shortcuts,
+            self._build_shortcut_bindings(self.exit_pip, include_fullscreen=False),
+        )
 
     def _register_shortcuts(self, parent, storage: list[QShortcut], shortcut_bindings):
         for shortcut_text, handler in shortcut_bindings:

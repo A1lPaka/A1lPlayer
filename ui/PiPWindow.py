@@ -368,6 +368,10 @@ class PiPWindow(QWidget):
         press_bottom: int,
     ) -> tuple[int, int]:
         if self._active_edges & self._EDGE_LEFT:
+            # Keep the opposite bottom-right corner anchored for left-edge resizes.
+            # This intentionally mirrors the fixed-aspect resize behavior of native
+            # Windows picture-in-picture style windows, even when only the left edge
+            # is dragged and the top edge appears to move.
             return press_right - target_width, press_bottom - target_height
         if self._active_edges & self._EDGE_TOP:
             return press_left, press_bottom - target_height

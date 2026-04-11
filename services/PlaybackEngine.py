@@ -192,18 +192,22 @@ class PlaybackService(QObject):
     def get_audio_devices(self) -> list[tuple[str, str]]:
         devices: list[tuple[str, str]] = []
         seen_device_ids: set[str] = set()
+        device_list = self.player.audio_output_device_enum()
+        try:
+            for device_item in self._iter_vlc_linked_list(device_list):
+                raw_device_id = self._decode_vlc_text(device_item.device)
+                device_title = self._decode_vlc_text(device_item.description)
+                normalized_device_id = raw_device_id or AUDIO_DEVICE_DEFAULT_ID
+                normalized_title = device_title or "Default Device"
 
-        for device_item in self._iter_vlc_linked_list(self.player.audio_output_device_enum()):
-            raw_device_id = self._decode_vlc_text(device_item.device)
-            device_title = self._decode_vlc_text(device_item.description)
-            normalized_device_id = raw_device_id or AUDIO_DEVICE_DEFAULT_ID
-            normalized_title = device_title or "Default Device"
+                if normalized_device_id in seen_device_ids:
+                    continue
 
-            if normalized_device_id in seen_device_ids:
-                continue
-
-            devices.append((normalized_device_id, normalized_title))
-            seen_device_ids.add(normalized_device_id)
+                devices.append((normalized_device_id, normalized_title))
+                seen_device_ids.add(normalized_device_id)
+        finally:
+            if device_list:
+                vlc.libvlc_audio_output_device_list_release(device_list)
 
         if AUDIO_DEVICE_DEFAULT_ID not in seen_device_ids:
             devices.insert(0, (AUDIO_DEVICE_DEFAULT_ID, "Default Device"))

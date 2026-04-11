@@ -5,11 +5,9 @@ import os
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
-import tempfile
 
 from PySide6.QtWidgets import QWidget
 
-from services.AppTempService import AppTempService
 from ui.MessageBoxService import (
     confirm_overwrite_subtitle,
     show_audio_stream_inspection_failed,
@@ -268,22 +266,22 @@ class SubtitleGenerationPreflight:
         if not parent_dir.name and not parent_dir.anchor:
             return "Failed to resolve the destination folder."
 
-        try:
-            parent_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            return f"Failed to create the destination folder: {exc}"
+        if parent_dir.exists():
+            if not parent_dir.is_dir():
+                return "The destination folder path points to a file."
+            if not os.access(parent_dir, os.W_OK):
+                return "Failed to write to the destination folder: access is denied."
+            return None
 
-        try:
-            probe_handle = tempfile.NamedTemporaryFile(
-                dir=parent_dir,
-                prefix=".subtitle-write-test-",
-                suffix=".tmp",
-                delete=False,
-            )
-            probe_path = Path(probe_handle.name)
-            probe_handle.close()
-            AppTempService.remove_file_if_exists(probe_path, log_context="subtitle output preflight cleanup")
-        except OSError as exc:
-            return f"Failed to write to the destination folder: {exc}"
+        if parent_dir.anchor and not Path(parent_dir.anchor).exists():
+            return "Failed to resolve the destination drive or root folder."
+
+        existing_parent = next((candidate for candidate in (parent_dir, *parent_dir.parents) if candidate.exists()), None)
+        if existing_parent is None:
+            return "Failed to resolve the destination folder."
+        if not existing_parent.is_dir():
+            return "The destination folder path points to a file."
+        if not os.access(existing_parent, os.W_OK):
+            return "Failed to create the destination folder: access is denied."
 
         return None

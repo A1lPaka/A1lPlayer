@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMainWindow
 
@@ -7,6 +9,9 @@ from ui.PiPWindow import PiPWindow
 from ui.PlayerWindow import PlayerWindow
 from models.ThemeColor import ThemeState
 from utils import Metrics
+
+
+logger = logging.getLogger(__name__)
 
 
 class PiPController:
@@ -177,12 +182,63 @@ class PiPController:
 
         self._player_window.bind_video_output()
         self._pending_rebind_bound = True
+        logger.info(
+            "PiP rebind bind completed | transition_id=%s | awaiting_geometry=%s | resume_playback=%s",
+            self._pending_transition_id,
+            self._awaiting_rebind_geometry,
+            self._pending_resume_after_rebind,
+        )
 
         if not self._pending_resume_after_rebind:
             self._complete_pending_rebind_transition()
             return
 
-        self._player_window.play()
+    def _resume_after_successful_rebind(self, transition_id: int):
+        if transition_id != self._pending_transition_id:
+            return
+        if not self._pending_rebind_bound or not self._awaiting_rebind_geometry:
+            return
+
+        logger.info(
+            "PiP rebind resume via geometry | transition_id=%s",
+            transition_id,
+        )
+        if self._pending_resume_after_rebind and not self._player_window.playback.is_playing():
+            self._player_window.play()
+        self._complete_pending_rebind_transition(transition_id)
+
+    def _resume_after_rebind_fallback(self, transition_id: int):
+        if transition_id != self._pending_transition_id:
+            return
+        if not self._has_pending_rebind_transition():
+            return
+
+        geometry_missing = self._awaiting_rebind_geometry
+        if geometry_missing:
+            logger.warning(
+                "PiP rebind fallback timeout without geometry | transition_id=%s | bound=%s",
+                transition_id,
+                self._pending_rebind_bound,
+            )
+
+        if not self._pending_rebind_bound and self._player_window.is_video_host_ready():
+            self._player_window.bind_video_output()
+            self._pending_rebind_bound = True
+            logger.info(
+                "PiP rebind fallback bind completed | transition_id=%s",
+                transition_id,
+            )
+
+        if self._pending_resume_after_rebind:
+            logger.warning(
+                "PiP rebind resume via fallback | transition_id=%s | geometry_missing=%s",
+                transition_id,
+                geometry_missing,
+            )
+            if not self._player_window.playback.is_playing():
+                self._player_window.play()
+
+        self._complete_pending_rebind_transition(transition_id)
 
     def _complete_pending_rebind_transition(self, transition_id: int | None = None):
         if transition_id is not None and transition_id != self._pending_transition_id:
@@ -199,15 +255,8 @@ class PiPController:
             return
         if not self._pending_rebind_bound or not self._awaiting_rebind_geometry:
             return
-        self._complete_pending_rebind_transition(transition_id)
+        self._resume_after_successful_rebind(transition_id)
 
     def _on_rebind_fallback_timeout(self):
         transition_id = self._pending_transition_id
-        if not self._has_pending_rebind_transition():
-            return
-        if not self._pending_rebind_bound and self._player_window.is_video_host_ready():
-            self._player_window.bind_video_output()
-            self._pending_rebind_bound = True
-        if self._pending_resume_after_rebind and not self._player_window.playback.is_playing():
-            self._player_window.play()
-        self._complete_pending_rebind_transition(transition_id)
+        self._resume_after_rebind_fallback(transition_id)

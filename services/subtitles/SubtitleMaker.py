@@ -687,27 +687,40 @@ class SubtitleMaker:
     def _remove_file_if_exists(self, path: str | Path):
         AppTempService.remove_file_if_exists(path, log_context="temporary file cleanup")
 
-    def _write_subtitle_file_atomic(
-        self,
-        output_path: str,
-        writer,
-        cancel_event: threading.Event | None = None,
-    ) -> str:
+    def _prepare_output_path_for_write(self, output_path: str | Path) -> Path:
         output_file = Path(output_path)
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-
-        temp_handle = None
-        temp_path: str | None = None
-
-        atomic_write_started_at = time.perf_counter()
         try:
-            temp_handle = tempfile.NamedTemporaryFile(
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"Failed to create the destination folder: {exc}") from exc
+        return output_file
+
+    def _create_temp_subtitle_file(self, output_file: Path):
+        try:
+            return tempfile.NamedTemporaryFile(
                 "w",
                 encoding="utf-8",
                 dir=output_file.parent,
                 delete=False,
                 suffix=output_file.suffix,
             )
+        except OSError as exc:
+            raise RuntimeError(f"Failed to write to the destination folder: {exc}") from exc
+
+    def _write_subtitle_file_atomic(
+        self,
+        output_path: str,
+        writer,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        output_file = self._prepare_output_path_for_write(output_path)
+
+        temp_handle = None
+        temp_path: str | None = None
+
+        atomic_write_started_at = time.perf_counter()
+        try:
+            temp_handle = self._create_temp_subtitle_file(output_file)
             temp_path = temp_handle.name
             self._raise_if_canceled(cancel_event, "before-write-temp-subtitle")
             writer(temp_handle)
@@ -742,13 +755,20 @@ class SubtitleMaker:
             if temp_path is not None:
                 self._remove_file_if_exists(temp_path)
             raise
-        except (OSError, ValueError):
+        except RuntimeError:
             logger.exception("Atomic subtitle save failed | output=%s", output_path)
             if temp_handle is not None:
                 temp_handle.close()
             if temp_path is not None:
                 self._remove_file_if_exists(temp_path)
             raise
+        except (OSError, ValueError) as exc:
+            logger.exception("Atomic subtitle save failed | output=%s", output_path)
+            if temp_handle is not None:
+                temp_handle.close()
+            if temp_path is not None:
+                self._remove_file_if_exists(temp_path)
+            raise RuntimeError(f"Failed to write subtitle file: {exc}") from exc
 
     def _build_fallback_subtitle_output_path(self, requested_output_path: Path) -> Path:
         parent_dir = requested_output_path.parent
