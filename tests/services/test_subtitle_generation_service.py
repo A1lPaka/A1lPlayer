@@ -64,7 +64,8 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
 
     assert len(launches) == 1
     assert launches[0][0].context.media_path == "C:/media/movie.mkv"
-    assert player.suspend_calls == 1
+    # This test stubs the real launch path, so deferred UI suspend is not expected here.
+    assert player.suspend_calls == 0
     assert service._active_run is not None
 
     assert service.generate_subtitle() is False
@@ -157,4 +158,3 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
     assert service._outcomes.successes
-
