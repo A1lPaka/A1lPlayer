@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QWidget
 
 from models.ThemeColor import ThemeState
@@ -75,16 +75,13 @@ class SubtitleGenerationUiCoordinator(QObject):
         *,
         on_cancel: Callable[[], None],
     ):
-        self._close_generation_dialog(delete_later=True)
-        progress_dialog = self._create_progress_dialog(on_cancel=on_cancel)
-        progress_dialog.set_status("Preparing subtitle generation...")
-        progress_dialog.set_details(
-            f"Device: {options.device or 'Auto'}\n"
-            f"Model: {options.model_size}\n"
-            f"Language: {options.audio_language or 'Auto detect'}\n"
-            f"Output: {options.output_path}"
+        self._replace_generation_dialog_with_progress(
+            on_cancel=on_cancel,
+            configure_progress_dialog=lambda progress_dialog: self._configure_generation_progress_dialog(
+                progress_dialog,
+                options,
+            ),
         )
-        progress_dialog.set_cancel_enabled(True, "Cancel")
 
     def open_cuda_install_progress(
         self,
@@ -92,17 +89,13 @@ class SubtitleGenerationUiCoordinator(QObject):
         *,
         on_cancel: Callable[[], None],
     ):
-        self._close_generation_dialog(delete_later=True)
-        progress_dialog = self._create_progress_dialog(on_cancel=on_cancel)
-        progress_dialog.set_status("Installing GPU runtime...")
-        progress_dialog.set_indeterminate(True)
-        progress_dialog.set_details(
-            "Preparing GPU runtime installer...\n"
-            "The installer subsystem will resolve the configured source automatically.\n\n"
-            "Packages:\n"
-            + "\n".join(missing_packages)
+        self._replace_generation_dialog_with_progress(
+            on_cancel=on_cancel,
+            configure_progress_dialog=lambda progress_dialog: self._configure_cuda_install_progress_dialog(
+                progress_dialog,
+                missing_packages,
+            ),
         )
-        progress_dialog.set_cancel_enabled(True, "Cancel")
 
     def show_subtitle_cancel_pending(self):
         if self._progress_dialog is None:
@@ -161,6 +154,52 @@ class SubtitleGenerationUiCoordinator(QObject):
         widget.show()
         widget.raise_()
         widget.activateWindow()
+
+    def _replace_generation_dialog_with_progress(
+        self,
+        *,
+        on_cancel: Callable[[], None],
+        configure_progress_dialog: Callable[[SubtitleProgressDialog], None],
+    ):
+        dialog = self._generation_dialog
+        if dialog is not None:
+            dialog.hide()
+            self._generation_dialog = None
+
+        progress_dialog = self._create_progress_dialog(on_cancel=on_cancel)
+        configure_progress_dialog(progress_dialog)
+
+        if dialog is not None:
+            QTimer.singleShot(0, dialog.deleteLater)
+
+    def _configure_generation_progress_dialog(
+        self,
+        progress_dialog: SubtitleProgressDialog,
+        options: SubtitleGenerationDialogResult,
+    ):
+        progress_dialog.set_status("Preparing subtitle generation...")
+        progress_dialog.set_details(
+            f"Device: {options.device or 'Auto'}\n"
+            f"Model: {options.model_size}\n"
+            f"Language: {options.audio_language or 'Auto detect'}\n"
+            f"Output: {options.output_path}"
+        )
+        progress_dialog.set_cancel_enabled(True, "Cancel")
+
+    def _configure_cuda_install_progress_dialog(
+        self,
+        progress_dialog: SubtitleProgressDialog,
+        missing_packages: list[str],
+    ):
+        progress_dialog.set_status("Installing GPU runtime...")
+        progress_dialog.set_indeterminate(True)
+        progress_dialog.set_details(
+            "Preparing GPU runtime installer...\n"
+            "The installer subsystem will resolve the configured source automatically.\n\n"
+            "Packages:\n"
+            + "\n".join(missing_packages)
+        )
+        progress_dialog.set_cancel_enabled(True, "Cancel")
 
     def _close_generation_dialog(self, *, delete_later: bool):
         if self._generation_dialog is None:
