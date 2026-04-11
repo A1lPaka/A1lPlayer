@@ -647,3 +647,92 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
             "generate_enabled": True,
         }
     ]
+
+
+def test_real_pip_window_left_edge_anchor_matches_windows_fixed_aspect_behavior():
+    module = _load_real_module(
+        "real_pip_window_anchor_test",
+        "ui/PiPWindow.py",
+    )
+
+    pip_window = module.PiPWindow.__new__(module.PiPWindow)
+    pip_window._active_edges = pip_window._EDGE_LEFT
+
+    anchored_left, anchored_top = module.PiPWindow._anchored_position(
+        pip_window,
+        target_width=320,
+        target_height=180,
+        press_left=100,
+        press_top=100,
+        press_right=500,
+        press_bottom=400,
+    )
+
+    assert (anchored_left, anchored_top) == (180, 220)
+
+
+def test_real_output_path_preflight_does_not_mutate_filesystem(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_generation_preflight_fs_test",
+        "services/subtitles/SubtitleGenerationPreflight.py",
+    )
+
+    preflight = module.SubtitleGenerationPreflight(QWidget())
+    output_path = workspace_tmp_path / "nested" / "deeper" / "movie.srt"
+
+    assert output_path.parent.exists() is False
+
+    result = preflight._preflight_subtitle_output_path(output_path)
+
+    assert result is None
+    assert output_path.parent.exists() is False
+    assert list(workspace_tmp_path.rglob("*")) == []
+
+
+def test_real_subtitle_save_creates_directory_only_during_actual_write(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_save_dir_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker()
+    output_path = workspace_tmp_path / "nested" / "movie.srt"
+    segments = [module.SubtitleSegment(start=0.0, end=1.5, text="Hello")]
+
+    assert output_path.parent.exists() is False
+
+    saved_output_path = maker.save_srt(segments, str(output_path))
+
+    assert output_path.parent.exists() is True
+    assert Path(saved_output_path) == output_path
+    assert output_path.read_text(encoding="utf-8").startswith("1\n00:00:00,000 --> 00:00:01,500\nHello")
+
+
+def test_real_subtitle_save_keeps_fallback_output_path_behavior(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_fallback_save_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker()
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.write_text("existing", encoding="utf-8")
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+    original_replace = module.os.replace
+    replace_calls = []
+
+    def fake_replace(src, dst):
+        replace_calls.append((Path(src).name, Path(dst).name))
+        if Path(dst) == output_path:
+            raise PermissionError("destination is in use")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(module.os, "replace", fake_replace)
+
+    saved_output_path = maker.save_srt(segments, str(output_path))
+
+    assert Path(saved_output_path) == workspace_tmp_path / "movie (1).srt"
+    assert Path(saved_output_path).exists() is True
+    assert output_path.read_text(encoding="utf-8") == "existing"
+    assert replace_calls[0][1] == "movie.srt"
+    assert replace_calls[1][1] == "movie (1).srt"
