@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 from services.AppTempService import AppTempService
-from services.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 
 
 logger = logging.getLogger(__name__)

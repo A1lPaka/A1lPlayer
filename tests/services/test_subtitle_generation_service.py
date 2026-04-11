@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget
 
-from services.SubtitleGenerationService import (
+from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationContext,
     SubtitleGenerationService,
     SubtitleGenerationState,
@@ -52,7 +52,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
 
     monkeypatch.setattr(service, "_launch_subtitle_generation", fake_launch)
     monkeypatch.setattr(
-        "services.SubtitleGenerationService.show_subtitle_generation_already_running",
+        "services.subtitles.SubtitleGenerationService.show_subtitle_generation_already_running",
         lambda _parent: already_running_calls.append(True),
     )
 
@@ -133,7 +133,7 @@ def test_stale_run_events_are_ignored():
     current_run = _seed_active_run(service)
 
     service._on_worker_progress_changed(current_run.run_id + 1, 42)
-    service._on_subtitle_generation_finished(current_run.run_id + 1, "C:/tmp/out.srt", True)
+    service._on_subtitle_generation_finished(current_run.run_id + 1, "C:/tmp/out.srt", True, False)
 
     assert service._ui.progress_updates == []
     assert service._active_run is current_run
@@ -150,7 +150,7 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     run = _seed_active_run(service)
     service._ensure_player_ui_suspended()
 
-    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True)
+    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
     assert service._state == SubtitleGenerationState.SUCCEEDED
     assert service._active_run is None

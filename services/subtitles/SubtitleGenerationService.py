@@ -7,18 +7,18 @@ from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
 from services.MediaSettingsStore import MediaSettingsStore
-from services.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.SubtitleGenerationOutcomeHandler import (
+from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
+from services.subtitles.SubtitleGenerationOutcomeHandler import (
     SubtitleAutoOpenOutcome,
     SubtitleGenerationOutcomeHandler,
 )
-from services.SubtitleGenerationPreflight import SubtitleGenerationPreflight
-from services.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
-from services.SubtitleGenerationWorkers import SubtitleGenerationWorker
-from services.SubtitleMaker import (
+from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
+from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
+from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
+from services.subtitles.SubtitleMaker import (
     get_missing_windows_cuda_runtime_packages,
 )
-from services.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import (
     prompt_cuda_runtime_choice,
     show_subtitle_generation_already_running,

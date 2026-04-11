@@ -6,13 +6,13 @@ import signal
 import sys
 import threading
 
-from services.CudaRuntimeInstaller import (
+from services.runtime.CudaRuntimeInstaller import (
     CudaRuntimeInstallCanceledError,
     build_cuda_runtime_failure_event,
     ensure_cuda_runtime_installed,
 )
-from services.RuntimeExecution import get_runtime_mode_label
-from services.RuntimeInstallerProtocol import (
+from services.runtime.RuntimeExecution import get_runtime_mode_label
+from services.runtime.RuntimeInstallerProtocol import (
     CudaRuntimeInstallRequest,
     INSTALLER_CUDA_RUNTIME,
     build_canceled_event,

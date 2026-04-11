@@ -1,8 +1,8 @@
 import logging
 import sys
 from functools import partial
-from services.RuntimeInstallerMain import try_run_runtime_installer
-from services.RuntimeHelperMain import try_run_runtime_helper
+from services.runtime.RuntimeInstallerMain import try_run_runtime_installer
+from services.runtime.RuntimeHelperMain import try_run_runtime_helper
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
@@ -10,7 +10,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QSho
 from services.AppCloseCoordinator import AppCloseCoordinator
 from services.MediaLibraryService import MediaLibraryService
 from services.MediaSettingsStore import MediaSettingsStore
-from services.SubtitleGenerationService import SubtitleGenerationService
+from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
 from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
 from controllers.PlayerPiPController import PiPController

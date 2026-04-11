@@ -5,18 +5,18 @@ import threading
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from services.CudaRuntimeInstaller import resolve_cuda_runtime_install_target
-from services.RuntimeExecution import build_runtime_installer_launch
-from services.RuntimeInstallerProtocol import CudaRuntimeInstallRequest
-from services.RuntimeInstallerProtocol import (
+from services.runtime.CudaRuntimeInstaller import resolve_cuda_runtime_install_target
+from services.runtime.RuntimeExecution import build_runtime_installer_launch
+from services.runtime.RuntimeInstallerProtocol import CudaRuntimeInstallRequest
+from services.runtime.RuntimeInstallerProtocol import (
     EVENT_CANCELED,
     EVENT_FAILED,
     EVENT_FINISHED,
     EVENT_STATUS,
     INSTALLER_CUDA_RUNTIME,
 )
-from services.SubprocessLifecycle import SubprocessLifecycleMixin
-from services.SubprocessWorkerSupport import (
+from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
+from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
     CancelAwareWorkerMixin,
     TerminalEventMixin,

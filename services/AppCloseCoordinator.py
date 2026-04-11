@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, QTimer, Slot
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from services.MediaLibraryService import MediaLibraryService
-from services.SubtitleGenerationService import SubtitleGenerationService
+from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
 from ui.MessageBoxService import (
     prompt_force_close_background_tasks,
     show_force_close_still_running,

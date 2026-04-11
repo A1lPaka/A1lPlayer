@@ -10,14 +10,14 @@ import sys
 import threading
 import time
 
-from services.RuntimeExecution import get_runtime_mode_label, is_frozen_runtime
-from services.RuntimeInstallerProtocol import (
+from services.runtime.RuntimeExecution import get_runtime_mode_label, is_frozen_runtime
+from services.runtime.RuntimeInstallerProtocol import (
     CudaRuntimeInstallRequest,
     build_failed_event,
     build_finished_event,
     build_status_event,
 )
-from services.SubtitleMaker import get_missing_windows_cuda_runtime_packages
+from services.subtitles.SubtitleMaker import get_missing_windows_cuda_runtime_packages
 
 
 logger = logging.getLogger(__name__)

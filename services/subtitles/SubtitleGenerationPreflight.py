@@ -9,7 +9,7 @@ import tempfile
 from PySide6.QtWidgets import QWidget
 
 from services.AppTempService import AppTempService
-from services.SubtitleMaker import probe_audio_streams
+from services.subtitles.SubtitleMaker import probe_audio_streams
 from ui.MessageBoxService import (
     confirm_overwrite_subtitle,
     show_audio_stream_inspection_failed,

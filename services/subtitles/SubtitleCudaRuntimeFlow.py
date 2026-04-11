@@ -5,8 +5,8 @@ import logging
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
-from services.CudaRuntimeInstallWorker import CudaRuntimeInstallWorker
-from services.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
+from services.runtime.CudaRuntimeInstallWorker import CudaRuntimeInstallWorker
+from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 
 
 logger = logging.getLogger(__name__)

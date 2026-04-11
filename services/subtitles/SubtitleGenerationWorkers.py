@@ -8,8 +8,8 @@ import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from services.RuntimeExecution import build_runtime_helper_launch
-from services.RuntimeHelperProtocol import (
+from services.runtime.RuntimeExecution import build_runtime_helper_launch
+from services.runtime.RuntimeHelperProtocol import (
     EVENT_CANCELED,
     EVENT_FAILED,
     EVENT_FINISHED,
@@ -17,9 +17,9 @@ from services.RuntimeHelperProtocol import (
     HELPER_SUBTITLE_GENERATION,
     SubtitleGenerationRequest,
 )
-from services.SubtitleTiming import elapsed_ms_since, log_timing
-from services.SubprocessLifecycle import SubprocessLifecycleMixin
-from services.SubprocessWorkerSupport import (
+from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
+from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
     CancelAwareWorkerMixin,
     TerminalEventMixin,

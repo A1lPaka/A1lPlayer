@@ -9,7 +9,7 @@ from utils import Metrics
 
 if TYPE_CHECKING:
     from services.MediaLibraryService import MediaLibraryService
-    from services.SubtitleGenerationService import SubtitleGenerationService
+    from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
     from ui.PlayerWindow import PlayerWindow
 
 class MenuBarController:

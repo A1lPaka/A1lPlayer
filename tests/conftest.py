@@ -213,8 +213,8 @@ def _install_message_box_stub():
 
 
 def _install_subtitle_service_stubs():
-    if "services.SubtitleGenerationUiCoordinator" not in sys.modules:
-        ui_module = types.ModuleType("services.SubtitleGenerationUiCoordinator")
+    if "services.subtitles.SubtitleGenerationUiCoordinator" not in sys.modules:
+        ui_module = types.ModuleType("services.subtitles.SubtitleGenerationUiCoordinator")
 
         class SubtitleGenerationUiCoordinator:
             def __init__(self, parent, theme_color_getter):
@@ -265,10 +265,10 @@ def _install_subtitle_service_stubs():
                 self.cancel_pending_calls += 1
 
         ui_module.SubtitleGenerationUiCoordinator = SubtitleGenerationUiCoordinator
-        sys.modules["services.SubtitleGenerationUiCoordinator"] = ui_module
+        sys.modules["services.subtitles.SubtitleGenerationUiCoordinator"] = ui_module
 
-    if "services.SubtitleGenerationPreflight" not in sys.modules:
-        preflight_module = types.ModuleType("services.SubtitleGenerationPreflight")
+    if "services.subtitles.SubtitleGenerationPreflight" not in sys.modules:
+        preflight_module = types.ModuleType("services.subtitles.SubtitleGenerationPreflight")
 
         class _ValidationResult:
             def __init__(self, is_valid=True):
@@ -285,10 +285,10 @@ def _install_subtitle_service_stubs():
                 return _ValidationResult(True)
 
         preflight_module.SubtitleGenerationPreflight = SubtitleGenerationPreflight
-        sys.modules["services.SubtitleGenerationPreflight"] = preflight_module
+        sys.modules["services.subtitles.SubtitleGenerationPreflight"] = preflight_module
 
-    if "services.SubtitleGenerationOutcomeHandler" not in sys.modules:
-        outcomes_module = types.ModuleType("services.SubtitleGenerationOutcomeHandler")
+    if "services.subtitles.SubtitleGenerationOutcomeHandler" not in sys.modules:
+        outcomes_module = types.ModuleType("services.subtitles.SubtitleGenerationOutcomeHandler")
 
         class SubtitleAutoOpenOutcome(Enum):
             LOADED = auto()
@@ -304,8 +304,22 @@ def _install_subtitle_service_stubs():
                 self.cuda_failures = []
                 self.cuda_canceled_calls = 0
 
-            def show_generation_success(self, output_path, auto_open_outcome):
-                self.successes.append((output_path, auto_open_outcome))
+            def show_generation_success(
+                self,
+                output_path,
+                auto_open_outcome,
+                *,
+                used_fallback_output_path=False,
+                requested_output_path=None,
+            ):
+                self.successes.append(
+                    (
+                        output_path,
+                        auto_open_outcome,
+                        bool(used_fallback_output_path),
+                        requested_output_path,
+                    )
+                )
 
             def show_generation_failed(self, error_text):
                 self.failures.append(error_text)
@@ -321,21 +335,22 @@ def _install_subtitle_service_stubs():
 
         outcomes_module.SubtitleAutoOpenOutcome = SubtitleAutoOpenOutcome
         outcomes_module.SubtitleGenerationOutcomeHandler = SubtitleGenerationOutcomeHandler
-        sys.modules["services.SubtitleGenerationOutcomeHandler"] = outcomes_module
+        sys.modules["services.subtitles.SubtitleGenerationOutcomeHandler"] = outcomes_module
 
-    if "services.SubtitleGenerationWorkers" not in sys.modules:
-        workers_module = types.ModuleType("services.SubtitleGenerationWorkers")
+    if "services.subtitles.SubtitleGenerationWorkers" not in sys.modules:
+        workers_module = types.ModuleType("services.subtitles.SubtitleGenerationWorkers")
 
         class SubtitleGenerationWorker(QObject):
             status_changed = Signal(str)
             progress_changed = Signal(int)
             details_changed = Signal(str)
-            finished = Signal(str, bool)
+            finished = Signal(str, bool, bool)
             failed = Signal(str, str)
             canceled = Signal()
 
-            def __init__(self, media_path, options):
+            def __init__(self, run_id, media_path, options):
                 super().__init__()
+                self.run_id = run_id
                 self.media_path = media_path
                 self.options = options
                 self.cancel_calls = 0
@@ -351,10 +366,10 @@ def _install_subtitle_service_stubs():
                 self.force_stop_calls += 1
 
         workers_module.SubtitleGenerationWorker = SubtitleGenerationWorker
-        sys.modules["services.SubtitleGenerationWorkers"] = workers_module
+        sys.modules["services.subtitles.SubtitleGenerationWorkers"] = workers_module
 
-    if "services.SubtitleCudaRuntimeFlow" not in sys.modules:
-        cuda_module = types.ModuleType("services.SubtitleCudaRuntimeFlow")
+    if "services.subtitles.SubtitleCudaRuntimeFlow" not in sys.modules:
+        cuda_module = types.ModuleType("services.subtitles.SubtitleCudaRuntimeFlow")
 
         class SubtitleCudaRuntimeFlow(QObject):
             status_changed = Signal(int, str)
@@ -385,16 +400,16 @@ def _install_subtitle_service_stubs():
                 self.request_stop_calls.append(force)
 
         cuda_module.SubtitleCudaRuntimeFlow = SubtitleCudaRuntimeFlow
-        sys.modules["services.SubtitleCudaRuntimeFlow"] = cuda_module
+        sys.modules["services.subtitles.SubtitleCudaRuntimeFlow"] = cuda_module
 
-    if "services.SubtitleMaker" not in sys.modules:
-        maker_module = types.ModuleType("services.SubtitleMaker")
+    if "services.subtitles.SubtitleMaker" not in sys.modules:
+        maker_module = types.ModuleType("services.subtitles.SubtitleMaker")
 
         def get_missing_windows_cuda_runtime_packages():
             return []
 
         maker_module.get_missing_windows_cuda_runtime_packages = get_missing_windows_cuda_runtime_packages
-        sys.modules["services.SubtitleMaker"] = maker_module
+        sys.modules["services.subtitles.SubtitleMaker"] = maker_module
 
 
 _install_playback_engine_stub()

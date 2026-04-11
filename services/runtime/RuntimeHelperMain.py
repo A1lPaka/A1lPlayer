@@ -7,8 +7,8 @@ import sys
 import threading
 import time
 
-from services.RuntimeExecution import get_runtime_mode_label
-from services.RuntimeHelperProtocol import (
+from services.runtime.RuntimeExecution import get_runtime_mode_label
+from services.runtime.RuntimeHelperProtocol import (
     HELPER_SUBTITLE_GENERATION,
     SubtitleGenerationRequest,
     build_canceled_event,
@@ -16,12 +16,12 @@ from services.RuntimeHelperProtocol import (
     build_finished_event,
     build_progress_event,
 )
-from services.SubtitleMaker import (
+from services.subtitles.SubtitleMaker import (
     SubtitleGenerationCanceledError,
     SubtitleGenerationEmptyResultError,
     SubtitleMaker,
 )
-from services.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from utils.LoggingSetup import configure_logging
 
 
