@@ -539,8 +539,8 @@ class SubtitleGenerationService(QObject):
         if self._state != SubtitleGenerationState.DIALOG_OPEN:
             return
 
-        self._clear_dialog_request_timing()
         self._invalidate_active_audio_stream_probe_request("dialog closed")
+        self._clear_dialog_request_timing()
         logger.info("Subtitle generation dialog closed without launching a job")
         self._transition_state(
             SubtitleGenerationState.IDLE,
@@ -1079,6 +1079,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._ui.set_generation_dialog_audio_tracks_loading()
+        self._preflight.begin_audio_stream_probe(media_path)
         self._audio_stream_probe_request_id += 1
         probe_request_id = self._audio_stream_probe_request_id
         self._current_audio_stream_probe_request_id = probe_request_id
@@ -1093,6 +1094,7 @@ class SubtitleGenerationService(QObject):
     def _invalidate_active_audio_stream_probe_request(self, reason: str):
         if self._current_audio_stream_probe_request_id is None:
             return
+        self._preflight.abandon_loading_audio_stream_probe(self._dialog_request_media_path)
         logger.debug(
             "Invalidating active audio stream probe request | probe_request_id=%s | reason=%s",
             self._current_audio_stream_probe_request_id,

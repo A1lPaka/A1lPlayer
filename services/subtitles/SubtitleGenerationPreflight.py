@@ -3,18 +3,19 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 import tempfile
 
 from PySide6.QtWidgets import QWidget
 
 from services.AppTempService import AppTempService
-from services.subtitles.SubtitleMaker import probe_audio_streams
 from ui.MessageBoxService import (
     confirm_overwrite_subtitle,
     show_audio_stream_inspection_failed,
     show_audio_stream_inspection_warning,
     show_audio_stream_no_longer_available,
+    show_audio_streams_still_loading,
     show_choose_output_path_first,
     show_no_audio_streams_found,
     show_subtitle_output_path_unavailable,
@@ -30,6 +31,13 @@ class SubtitleGenerationValidationResult:
     is_valid: bool
 
 
+class AudioStreamProbeState(Enum):
+    IDLE = auto()
+    LOADING = auto()
+    READY = auto()
+    FAILED = auto()
+
+
 class SubtitleGenerationPreflight:
     DEFAULT_GENERATION_AUDIO_TRACKS: tuple[tuple[int | None, str], ...] = ((None, "Current / default"),)
 
@@ -38,6 +46,7 @@ class SubtitleGenerationPreflight:
         self._last_probed_media_path: str | None = None
         self._last_probed_audio_streams = None
         self._last_probed_audio_stream_error: str | None = None
+        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
 
     def build_generation_audio_tracks(self, media_path: str | None) -> list[tuple[int | None, str]]:
         generated_tracks = self.build_audio_track_choices([])
@@ -45,18 +54,19 @@ class SubtitleGenerationPreflight:
             self.invalidate_audio_stream_probe_cache()
             return generated_tracks
 
-        try:
-            audio_streams = self.get_audio_streams_for_media(media_path)
-        except Exception as exc:
-            logger.exception(
-                "Failed to inspect audio streams for subtitle generation | media=%s",
-                media_path,
-            )
-            show_audio_stream_inspection_warning(
-                self._parent,
-                self.format_audio_stream_probe_error(str(exc)),
-            )
+        status = self.get_audio_stream_probe_state(media_path)
+        if status == AudioStreamProbeState.FAILED:
+            reason = self.get_cached_audio_stream_error_for_media(media_path)
+            if reason:
+                show_audio_stream_inspection_warning(
+                    self._parent,
+                    self.format_audio_stream_probe_error(reason),
+                )
             return generated_tracks
+        if status != AudioStreamProbeState.READY:
+            return generated_tracks
+
+        audio_streams = self.get_cached_audio_streams_for_media(media_path) or []
 
         generated_tracks.extend((stream.stream_index, stream.label) for stream in audio_streams)
         return generated_tracks
@@ -68,27 +78,58 @@ class SubtitleGenerationPreflight:
 
     def get_cached_audio_streams_for_media(self, media_path: str | None):
         normalized_media_path = str(media_path or "")
-        if not normalized_media_path or self._last_probed_media_path != normalized_media_path:
+        if (
+            not normalized_media_path
+            or self._last_probed_media_path != normalized_media_path
+            or self._audio_stream_probe_state != AudioStreamProbeState.READY
+        ):
             return None
         return self._last_probed_audio_streams
 
     def get_cached_audio_stream_error_for_media(self, media_path: str | None) -> str | None:
         normalized_media_path = str(media_path or "")
-        if not normalized_media_path or self._last_probed_media_path != normalized_media_path:
+        if (
+            not normalized_media_path
+            or self._last_probed_media_path != normalized_media_path
+            or self._audio_stream_probe_state != AudioStreamProbeState.FAILED
+        ):
             return None
         return self._last_probed_audio_stream_error
+
+    def get_audio_stream_probe_state(self, media_path: str | None) -> AudioStreamProbeState:
+        normalized_media_path = str(media_path or "")
+        if not normalized_media_path or self._last_probed_media_path != normalized_media_path:
+            return AudioStreamProbeState.IDLE
+        return self._audio_stream_probe_state
+
+    def begin_audio_stream_probe(self, media_path: str):
+        normalized_media_path = str(media_path)
+        self._last_probed_media_path = normalized_media_path
+        self._last_probed_audio_streams = None
+        self._last_probed_audio_stream_error = None
+        self._audio_stream_probe_state = AudioStreamProbeState.LOADING
+
+    def abandon_loading_audio_stream_probe(self, media_path: str | None = None):
+        normalized_media_path = str(media_path or "")
+        if self._audio_stream_probe_state != AudioStreamProbeState.LOADING:
+            return
+        if normalized_media_path and self._last_probed_media_path != normalized_media_path:
+            return
+        self.invalidate_audio_stream_probe_cache()
 
     def cache_audio_stream_probe_success(self, media_path: str, audio_streams):
         normalized_media_path = str(media_path)
         self._last_probed_media_path = normalized_media_path
         self._last_probed_audio_streams = list(audio_streams)
         self._last_probed_audio_stream_error = None
+        self._audio_stream_probe_state = AudioStreamProbeState.READY
 
     def cache_audio_stream_probe_failure(self, media_path: str, reason: str):
         normalized_media_path = str(media_path)
         self._last_probed_media_path = normalized_media_path
         self._last_probed_audio_streams = None
         self._last_probed_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
+        self._audio_stream_probe_state = AudioStreamProbeState.FAILED
 
     def validate_generation_request(
         self,
@@ -103,47 +144,13 @@ class SubtitleGenerationPreflight:
 
         return SubtitleGenerationValidationResult(is_valid=True)
 
-    def get_audio_streams_for_media(self, media_path: str):
-        normalized_media_path = str(media_path)
-        if self._last_probed_media_path != normalized_media_path:
-            self.invalidate_audio_stream_probe_cache(normalized_media_path)
-
-        if self._last_probed_audio_streams is not None:
-            logger.debug(
-                "Reusing cached audio stream probe for subtitle generation | media=%s | stream_count=%s",
-                normalized_media_path,
-                len(self._last_probed_audio_streams),
-            )
-            return self._last_probed_audio_streams
-
-        if self._last_probed_audio_stream_error is not None:
-            logger.debug(
-                "Reusing cached audio stream probe failure for subtitle generation | media=%s | reason=%s",
-                normalized_media_path,
-                self._last_probed_audio_stream_error,
-            )
-            raise RuntimeError(self._last_probed_audio_stream_error)
-
-        logger.debug("Audio stream probe cache miss for subtitle generation | media=%s", normalized_media_path)
-        try:
-            audio_streams = probe_audio_streams(normalized_media_path)
-        except Exception as exc:
-            self._last_probed_media_path = normalized_media_path
-            self._last_probed_audio_streams = None
-            self._last_probed_audio_stream_error = str(exc).strip() or "Audio stream inspection failed."
-            raise RuntimeError(self._last_probed_audio_stream_error) from exc
-
-        self._last_probed_media_path = normalized_media_path
-        self._last_probed_audio_streams = audio_streams
-        self._last_probed_audio_stream_error = None
-        return audio_streams
-
     def invalidate_audio_stream_probe_cache(self, media_path: str | None = None):
         if (
             media_path is not None
             and self._last_probed_media_path == media_path
             and self._last_probed_audio_streams is None
             and self._last_probed_audio_stream_error is None
+            and self._audio_stream_probe_state == AudioStreamProbeState.IDLE
         ):
             return
 
@@ -162,6 +169,7 @@ class SubtitleGenerationPreflight:
         self._last_probed_media_path = media_path
         self._last_probed_audio_streams = None
         self._last_probed_audio_stream_error = None
+        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
 
     def format_audio_stream_probe_error(self, reason: str) -> str:
         normalized_reason = (reason or "").strip() or "Audio stream inspection failed."
@@ -207,18 +215,29 @@ class SubtitleGenerationPreflight:
         media_path: str,
         options: SubtitleGenerationDialogResult,
     ) -> bool:
-        try:
-            audio_streams = self.get_audio_streams_for_media(media_path)
-        except Exception as exc:
-            logger.exception(
-                "Subtitle generation aborted because audio stream inspection failed during validation | media=%s",
+        probe_state = self.get_audio_stream_probe_state(media_path)
+        if probe_state in (AudioStreamProbeState.IDLE, AudioStreamProbeState.LOADING):
+            logger.info(
+                "Subtitle generation blocked because audio streams are still loading | media=%s | probe_state=%s",
+                media_path,
+                probe_state.name.lower(),
+            )
+            show_audio_streams_still_loading(self._parent)
+            return False
+
+        if probe_state == AudioStreamProbeState.FAILED:
+            reason = self.get_cached_audio_stream_error_for_media(media_path) or "Audio stream inspection failed."
+            logger.warning(
+                "Subtitle generation aborted because cached audio stream inspection failed during validation | media=%s",
                 media_path,
             )
             show_audio_stream_inspection_failed(
                 self._parent,
-                self.format_audio_stream_probe_error(str(exc)),
+                self.format_audio_stream_probe_error(reason),
             )
             return False
+
+        audio_streams = self.get_cached_audio_streams_for_media(media_path) or []
 
         if not audio_streams:
             logger.warning("Subtitle generation aborted because media has no audio streams | media=%s", media_path)

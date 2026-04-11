@@ -178,6 +178,30 @@ def _install_message_box_stub():
     def show_subtitle_generation_already_running(_parent):
         return None
 
+    def show_audio_streams_still_loading(_parent):
+        return None
+
+    def show_audio_stream_inspection_failed(_parent, _reason):
+        return None
+
+    def show_audio_stream_inspection_warning(_parent, _reason):
+        return None
+
+    def confirm_overwrite_subtitle(_parent, _output_path):
+        return True
+
+    def show_audio_stream_no_longer_available(_parent):
+        return None
+
+    def show_choose_output_path_first(_parent):
+        return None
+
+    def show_no_audio_streams_found(_parent):
+        return None
+
+    def show_subtitle_output_path_unavailable(_parent, _output_path, _reason=None):
+        return None
+
     def prompt_force_close_background_tasks(_parent, on_wait, on_force_close):
         class _Dialog(QObject):
             destroyed = Signal(object)
@@ -204,6 +228,14 @@ def _install_message_box_stub():
 
     message_box.prompt_cuda_runtime_choice = prompt_cuda_runtime_choice
     message_box.show_subtitle_generation_already_running = show_subtitle_generation_already_running
+    message_box.show_audio_streams_still_loading = show_audio_streams_still_loading
+    message_box.show_audio_stream_inspection_failed = show_audio_stream_inspection_failed
+    message_box.show_audio_stream_inspection_warning = show_audio_stream_inspection_warning
+    message_box.confirm_overwrite_subtitle = confirm_overwrite_subtitle
+    message_box.show_audio_stream_no_longer_available = show_audio_stream_no_longer_available
+    message_box.show_choose_output_path_first = show_choose_output_path_first
+    message_box.show_no_audio_streams_found = show_no_audio_streams_found
+    message_box.show_subtitle_output_path_unavailable = show_subtitle_output_path_unavailable
     message_box.prompt_force_close_background_tasks = prompt_force_close_background_tasks
     message_box.show_force_close_still_running = show_force_close_still_running
     message_box.confirm_resume_playback = confirm_resume_playback
@@ -229,16 +261,42 @@ def _install_subtitle_service_stubs():
                 self.cancel_pending_calls = 0
                 self.closed_generation_dialogs = 0
                 self.closed_progress_dialogs = 0
+                self.audio_tracks_loading_calls = 0
+                self.applied_audio_tracks = []
+                self.has_generation_dialog_value = False
 
-            def open_generation_dialog(self, media_path, tracks, on_generate, on_cancel):
+            def open_generation_dialog(self, media_path, on_generate, on_cancel):
+                self.has_generation_dialog_value = True
                 self.dialog_requests.append(
                     {
                         "media_path": media_path,
-                        "tracks": tracks,
                         "on_generate": on_generate,
                         "on_cancel": on_cancel,
                     }
                 )
+
+            def set_generation_dialog_audio_tracks_loading(self):
+                self.audio_tracks_loading_calls += 1
+
+            def apply_generation_dialog_audio_tracks(
+                self,
+                audio_tracks,
+                *,
+                selected_track_id=None,
+                selector_enabled=False,
+                generate_enabled=False,
+            ):
+                self.applied_audio_tracks.append(
+                    {
+                        "audio_tracks": list(audio_tracks),
+                        "selected_track_id": selected_track_id,
+                        "selector_enabled": selector_enabled,
+                        "generate_enabled": generate_enabled,
+                    }
+                )
+
+            def has_generation_dialog(self):
+                return self.has_generation_dialog_value
 
             def focus_active_dialog(self):
                 self.focus_calls += 1
@@ -257,6 +315,7 @@ def _install_subtitle_service_stubs():
 
             def close_generation_dialog(self):
                 self.closed_generation_dialogs += 1
+                self.has_generation_dialog_value = False
 
             def close_progress_dialog(self):
                 self.closed_progress_dialogs += 1
@@ -270,6 +329,12 @@ def _install_subtitle_service_stubs():
     if "services.subtitles.SubtitleGenerationPreflight" not in sys.modules:
         preflight_module = types.ModuleType("services.subtitles.SubtitleGenerationPreflight")
 
+        class AudioStreamProbeState(Enum):
+            IDLE = auto()
+            LOADING = auto()
+            READY = auto()
+            FAILED = auto()
+
         class _ValidationResult:
             def __init__(self, is_valid=True):
                 self.is_valid = is_valid
@@ -277,14 +342,78 @@ def _install_subtitle_service_stubs():
         class SubtitleGenerationPreflight:
             def __init__(self, parent):
                 self.parent = parent
+                self._probe_state_by_media = {}
+                self._audio_streams_by_media = {}
+                self._errors_by_media = {}
+                self._validation_results = {}
 
             def build_generation_audio_tracks(self, _media_path):
                 return []
 
-            def validate_generation_request(self, _media_path, _options):
+            def build_audio_track_choices(self, audio_streams):
+                return [(None, "Current / default"), *[(stream.stream_index, stream.label) for stream in audio_streams]]
+
+            def get_cached_audio_streams_for_media(self, media_path):
+                if self.get_audio_stream_probe_state(media_path) != AudioStreamProbeState.READY:
+                    return None
+                return self._audio_streams_by_media.get(media_path)
+
+            def get_cached_audio_stream_error_for_media(self, media_path):
+                if self.get_audio_stream_probe_state(media_path) != AudioStreamProbeState.FAILED:
+                    return None
+                return self._errors_by_media.get(media_path)
+
+            def get_audio_stream_probe_state(self, media_path):
+                return self._probe_state_by_media.get(media_path, AudioStreamProbeState.IDLE)
+
+            def begin_audio_stream_probe(self, media_path):
+                self._probe_state_by_media[media_path] = AudioStreamProbeState.LOADING
+                self._audio_streams_by_media.pop(media_path, None)
+                self._errors_by_media.pop(media_path, None)
+
+            def abandon_loading_audio_stream_probe(self, media_path=None):
+                if media_path is None:
+                    return
+                if self.get_audio_stream_probe_state(media_path) == AudioStreamProbeState.LOADING:
+                    self._probe_state_by_media.pop(media_path, None)
+
+            def cache_audio_stream_probe_success(self, media_path, audio_streams):
+                self._probe_state_by_media[media_path] = AudioStreamProbeState.READY
+                self._audio_streams_by_media[media_path] = list(audio_streams)
+                self._errors_by_media.pop(media_path, None)
+
+            def cache_audio_stream_probe_failure(self, media_path, reason):
+                self._probe_state_by_media[media_path] = AudioStreamProbeState.FAILED
+                self._audio_streams_by_media.pop(media_path, None)
+                self._errors_by_media[media_path] = str(reason)
+
+            def format_audio_stream_probe_error(self, reason):
+                return str(reason)
+
+            def validate_generation_request(self, media_path, _options):
+                from ui.MessageBoxService import (
+                    show_audio_stream_inspection_failed,
+                    show_audio_streams_still_loading,
+                )
+
+                override = self._validation_results.get(media_path)
+                if override is not None:
+                    return _ValidationResult(override)
+
+                state = self.get_audio_stream_probe_state(media_path)
+                if state in (AudioStreamProbeState.IDLE, AudioStreamProbeState.LOADING):
+                    show_audio_streams_still_loading(self.parent)
+                    return _ValidationResult(False)
+                if state == AudioStreamProbeState.FAILED:
+                    show_audio_stream_inspection_failed(
+                        self.parent,
+                        self.format_audio_stream_probe_error(self._errors_by_media.get(media_path, "Audio stream inspection failed.")),
+                    )
+                    return _ValidationResult(False)
                 return _ValidationResult(True)
 
         preflight_module.SubtitleGenerationPreflight = SubtitleGenerationPreflight
+        preflight_module.AudioStreamProbeState = AudioStreamProbeState
         sys.modules["services.subtitles.SubtitleGenerationPreflight"] = preflight_module
 
     if "services.subtitles.SubtitleGenerationOutcomeHandler" not in sys.modules:
@@ -340,6 +469,19 @@ def _install_subtitle_service_stubs():
     if "services.subtitles.SubtitleGenerationWorkers" not in sys.modules:
         workers_module = types.ModuleType("services.subtitles.SubtitleGenerationWorkers")
 
+        class AudioStreamProbeWorker(QObject):
+            finished = Signal(int, str, object)
+            failed = Signal(int, str, str)
+
+            def __init__(self, probe_request_id, media_path):
+                super().__init__()
+                self.probe_request_id = probe_request_id
+                self.media_path = media_path
+                self.start_calls = 0
+
+            def start(self):
+                self.start_calls += 1
+
         class SubtitleGenerationWorker(QObject):
             status_changed = Signal(str)
             progress_changed = Signal(int)
@@ -365,6 +507,7 @@ def _install_subtitle_service_stubs():
             def force_stop(self):
                 self.force_stop_calls += 1
 
+        workers_module.AudioStreamProbeWorker = AudioStreamProbeWorker
         workers_module.SubtitleGenerationWorker = SubtitleGenerationWorker
         sys.modules["services.subtitles.SubtitleGenerationWorkers"] = workers_module
 
@@ -408,7 +551,11 @@ def _install_subtitle_service_stubs():
         def get_missing_windows_cuda_runtime_packages():
             return []
 
+        def probe_audio_streams(_media_path):
+            raise AssertionError("sync probe_audio_streams() should not be called in service/preflight tests")
+
         maker_module.get_missing_windows_cuda_runtime_packages = get_missing_windows_cuda_runtime_packages
+        maker_module.probe_audio_streams = probe_audio_streams
         sys.modules["services.subtitles.SubtitleMaker"] = maker_module
 
 

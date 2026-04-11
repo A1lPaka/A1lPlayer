@@ -120,6 +120,15 @@ def show_audio_stream_inspection_failed(parent: QWidget, reason: str) -> None:
     )
 
 
+def show_audio_streams_still_loading(parent: QWidget) -> None:
+    QMessageBox.information(
+        parent,
+        "Generate Subtitle",
+        "Audio tracks are still loading for this media file.\n\n"
+        "Please wait a moment and try again.",
+    )
+
+
 def prompt_cuda_runtime_choice(
     parent: QWidget,
     missing_packages: list[str],
