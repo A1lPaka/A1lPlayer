@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -16,6 +17,7 @@ from services.RuntimeHelperProtocol import (
     HELPER_SUBTITLE_GENERATION,
     SubtitleGenerationRequest,
 )
+from services.SubtitleTiming import elapsed_ms_since, log_timing
 from services.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.SubprocessWorkerSupport import (
     BoundedLineBuffer,
@@ -34,14 +36,15 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
     progress_changed = Signal(int)
     status_changed = Signal(str)
     details_changed = Signal(str)
-    finished = Signal(str, bool)
+    finished = Signal(str, bool, bool)
     failed = Signal(str, str)
     canceled = Signal()
 
     _GRACEFUL_CANCEL_TIMEOUT_SECONDS = 1.5
 
-    def __init__(self, media_path: str, options: SubtitleGenerationDialogResult):
+    def __init__(self, run_id: int, media_path: str, options: SubtitleGenerationDialogResult):
         super().__init__()
+        self._run_id = run_id
         self._request = SubtitleGenerationRequest(
             media_path=media_path,
             audio_stream_index=options.audio_stream_index,
@@ -56,9 +59,12 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
         self._init_cancel_state()
         self._init_terminal_event_state()
         self._stderr_buffer = BoundedLineBuffer(max_lines=200)
+        self._worker_started_at: float | None = None
+        self._first_event_logged = False
 
     @Slot()
     def run(self):
+        self._worker_started_at = time.perf_counter()
         launch_spec = build_runtime_helper_launch(HELPER_SUBTITLE_GENERATION)
         process: subprocess.Popen[str] | None = None
         stderr_thread = None
@@ -83,6 +89,7 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
                 self._request.audio_language or "auto",
                 launch_spec.execution_mode,
             )
+            spawn_started_at = time.perf_counter()
             process = subprocess.Popen(
                 launch_spec.command,
                 stdin=subprocess.PIPE,
@@ -94,6 +101,17 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
                 bufsize=1,
                 cwd=launch_spec.cwd,
                 **self._subprocess_spawn_options(),
+            )
+            log_timing(
+                logger,
+                "Subtitle timing",
+                "helper_subprocess_spawn",
+                elapsed_ms_since(spawn_started_at),
+                run_id=self._run_id,
+                media=self._request.media_path,
+                output=self._request.output_path,
+                pid=process.pid,
+                execution_mode=launch_spec.execution_mode,
             )
             self._process = process
             if self._is_cancel_requested():
@@ -229,6 +247,7 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             return
 
         event_type = str(event.get("event") or "").strip().lower()
+        self._log_first_helper_event(event_type)
         if event_type == EVENT_PROGRESS:
             self.status_changed.emit(str(event.get("status") or "Working..."))
             self.progress_changed.emit(int(event.get("progress") or 0))
@@ -238,6 +257,7 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             self._emit_finished(
                 str(event.get("output_path") or self._request.output_path),
                 bool(event.get("auto_open")),
+                bool(event.get("used_fallback_output_path")),
             )
             return
         if event_type == EVENT_FAILED:
@@ -257,6 +277,22 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
         )
         self._stderr_buffer.append(f"Unknown stdout event: {line}")
 
+    def _log_first_helper_event(self, event_type: str):
+        if self._first_event_logged or self._worker_started_at is None:
+            return
+
+        self._first_event_logged = True
+        log_timing(
+            logger,
+            "Subtitle timing",
+            "first_helper_event",
+            elapsed_ms_since(self._worker_started_at),
+            run_id=self._run_id,
+            media=self._request.media_path,
+            output=self._request.output_path,
+            event=event_type or "<missing>",
+        )
+
     def _emit_failed(self, user_message: str, diagnostics: str):
         if not self._mark_terminal_event_emitted():
             return
@@ -267,10 +303,10 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             return
         self.canceled.emit()
 
-    def _emit_finished(self, output_path: str, auto_open: bool):
+    def _emit_finished(self, output_path: str, auto_open: bool, used_fallback_output_path: bool):
         if not self._mark_terminal_event_emitted():
             return
-        self.finished.emit(str(output_path), bool(auto_open))
+        self.finished.emit(str(output_path), bool(auto_open), bool(used_fallback_output_path))
 
     def _build_initial_details(self) -> str:
         language_label = self._request.audio_language or "Auto detect"

@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 
 from services.RuntimeExecution import get_runtime_mode_label
 from services.RuntimeHelperProtocol import (
@@ -20,6 +21,7 @@ from services.SubtitleMaker import (
     SubtitleGenerationEmptyResultError,
     SubtitleMaker,
 )
+from services.SubtitleTiming import elapsed_ms_since, log_timing
 from utils.LoggingSetup import configure_logging
 
 
@@ -103,13 +105,26 @@ def _build_subtitle_user_message(exc: BaseException) -> str:
 
 
 def run_subtitle_generation_helper() -> int:
+    helper_started_at = time.perf_counter()
     cancel_event = threading.Event()
     maker_ref: dict[str, SubtitleMaker | None] = {"maker": None}
     _install_subtitle_signal_handlers(cancel_event, maker_ref)
 
     request: SubtitleGenerationRequest | None = None
+    outcome = "failed"
     try:
+        request_parse_started_at = time.perf_counter()
         request = SubtitleGenerationRequest.from_json(_read_stdin_payload())
+        log_timing(
+            logger,
+            "Subtitle helper timing",
+            "helper_request_parse",
+            elapsed_ms_since(request_parse_started_at),
+            media=request.media_path,
+            output=request.output_path,
+            requested_device=request.device or "auto",
+            model_size=request.model_size,
+        )
         logger.info(
             "Subtitle generation helper started | runtime_mode=%s | media=%s | output=%s | model=%s | requested_device=%s | audio_stream_index=%s | language=%s",
             get_runtime_mode_label(),
@@ -139,7 +154,7 @@ def run_subtitle_generation_helper() -> int:
             progress_callback=_progress_callback,
             cancel_event=cancel_event,
         )
-        maker.save_subtitles(
+        saved_output_path = maker.save_subtitles(
             segments,
             request.output_path,
             request.output_format,
@@ -147,18 +162,21 @@ def run_subtitle_generation_helper() -> int:
         )
         _emit_event(
             build_finished_event(
-                request.output_path,
+                saved_output_path,
                 request.auto_open_after_generation,
+                used_fallback_output_path=saved_output_path != request.output_path,
             )
         )
+        outcome = "success"
         logger.info(
             "Subtitle generation helper finished successfully | media=%s | output=%s | actual_device=%s",
             request.media_path,
-            request.output_path,
+            saved_output_path,
             maker.device,
         )
         return 0
     except SubtitleGenerationCanceledError:
+        outcome = "canceled"
         logger.info(
             "Subtitle generation helper canceled | media=%s",
             request.media_path if request is not None else "<unknown>",
@@ -174,6 +192,18 @@ def run_subtitle_generation_helper() -> int:
         _emit_event(build_failed_event(_build_subtitle_user_message(exc), _build_subtitle_diagnostics(exc)))
         return 1
     finally:
+        log_timing(
+            logger,
+            "Subtitle helper timing",
+            "helper_total",
+            elapsed_ms_since(helper_started_at),
+            media=request.media_path if request is not None else None,
+            output=request.output_path if request is not None else None,
+            requested_device=request.device if request is not None and request.device else "auto" if request is not None else None,
+            actual_device=maker_ref["maker"].device if maker_ref.get("maker") is not None else None,
+            model_size=request.model_size if request is not None else None,
+            result=outcome,
+        )
         maker = maker_ref.get("maker")
         if maker is not None:
             maker.cancel()

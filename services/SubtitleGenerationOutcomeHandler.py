@@ -9,6 +9,7 @@ from ui.MessageBoxService import (
     show_cuda_runtime_install_failed,
     show_subtitle_auto_load_failed,
     show_subtitle_created,
+    show_subtitle_created_with_fallback_name,
     show_subtitle_created_not_loaded_due_to_context_change,
     show_subtitle_generation_canceled,
     show_subtitle_generation_failed,
@@ -25,13 +26,28 @@ class SubtitleGenerationOutcomeHandler:
     def __init__(self, parent: QWidget):
         self._parent = parent
 
-    def show_generation_success(self, output_path: str, auto_open_outcome: SubtitleAutoOpenOutcome):
+    def show_generation_success(
+        self,
+        output_path: str,
+        auto_open_outcome: SubtitleAutoOpenOutcome,
+        *,
+        used_fallback_output_path: bool = False,
+        requested_output_path: str | None = None,
+    ):
         if auto_open_outcome == SubtitleAutoOpenOutcome.CONTEXT_CHANGED:
             show_subtitle_created_not_loaded_due_to_context_change(self._parent, output_path)
             return
 
         if auto_open_outcome == SubtitleAutoOpenOutcome.LOAD_FAILED:
             show_subtitle_auto_load_failed(self._parent, output_path)
+            return
+
+        if used_fallback_output_path:
+            show_subtitle_created_with_fallback_name(
+                self._parent,
+                requested_output_path or output_path,
+                output_path,
+            )
             return
 
         show_subtitle_created(self._parent, output_path)

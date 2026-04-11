@@ -7,7 +7,9 @@ import site
 import subprocess
 import tempfile
 import threading
+import time
 from services.AppTempService import AppTempService
+from services.SubtitleTiming import elapsed_ms_since, log_timing
 
 
 logger = logging.getLogger(__name__)
@@ -220,7 +222,18 @@ class SubtitleMaker:
             self.device,
             compute_type,
         )
+        model_init_started_at = time.perf_counter()
         self._model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
+        log_timing(
+            logger,
+            "Subtitle helper timing",
+            "model_init",
+            elapsed_ms_since(model_init_started_at),
+            model=self.model_size,
+            requested_device=self.device,
+            actual_device=self.device,
+            compute_type=compute_type,
+        )
         return self._model
 
     def _raise_if_canceled(self, cancel_event: threading.Event | None, context: str | None = None):
@@ -262,6 +275,7 @@ class SubtitleMaker:
             )
 
         try:
+            transcribe_call_started_at = time.perf_counter()
             self._raise_if_canceled(cancel_event, "before-model-load")
 
             if progress_callback is not None:
@@ -312,6 +326,7 @@ class SubtitleMaker:
                     ),
                 )
 
+            transcription_started_at = time.perf_counter()
             segments_iter, info = model.transcribe(
                 source_path,
                 language=language,
@@ -364,8 +379,30 @@ class SubtitleMaker:
                 len(results),
                 detected_language,
             )
+            log_timing(
+                logger,
+                "Subtitle helper timing",
+                "transcription",
+                elapsed_ms_since(transcription_started_at),
+                media=media_path,
+                segments=len(results),
+                detected_language=detected_language,
+                actual_device=self.device,
+                model_size=self.model_size,
+            )
             return results
         finally:
+            log_timing(
+                logger,
+                "Subtitle helper timing",
+                "transcribe_call_total",
+                elapsed_ms_since(transcribe_call_started_at),
+                media=media_path,
+                audio_stream_index=audio_stream_index,
+                requested_language=language or "auto",
+                actual_device=self.device,
+                model_size=self.model_size,
+            )
             if extracted_audio_path is not None:
                 self._remove_file_if_exists(extracted_audio_path)
 
@@ -374,7 +411,7 @@ class SubtitleMaker:
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
-    ):
+    ) -> str:
         def write_srt(handle):
             for index, segment in enumerate(segments, start=1):
                 handle.write(f"{index}\n")
@@ -384,14 +421,14 @@ class SubtitleMaker:
                 )
                 handle.write(f"{segment.text}\n\n")
 
-        self._write_subtitle_file_atomic(output_path, write_srt, cancel_event=cancel_event)
+        return self._write_subtitle_file_atomic(output_path, write_srt, cancel_event=cancel_event)
 
     def save_vtt(
         self,
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
-    ):
+    ) -> str:
         def write_vtt(handle):
             handle.write("WEBVTT\n\n")
             for segment in segments:
@@ -401,7 +438,7 @@ class SubtitleMaker:
                 )
                 handle.write(f"{segment.text}\n\n")
 
-        self._write_subtitle_file_atomic(output_path, write_vtt, cancel_event=cancel_event)
+        return self._write_subtitle_file_atomic(output_path, write_vtt, cancel_event=cancel_event)
 
     def save_subtitles(
         self,
@@ -409,7 +446,7 @@ class SubtitleMaker:
         output_path: str,
         output_format: str,
         cancel_event: threading.Event | None = None,
-    ):
+    ) -> str:
         normalized_format = str(output_format).strip().lower()
         logger.info(
             "Saving subtitles | output=%s | format=%s | segments=%s",
@@ -418,10 +455,21 @@ class SubtitleMaker:
             len(segments),
         )
         self._raise_if_canceled(cancel_event, "before-save")
+        save_started_at = time.perf_counter()
         if normalized_format == "vtt":
-            self.save_vtt(segments, output_path, cancel_event=cancel_event)
-            return
-        self.save_srt(segments, output_path, cancel_event=cancel_event)
+            saved_output_path = self.save_vtt(segments, output_path, cancel_event=cancel_event)
+        else:
+            saved_output_path = self.save_srt(segments, output_path, cancel_event=cancel_event)
+        log_timing(
+            logger,
+            "Subtitle helper timing",
+            "subtitle_save",
+            elapsed_ms_since(save_started_at),
+            output=saved_output_path,
+            format=normalized_format or "srt",
+            segments=len(segments),
+        )
+        return saved_output_path
 
     def _extract_audio_stream(
         self,
@@ -456,6 +504,7 @@ class SubtitleMaker:
             str(output_path),
         ]
 
+        audio_extract_started_at = time.perf_counter()
         try:
             self._ffmpeg_process = subprocess.Popen(
                 command,
@@ -507,6 +556,15 @@ class SubtitleMaker:
             )
             raise RuntimeError(f"Failed to extract audio stream: {error_text}")
 
+        log_timing(
+            logger,
+            "Subtitle helper timing",
+            "audio_extract",
+            elapsed_ms_since(audio_extract_started_at),
+            media=media_path,
+            audio_stream_index=audio_stream_index,
+            output=output_path,
+        )
         return str(output_path)
 
     def _format_timestamp(self, seconds: float, decimal_separator: str) -> str:
@@ -568,13 +626,14 @@ class SubtitleMaker:
         output_path: str,
         writer,
         cancel_event: threading.Event | None = None,
-    ):
+    ) -> str:
         output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         temp_handle = None
         temp_path: str | None = None
 
+        atomic_write_started_at = time.perf_counter()
         try:
             temp_handle = tempfile.NamedTemporaryFile(
                 "w",
@@ -590,7 +649,27 @@ class SubtitleMaker:
             temp_handle.close()
             temp_handle = None
             self._raise_if_canceled(cancel_event, "before-atomic-replace")
-            os.replace(temp_path, output_file)
+            try:
+                os.replace(temp_path, output_file)
+                final_output_path = str(output_file)
+            except PermissionError:
+                fallback_output_file = self._build_fallback_subtitle_output_path(output_file)
+                logger.warning(
+                    "Atomic subtitle overwrite failed because destination is in use; saving with fallback name | requested_output=%s | fallback_output=%s",
+                    output_file,
+                    fallback_output_file,
+                )
+                os.replace(temp_path, fallback_output_file)
+                final_output_path = str(fallback_output_file)
+            log_timing(
+                logger,
+                "Subtitle helper timing",
+                "save_atomic_write",
+                elapsed_ms_since(atomic_write_started_at),
+                output=final_output_path,
+                temp_path=temp_path,
+            )
+            return final_output_path
         except SubtitleGenerationCanceledError:
             if temp_handle is not None:
                 temp_handle.close()
@@ -604,3 +683,15 @@ class SubtitleMaker:
             if temp_path is not None:
                 self._remove_file_if_exists(temp_path)
             raise
+
+    def _build_fallback_subtitle_output_path(self, requested_output_path: Path) -> Path:
+        parent_dir = requested_output_path.parent
+        stem = requested_output_path.stem
+        suffix = requested_output_path.suffix
+
+        for index in range(1, 1000):
+            candidate = parent_dir / f"{stem} ({index}){suffix}"
+            if not candidate.exists():
+                return candidate
+
+        raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")

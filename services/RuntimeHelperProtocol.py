@@ -50,11 +50,17 @@ def build_progress_event(status: str, progress: int, details: str) -> dict:
     }
 
 
-def build_finished_event(output_path: str = "", auto_open: bool = False) -> dict:
+def build_finished_event(
+    output_path: str = "",
+    auto_open: bool = False,
+    *,
+    used_fallback_output_path: bool = False,
+) -> dict:
     return {
         "event": EVENT_FINISHED,
         "output_path": str(output_path),
         "auto_open": bool(auto_open),
+        "used_fallback_output_path": bool(used_fallback_output_path),
     }
 
 

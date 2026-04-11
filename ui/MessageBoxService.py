@@ -216,6 +216,20 @@ def show_subtitle_created(parent: QWidget, output_path: str) -> None:
     )
 
 
+def show_subtitle_created_with_fallback_name(
+    parent: QWidget,
+    requested_output_path: str,
+    actual_output_path: str,
+) -> None:
+    QMessageBox.information(
+        parent,
+        "Generate Subtitle",
+        "The original subtitle file could not be overwritten because it is currently in use.\n\n"
+        f"Requested path:\n{requested_output_path}\n\n"
+        f"Created file:\n{actual_output_path}",
+    )
+
+
 def show_subtitle_generation_failed(parent: QWidget, error_text: str) -> None:
     QMessageBox.warning(parent, "Generate Subtitle", error_text)
 
