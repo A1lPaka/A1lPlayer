@@ -1,0 +1,192 @@
+import importlib
+import sys
+import types
+
+from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtWidgets import QApplication, QWidget
+
+from services.AppCloseCoordinator import AppCloseResult
+
+
+class _PlaybackStub:
+    def is_exit_after_current_enabled(self):
+        return False
+
+    def has_media_loaded(self):
+        return False
+
+    def can_activate_view_modes(self):
+        return False
+
+
+class _PlayerActionsStub:
+    def on_play_pause(self):
+        return None
+
+
+class _PlayerWindowStub(QWidget):
+    open_file_requested = Signal()
+    media_drop_requested = Signal(object)
+    media_finished = Signal(str)
+    active_media_changed = Signal(object)
+    playback_error = Signal(str, str)
+    video_geometry_changed = Signal(int, int)
+    fullscreen_requested = Signal()
+    pip_requested = Signal()
+    pip_exit_requested = Signal()
+    close_requested_after_media_end = Signal()
+
+    def __init__(self, metrics, theme_color):
+        super().__init__()
+        self.metrics = metrics
+        self.theme_color = theme_color
+        self.playback = _PlaybackStub()
+        self.player_actions = _PlayerActionsStub()
+
+    def apply_metrics(self, metrics):
+        self.metrics = metrics
+
+    def apply_theme(self, theme_color):
+        self.theme_color = theme_color
+
+    def set_fullscreen_mode(self, _fullscreen: bool):
+        return None
+
+    def set_chrome_hidden(self, _hidden: bool):
+        return None
+
+    def adjust_volume(self, _delta_percent: int):
+        return None
+
+    def seek_by_ms(self, _delta_ms: int):
+        return None
+
+    def adjust_speed(self, _delta: float):
+        return None
+
+    def reset_speed(self):
+        return None
+
+
+class _MediaSettingsStoreStub:
+    def __init__(self, _settings):
+        self.theme = object()
+
+    def load_theme(self):
+        return self.theme
+
+    def save_theme(self, theme):
+        self.theme = theme
+
+
+class _MediaLibraryServiceStub:
+    def __init__(self, _main_window, _player_window, _media_store):
+        self.shutdown_calls = 0
+
+    def open_file(self):
+        return None
+
+    def handle_drag_enter_event(self, _event):
+        return False
+
+    def handle_drop_event(self, _event):
+        return False
+
+    def clear_saved_position(self, _path: str):
+        return None
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+
+
+class _SubtitleGenerationServiceStub(QObject):
+    shutdown_finished = Signal()
+
+    def __init__(self, _main_window, _player_window, _media_store):
+        super().__init__()
+
+    def has_active_tasks(self):
+        return False
+
+    def begin_shutdown(self):
+        return False
+
+    def is_shutdown_in_progress(self):
+        return False
+
+
+class _MenuBarControllerStub:
+    def __init__(self, **_kwargs):
+        return None
+
+    def apply_metrics(self, _metrics):
+        return None
+
+    def apply_theme(self, _theme_color):
+        return None
+
+
+class _PiPControllerStub:
+    def __init__(self, _main_window, _player_window, metrics, theme_color):
+        self.metrics = metrics
+        self.theme_color = theme_color
+
+    def is_active(self):
+        return False
+
+    def exit_pip(self):
+        return None
+
+    def toggle_fullscreen_window(self):
+        return False
+
+    def apply_metrics(self, metrics):
+        self.metrics = metrics
+
+    def update_aspect_ratio(self, *_args):
+        return None
+
+    def toggle_pip(self):
+        return None
+
+    def apply_theme(self, theme_color):
+        self.theme_color = theme_color
+
+
+def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
+    installer_module = types.ModuleType("services.runtime.RuntimeInstallerMain")
+    helper_module = types.ModuleType("services.runtime.RuntimeHelperMain")
+    installer_module.try_run_runtime_installer = lambda argv=None: None
+    helper_module.try_run_runtime_helper = lambda argv=None: None
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeInstallerMain", installer_module)
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeHelperMain", helper_module)
+    message_box_module = sys.modules.get("ui.MessageBoxService")
+    if message_box_module is not None and not hasattr(message_box_module, "show_playback_error"):
+        monkeypatch.setattr(message_box_module, "show_playback_error", lambda *_args, **_kwargs: None, raising=False)
+    sys.modules.pop("MainWindow", None)
+    module = importlib.import_module("MainWindow")
+
+    monkeypatch.setattr(module, "PlayerWindow", _PlayerWindowStub)
+    monkeypatch.setattr(module, "MediaSettingsStore", _MediaSettingsStoreStub)
+    monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
+    monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
+    monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
+    monkeypatch.setattr(module, "PiPController", _PiPControllerStub)
+    monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
+    monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
+
+    window = module.MainWindow(settings=QSettings())
+    close_attempts = []
+
+    def _attempt_close():
+        close_attempts.append(True)
+        return AppCloseResult(can_close=False, shutdown_completed=False)
+
+    window.app_close_coordinator.attempt_close = _attempt_close
+    window.show()
+    QApplication.processEvents()
+
+    window.player_window.close_requested_after_media_end.emit()
+    QApplication.processEvents()
+
+    assert close_attempts == [True]

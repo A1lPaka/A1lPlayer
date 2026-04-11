@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor, QCursor
-from PySide6.QtWidgets import QWidget, QApplication
+from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
 from ui.AnimatedVideoPlaceholder import AnimatedVideoPlaceholder
@@ -26,6 +26,7 @@ class PlayerWindow(QWidget):
     fullscreen_requested = Signal()
     pip_requested = Signal()
     pip_exit_requested = Signal()
+    close_requested_after_media_end = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
 
     def __init__(self, metrics: Metrics | None, theme_color: ThemeState):
@@ -475,7 +476,7 @@ class PlayerWindow(QWidget):
         self.current_media_changed.emit(path)
 
     def _on_exit_after_current_requested(self):
-        QApplication.instance().quit()
+        self.close_requested_after_media_end.emit()
 
     def _apply_playback_view_state(self, view_state: PlaybackViewState):
         self._set_position_timer_active(view_state.position_timer_active)

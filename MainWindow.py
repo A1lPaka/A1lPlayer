@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.player_window.fullscreen_requested.connect(self.toggle_fullscreen)
         self.player_window.pip_requested.connect(self.toggle_pip)
         self.player_window.pip_exit_requested.connect(self.exit_pip)
+        self.player_window.close_requested_after_media_end.connect(self.close)
         self.setCentralWidget(self.player_window)
         self.pip_controller = PiPController(
             self,
