@@ -18,6 +18,7 @@ from services.runtime.RuntimeHelperProtocol import (
     SubtitleGenerationRequest,
 )
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.SubtitleMaker import probe_audio_streams
 from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
@@ -30,6 +31,53 @@ from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 
 logger = logging.getLogger(__name__)
+
+
+class AudioStreamProbeWorker(QObject):
+    finished = Signal(int, str, object)
+    failed = Signal(int, str, str)
+
+    def __init__(self, probe_request_id: int, media_path: str):
+        super().__init__()
+        self._probe_request_id = int(probe_request_id)
+        self._media_path = str(media_path)
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        if self._thread is not None:
+            logger.debug(
+                "Ignoring repeated audio stream probe worker start | probe_request_id=%s | media=%s",
+                self._probe_request_id,
+                self._media_path,
+            )
+            return
+
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"audio-stream-probe-{self._probe_request_id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(self):
+        try:
+            logger.info(
+                "Starting background audio stream probe | probe_request_id=%s | media=%s",
+                self._probe_request_id,
+                self._media_path,
+            )
+            audio_streams = probe_audio_streams(self._media_path)
+        except Exception as exc:
+            logger.warning(
+                "Background audio stream probe failed | probe_request_id=%s | media=%s | reason=%s",
+                self._probe_request_id,
+                self._media_path,
+                exc,
+            )
+            self.failed.emit(self._probe_request_id, self._media_path, str(exc))
+            return
+
+        self.finished.emit(self._probe_request_id, self._media_path, list(audio_streams))
 
 
 class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWorkerMixin, TerminalEventMixin):

@@ -40,7 +40,6 @@ class SubtitleGenerationUiCoordinator(QObject):
     def open_generation_dialog(
         self,
         media_path: str,
-        audio_tracks: list[tuple[int | None, str]],
         *,
         on_generate: Callable[[SubtitleGenerationDialogResult], None],
         on_cancel: Callable[[], None] | None = None,
@@ -51,8 +50,6 @@ class SubtitleGenerationUiCoordinator(QObject):
             media_path=media_path,
             parent=self._parent,
         )
-        dialog.set_audio_tracks(audio_tracks)
-        dialog.set_selected_audio_track(None)
         dialog.generateRequested.connect(on_generate)
         if on_cancel is not None:
             dialog.canceled.connect(on_cancel)
@@ -61,6 +58,29 @@ class SubtitleGenerationUiCoordinator(QObject):
 
         self._generation_dialog = dialog
         self._show_and_focus(dialog)
+
+    def set_generation_dialog_audio_tracks_loading(self):
+        if self._generation_dialog is None:
+            return
+        self._generation_dialog.set_audio_tracks_loading()
+
+    def apply_generation_dialog_audio_tracks(
+        self,
+        audio_tracks: list[tuple[int | None, str]],
+        *,
+        selected_track_id: int | None = None,
+        selector_enabled: bool,
+        generate_enabled: bool,
+    ):
+        if self._generation_dialog is None:
+            return
+        self._generation_dialog.set_audio_tracks(audio_tracks)
+        self._generation_dialog.set_selected_audio_track(selected_track_id)
+        self._generation_dialog.set_audio_track_selector_enabled(selector_enabled)
+        self._generation_dialog.set_generate_enabled(generate_enabled)
+
+    def has_generation_dialog(self) -> bool:
+        return self._generation_dialog is not None
 
     def focus_active_dialog(self):
         if self._progress_dialog is not None:

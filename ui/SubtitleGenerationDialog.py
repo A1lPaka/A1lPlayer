@@ -66,6 +66,7 @@ class ArrowComboBox(QComboBox):
 class SubtitleGenerationDialog(QWidget):
     generateRequested = Signal(object)
     canceled = Signal()
+    AUDIO_TRACKS_LOADING_LABEL = "Loading audio tracks..."
 
     AUDIO_LANGUAGE_OPTIONS = [
         ("auto", "Auto detect"),
@@ -112,7 +113,7 @@ class SubtitleGenerationDialog(QWidget):
         self._init_constants()
         self._build_ui()
         self._populate_static_options()
-        self.set_audio_tracks([])
+        self.set_audio_tracks_loading()
         self.set_media_path(media_path)
         self._apply_fonts()
         self.apply_theme(theme_color)
@@ -193,6 +194,20 @@ class SubtitleGenerationDialog(QWidget):
 
         for track_id, title in self._audio_tracks:
             self.audio_track_combo.addItem(title, None if track_id is None else int(track_id))
+
+    def set_audio_tracks_loading(self):
+        self._audio_tracks = []
+        self.audio_track_combo.clear()
+        self.audio_track_combo.addItem(self.AUDIO_TRACKS_LOADING_LABEL, None)
+        self.audio_track_combo.setCurrentIndex(0)
+        self.audio_track_combo.setEnabled(False)
+        self.generate_button.setEnabled(False)
+
+    def set_audio_track_selector_enabled(self, enabled: bool):
+        self.audio_track_combo.setEnabled(bool(enabled))
+
+    def set_generate_enabled(self, enabled: bool):
+        self.generate_button.setEnabled(bool(enabled))
 
     def set_selected_audio_track(self, track_id: int | None):
         if track_id is None:

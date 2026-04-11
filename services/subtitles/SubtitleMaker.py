@@ -14,6 +14,8 @@ from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 
 logger = logging.getLogger(__name__)
 
+FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS = 15.0
+
 
 class SubtitleGenerationCanceledError(RuntimeError):
     pass
@@ -157,32 +159,96 @@ def probe_audio_streams(media_path: str) -> list[AudioStreamInfo]:
             capture_output=True,
             text=True,
             check=False,
+            timeout=FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        logger.error(
+            "ffprobe audio stream inspection timed out | media=%s | timeout_seconds=%s",
+            media_path,
+            FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError(
+            "Audio stream inspection timed out after "
+            f"{FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS:g} seconds."
+        ) from exc
     except FileNotFoundError as exc:
+        logger.error("ffprobe executable was not found during audio stream inspection | media=%s", media_path)
         raise RuntimeError("ffprobe was not found. Please install ffmpeg/ffprobe to inspect audio streams.") from exc
+    except OSError as exc:
+        logger.error(
+            "ffprobe audio stream inspection could not be started | media=%s | reason=%s",
+            media_path,
+            exc,
+        )
+        raise RuntimeError(f"Audio stream inspection failed to start: {exc}") from exc
 
     if result.returncode != 0:
         error_text = (result.stderr or result.stdout or "Unknown ffprobe error.").strip()
+        logger.error(
+            "ffprobe audio stream inspection failed | media=%s | returncode=%s | details=%s",
+            media_path,
+            result.returncode,
+            error_text,
+        )
         raise RuntimeError(f"Failed to inspect audio streams: {error_text}")
 
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
+        logger.error(
+            "ffprobe audio stream inspection returned invalid JSON | media=%s | details=%s",
+            media_path,
+            exc,
+        )
         raise RuntimeError("ffprobe returned invalid audio stream metadata.") from exc
 
+    if not isinstance(payload, dict):
+        logger.error(
+            "ffprobe audio stream inspection returned unexpected payload type | media=%s | payload_type=%s",
+            media_path,
+            type(payload).__name__,
+        )
+        raise RuntimeError("ffprobe returned an unexpected audio stream response.")
+
     streams = payload.get("streams") or []
+    if not isinstance(streams, list):
+        logger.error(
+            "ffprobe audio stream inspection returned malformed streams payload | media=%s | streams_type=%s",
+            media_path,
+            type(streams).__name__,
+        )
+        raise RuntimeError("ffprobe returned malformed audio stream metadata.")
+
     audio_streams: list[AudioStreamInfo] = []
     for position, stream in enumerate(streams, start=1):
+        if not isinstance(stream, dict):
+            logger.warning(
+                "Skipping malformed ffprobe audio stream entry | media=%s | position=%s | entry_type=%s",
+                media_path,
+                position,
+                type(stream).__name__,
+            )
+            continue
         stream_index = stream.get("index")
         if stream_index is None:
             continue
-        audio_streams.append(
-            AudioStreamInfo(
-                stream_index=int(stream_index),
-                label=_build_audio_stream_label(stream, position),
-                is_default=int((stream.get("disposition") or {}).get("default", 0) or 0) == 1,
+        try:
+            audio_streams.append(
+                AudioStreamInfo(
+                    stream_index=int(stream_index),
+                    label=_build_audio_stream_label(stream, position),
+                    is_default=int((stream.get("disposition") or {}).get("default", 0) or 0) == 1,
+                )
             )
-        )
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Skipping malformed ffprobe audio stream metadata | media=%s | position=%s | stream_index=%s | reason=%s",
+                media_path,
+                position,
+                stream_index,
+                exc,
+            )
+            continue
 
     return audio_streams
 

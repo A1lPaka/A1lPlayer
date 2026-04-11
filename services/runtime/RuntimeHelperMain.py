@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import signal
 import sys
 import threading
@@ -26,6 +27,10 @@ from utils.LoggingSetup import configure_logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_output_path(path: str) -> str:
+    return str(Path(path).expanduser().resolve(strict=False))
 
 
 def _configure_stdio_utf8():
@@ -164,7 +169,7 @@ def run_subtitle_generation_helper() -> int:
             build_finished_event(
                 saved_output_path,
                 request.auto_open_after_generation,
-                used_fallback_output_path=saved_output_path != request.output_path,
+                used_fallback_output_path=_normalize_output_path(saved_output_path) != _normalize_output_path(request.output_path),
             )
         )
         outcome = "success"

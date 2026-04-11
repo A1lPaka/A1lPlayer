@@ -31,6 +31,8 @@ class SubtitleGenerationValidationResult:
 
 
 class SubtitleGenerationPreflight:
+    DEFAULT_GENERATION_AUDIO_TRACKS: tuple[tuple[int | None, str], ...] = ((None, "Current / default"),)
+
     def __init__(self, parent: QWidget):
         self._parent = parent
         self._last_probed_media_path: str | None = None
@@ -38,7 +40,7 @@ class SubtitleGenerationPreflight:
         self._last_probed_audio_stream_error: str | None = None
 
     def build_generation_audio_tracks(self, media_path: str | None) -> list[tuple[int | None, str]]:
-        generated_tracks: list[tuple[int | None, str]] = [(None, "Current / default")]
+        generated_tracks = self.build_audio_track_choices([])
         if not media_path:
             self.invalidate_audio_stream_probe_cache()
             return generated_tracks
@@ -58,6 +60,35 @@ class SubtitleGenerationPreflight:
 
         generated_tracks.extend((stream.stream_index, stream.label) for stream in audio_streams)
         return generated_tracks
+
+    def build_audio_track_choices(self, audio_streams) -> list[tuple[int | None, str]]:
+        generated_tracks: list[tuple[int | None, str]] = list(self.DEFAULT_GENERATION_AUDIO_TRACKS)
+        generated_tracks.extend((stream.stream_index, stream.label) for stream in audio_streams)
+        return generated_tracks
+
+    def get_cached_audio_streams_for_media(self, media_path: str | None):
+        normalized_media_path = str(media_path or "")
+        if not normalized_media_path or self._last_probed_media_path != normalized_media_path:
+            return None
+        return self._last_probed_audio_streams
+
+    def get_cached_audio_stream_error_for_media(self, media_path: str | None) -> str | None:
+        normalized_media_path = str(media_path or "")
+        if not normalized_media_path or self._last_probed_media_path != normalized_media_path:
+            return None
+        return self._last_probed_audio_stream_error
+
+    def cache_audio_stream_probe_success(self, media_path: str, audio_streams):
+        normalized_media_path = str(media_path)
+        self._last_probed_media_path = normalized_media_path
+        self._last_probed_audio_streams = list(audio_streams)
+        self._last_probed_audio_stream_error = None
+
+    def cache_audio_stream_probe_failure(self, media_path: str, reason: str):
+        normalized_media_path = str(media_path)
+        self._last_probed_media_path = normalized_media_path
+        self._last_probed_audio_streams = None
+        self._last_probed_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
 
     def validate_generation_request(
         self,
@@ -136,6 +167,11 @@ class SubtitleGenerationPreflight:
         normalized_reason = (reason or "").strip() or "Audio stream inspection failed."
         if normalized_reason.lower().startswith("ffprobe was not found"):
             return "ffprobe was not found. Please install ffmpeg/ffprobe to inspect audio streams."
+        if normalized_reason.lower().startswith("audio stream inspection timed out"):
+            return (
+                f"{normalized_reason}\n\n"
+                "The media file may be unavailable, the storage may be too slow, or ffprobe may have stopped responding."
+            )
         return normalized_reason
 
     def _validate_output_path(self, options: SubtitleGenerationDialogResult) -> bool:
