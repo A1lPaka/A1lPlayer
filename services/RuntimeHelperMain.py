@@ -26,18 +26,29 @@ from utils.LoggingSetup import configure_logging
 logger = logging.getLogger(__name__)
 
 
+def _configure_stdio_utf8():
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def try_run_runtime_helper(argv: list[str] | None = None) -> int | None:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) < 2 or args[0] != "--helper":
         return None
 
     helper_name = str(args[1]).strip().lower()
+    _configure_stdio_utf8()
     configure_logging()
     logger.info(
-        "Runtime helper mode activated | helper=%s | runtime_mode=%s | argv=%s",
+        "Runtime helper mode activated | helper=%s | runtime_mode=%s | argv=%s | stdin_encoding=%s | stdout_encoding=%s",
         helper_name,
         get_runtime_mode_label(),
         args,
+        getattr(sys.stdin, "encoding", None),
+        getattr(sys.stdout, "encoding", None),
     )
 
     if helper_name == HELPER_SUBTITLE_GENERATION:

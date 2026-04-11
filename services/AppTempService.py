@@ -37,7 +37,8 @@ class AppTempService:
     def create_runtime_subtitle_copy_path(cls, source_path: str | Path) -> Path:
         source = Path(source_path)
         runtime_dir = cls.ensure_dir(cls.get_runtime_subtitles_dir())
-        return runtime_dir / f"{source.stem}_{uuid.uuid4().hex}{source.suffix}"
+        safe_suffix = source.suffix or ".srt"
+        return runtime_dir / f"subtitle-{uuid.uuid4().hex}{safe_suffix}"
 
     @classmethod
     def create_subtitle_generation_file_path(cls, suffix: str, prefix: str = "artifact-") -> Path:

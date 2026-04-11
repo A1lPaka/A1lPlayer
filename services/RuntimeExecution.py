@@ -48,7 +48,7 @@ def _build_runtime_launch(argument_name: str, runtime_name: str, runtime_kind: s
         spec = RuntimeLaunchSpec(
             runtime_kind=runtime_kind,
             runtime_name=runtime_name,
-            command=[sys.executable, "-u", "-m", "MainWindow", argument_name, runtime_name],
+            command=[sys.executable, "-X", "utf8", "-u", "-m", "MainWindow", argument_name, runtime_name],
             cwd=str(app_root),
             execution_mode="source-module",
         )

@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
 from services.MediaSettingsStore import MediaSettingsStore
@@ -182,7 +182,6 @@ class SubtitleGenerationService(QObject):
             return
 
         run.subtitle_options = resolved_options
-        self._ensure_player_ui_suspended()
         self._launch_subtitle_generation(run, resolved_options)
 
     def _launch_subtitle_generation(
@@ -215,24 +214,12 @@ class SubtitleGenerationService(QObject):
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
-        worker.status_changed.connect(lambda text, run_id=run.run_id: self._on_worker_status_changed(run_id, text))
-        worker.progress_changed.connect(lambda value, run_id=run.run_id: self._on_worker_progress_changed(run_id, value))
-        worker.details_changed.connect(lambda text, run_id=run.run_id: self._on_worker_details_changed(run_id, text))
-        worker.finished.connect(
-            lambda output_path, auto_open, run_id=run.run_id: self._on_subtitle_generation_finished(
-                run_id,
-                output_path,
-                auto_open,
-            )
-        )
-        worker.failed.connect(
-            lambda error_text, diagnostics, run_id=run.run_id: self._on_subtitle_generation_failed(
-                run_id,
-                error_text,
-                diagnostics,
-            )
-        )
-        worker.canceled.connect(lambda run_id=run.run_id: self._on_subtitle_generation_canceled(run_id))
+        worker.status_changed.connect(self._on_worker_status_changed_from_worker, Qt.QueuedConnection)
+        worker.progress_changed.connect(self._on_worker_progress_changed_from_worker, Qt.QueuedConnection)
+        worker.details_changed.connect(self._on_worker_details_changed_from_worker, Qt.QueuedConnection)
+        worker.finished.connect(self._on_subtitle_generation_finished_from_worker, Qt.QueuedConnection)
+        worker.failed.connect(self._on_subtitle_generation_failed_from_worker, Qt.QueuedConnection)
+        worker.canceled.connect(self._on_subtitle_generation_canceled_from_worker, Qt.QueuedConnection)
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -249,7 +236,10 @@ class SubtitleGenerationService(QObject):
         self._subtitle_thread = thread
         self._subtitle_worker = worker
         self._subtitle_cancel_requested = False
-        thread.start()
+        QTimer.singleShot(
+            0,
+            lambda run_id=run.run_id, thread=thread: self._deferred_suspend_and_start_subtitle_worker(run_id, thread),
+        )
 
     def _resolve_cuda_runtime_options(
         self,
@@ -280,7 +270,6 @@ class SubtitleGenerationService(QObject):
             return replace(options, device="cpu")
 
         run.subtitle_options = options
-        self._ensure_player_ui_suspended()
         self._start_cuda_runtime_install(run, missing_packages)
         return None
 
@@ -313,6 +302,48 @@ class SubtitleGenerationService(QObject):
             )
             if self._state != SubtitleGenerationState.SHUTTING_DOWN:
                 self._outcomes.show_cuda_install_failed("GPU runtime installation could not be started.")
+
+    def _deferred_suspend_and_start_subtitle_worker(self, run_id: int, thread: QThread):
+        if not self._is_current_run_event(run_id, "deferred subtitle worker launch"):
+            logger.debug("Skipping deferred subtitle worker launch for stale run | run_id=%s", run_id)
+            return
+
+        if self._subtitle_thread is not thread or self._subtitle_worker is None:
+            logger.debug("Skipping deferred subtitle worker launch because worker references changed | run_id=%s", run_id)
+            return
+
+        if self._state not in (
+            SubtitleGenerationState.RUNNING,
+            SubtitleGenerationState.CANCELING,
+            SubtitleGenerationState.SHUTTING_DOWN,
+        ):
+            logger.debug(
+                "Skipping deferred subtitle worker launch because pipeline state changed | run_id=%s | state=%s",
+                run_id,
+                self._state.name,
+            )
+            return
+
+        self._ensure_player_ui_suspended()
+        QTimer.singleShot(
+            0,
+            lambda run_id=run_id, thread=thread: self._deferred_start_subtitle_worker(run_id, thread),
+        )
+
+    def _deferred_start_subtitle_worker(self, run_id: int, thread: QThread):
+        if not self._is_current_run_event(run_id, "deferred subtitle worker thread start"):
+            logger.debug("Skipping deferred subtitle worker thread start for stale run | run_id=%s", run_id)
+            return
+
+        if self._subtitle_thread is not thread or self._subtitle_worker is None:
+            logger.debug("Skipping deferred subtitle worker thread start because worker references changed | run_id=%s", run_id)
+            return
+
+        if thread.isRunning():
+            logger.debug("Skipping deferred subtitle worker thread start because thread is already running | run_id=%s", run_id)
+            return
+
+        thread.start()
 
     @Slot()
     def _cancel_subtitle_generation(self):
@@ -492,6 +523,68 @@ class SubtitleGenerationService(QObject):
 
     def _on_cuda_runtime_flow_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.CUDA_INSTALL)
+
+    def _current_run_id_for_active_subtitle_worker(self, event_name: str) -> int | None:
+        if self._subtitle_worker is None:
+            logger.debug("Ignoring %s because no subtitle worker is active", event_name)
+            return None
+
+        sender = self.sender()
+        if sender is not self._subtitle_worker:
+            logger.debug(
+                "Ignoring %s from stale subtitle worker | sender_matches_active=%s",
+                event_name,
+                sender is self._subtitle_worker,
+            )
+            return None
+
+        run_id = self._current_run_id()
+        if run_id is None:
+            logger.debug("Ignoring %s because subtitle run ownership is already gone", event_name)
+            return None
+        return run_id
+
+    @Slot(str)
+    def _on_worker_status_changed_from_worker(self, text: str):
+        run_id = self._current_run_id_for_active_subtitle_worker("status update")
+        if run_id is None:
+            return
+        self._on_worker_status_changed(run_id, text)
+
+    @Slot(int)
+    def _on_worker_progress_changed_from_worker(self, value: int):
+        run_id = self._current_run_id_for_active_subtitle_worker("progress update")
+        if run_id is None:
+            return
+        self._on_worker_progress_changed(run_id, value)
+
+    @Slot(str)
+    def _on_worker_details_changed_from_worker(self, text: str):
+        run_id = self._current_run_id_for_active_subtitle_worker("details update")
+        if run_id is None:
+            return
+        self._on_worker_details_changed(run_id, text)
+
+    @Slot(str, bool)
+    def _on_subtitle_generation_finished_from_worker(self, output_path: str, auto_open: bool):
+        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation finished")
+        if run_id is None:
+            return
+        self._on_subtitle_generation_finished(run_id, output_path, auto_open)
+
+    @Slot(str, str)
+    def _on_subtitle_generation_failed_from_worker(self, error_text: str, diagnostics: str):
+        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation failed")
+        if run_id is None:
+            return
+        self._on_subtitle_generation_failed(run_id, error_text, diagnostics)
+
+    @Slot()
+    def _on_subtitle_generation_canceled_from_worker(self):
+        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation canceled")
+        if run_id is None:
+            return
+        self._on_subtitle_generation_canceled(run_id)
 
     def _on_worker_status_changed(self, run_id: int, text: str):
         if not self._is_current_run_event(run_id, "status update"):

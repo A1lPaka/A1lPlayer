@@ -147,7 +147,6 @@ class SubtitleGenerationUiCoordinator(QObject):
         progress_dialog.cancelRequested.connect(on_cancel)
         progress_dialog.destroyed.connect(self._clear_progress_dialog_reference)
         self._progress_dialog = progress_dialog
-        self._show_and_focus(progress_dialog)
         return progress_dialog
 
     def _show_and_focus(self, widget: QWidget):
@@ -168,6 +167,7 @@ class SubtitleGenerationUiCoordinator(QObject):
 
         progress_dialog = self._create_progress_dialog(on_cancel=on_cancel)
         configure_progress_dialog(progress_dialog)
+        self._show_and_focus(progress_dialog)
 
         if dialog is not None:
             QTimer.singleShot(0, dialog.deleteLater)

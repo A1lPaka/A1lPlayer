@@ -3,6 +3,7 @@ import os
 import shutil
 from collections import deque
 from pathlib import Path
+from urllib.parse import quote
 
 import vlc
 
@@ -263,14 +264,18 @@ class PlaybackService(QObject):
             logger.error("Failed to prepare runtime subtitle copy | subtitle=%s", subtitle_path)
             return False
 
-        if self.player.video_set_subtitle_file(runtime_path) != 0:
+        if not self._attach_subtitle_file(runtime_path, subtitle_path_for_logs=subtitle_path):
+            runtime_uri = self._build_vlc_file_uri(runtime_path)
             logger.error(
-                "VLC failed to load subtitle file | subtitle=%s | runtime_copy=%s | media=%s",
+                "VLC failed to load subtitle file | subtitle=%s | runtime_copy=%s | runtime_uri=%s | runtime_copy_exists=%s | media=%s",
                 subtitle_path,
                 runtime_path,
+                runtime_uri,
+                Path(runtime_path).is_file(),
                 self._current_media_path or "<none>",
             )
-            self._remove_subtitle_copy(runtime_path)
+            # Keep the failed runtime copy around until the next cleanup point.
+            # libVLC can attempt to consume the file asynchronously after the initial call returns.
             self._restore_subtitle_state(previous_runtime_path, previous_track_id)
             return False
 
@@ -406,6 +411,32 @@ class PlaybackService(QObject):
             return None
         return str(runtime_copy_path)
 
+    def _build_vlc_file_uri(self, path: str | Path) -> str:
+        resolved_path = Path(path).resolve()
+        normalized_posix_path = resolved_path.as_posix()
+        if not normalized_posix_path.startswith("/"):
+            normalized_posix_path = f"/{normalized_posix_path}"
+        return f"file://{quote(normalized_posix_path)}"
+
+    def _attach_subtitle_file(self, subtitle_path: str | Path, *, subtitle_path_for_logs: str | None = None) -> bool:
+        subtitle_runtime_path = str(subtitle_path)
+        runtime_uri = self._build_vlc_file_uri(subtitle_runtime_path)
+
+        # Reset the active SPU track before attaching a fresh external subtitle file.
+        self.player.video_set_spu(-1)
+        subtitle_load_result = self.player.add_slave(vlc.MediaSlaveType.subtitle, runtime_uri, True)
+        if subtitle_load_result == 0:
+            return True
+
+        logger.warning(
+            "VLC add_slave subtitle attach failed; falling back to deprecated video_set_subtitle_file | subtitle=%s | runtime_copy=%s | runtime_uri=%s | media=%s",
+            subtitle_path_for_logs or subtitle_runtime_path,
+            subtitle_runtime_path,
+            runtime_uri,
+            self._current_media_path or "<none>",
+        )
+        return self.player.video_set_subtitle_file(subtitle_runtime_path) == 0
+
     def _cleanup_runtime_subtitle_copy(self):
         if not self._runtime_subtitle_copy_path:
             return
@@ -418,7 +449,12 @@ class PlaybackService(QObject):
         previous_track_id: int,
     ):
         if previous_runtime_path:
-            self.player.video_set_subtitle_file(previous_runtime_path)
+            if not self._attach_subtitle_file(previous_runtime_path):
+                logger.warning(
+                    "Failed to restore previous subtitle attachment | runtime_copy=%s | media=%s",
+                    previous_runtime_path,
+                    self._current_media_path or "<none>",
+                )
             return
 
         if previous_track_id != -1:
