@@ -24,15 +24,6 @@ from models.ThemeColor import ThemeState
 logger = logging.getLogger(__name__)
 
 
-_runtime_installer_exit_code = try_run_runtime_installer(sys.argv[1:])
-if _runtime_installer_exit_code is not None:
-    raise SystemExit(_runtime_installer_exit_code)
-
-_runtime_helper_exit_code = try_run_runtime_helper(sys.argv[1:])
-if _runtime_helper_exit_code is not None:
-    raise SystemExit(_runtime_helper_exit_code)
-
-
 class MainWindow(QMainWindow):
     _BASE_WINDOW_TITLE = "A1lPlayer"
     _MAX_MEDIA_TITLE_LENGTH = 36
@@ -295,7 +286,17 @@ class MainWindow(QMainWindow):
         self.pip_controller.exit_pip()
 
 def main(argv: list[str] | None = None) -> int:
-    app_argv = list(sys.argv if argv is None else argv)
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    runtime_exit_code = try_run_runtime_installer(args)
+    if runtime_exit_code is not None:
+        return runtime_exit_code
+
+    runtime_exit_code = try_run_runtime_helper(args)
+    if runtime_exit_code is not None:
+        return runtime_exit_code
+
+    app_argv = [sys.argv[0], *args]
     log_file_path = configure_logging()
     logger.info("Application startup initiated%s", f" | log_file={log_file_path}" if log_file_path else "")
     app = QApplication(app_argv)
@@ -312,4 +313,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main(sys.argv[1:]))
