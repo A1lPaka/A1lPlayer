@@ -44,7 +44,7 @@ def _build_runtime_launch(argument_name: str, runtime_name: str, runtime_kind: s
             execution_mode="frozen-self-exe",
         )
     else:
-        app_root = Path(__file__).resolve().parent.parent
+        app_root = Path(__file__).resolve().parent.parent.parent
         spec = RuntimeLaunchSpec(
             runtime_kind=runtime_kind,
             runtime_name=runtime_name,

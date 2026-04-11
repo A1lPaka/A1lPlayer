@@ -702,6 +702,7 @@ class SubtitleGenerationService(QObject):
             used_fallback_output_path=used_fallback_output_path,
             requested_output_path=(run.subtitle_options or run.requested_options).output_path,
         )
+        self._resume_after_generation_dialog_if_needed()
 
     def _on_subtitle_generation_failed(self, run_id: int, error_text: str, diagnostics: str):
         run = self._require_active_run(run_id, "subtitle generation failed")
@@ -728,6 +729,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._outcomes.show_generation_failed(error_text)
+        self._resume_after_generation_dialog_if_needed()
 
     def _on_subtitle_generation_canceled(self, run_id: int):
         run = self._require_active_run(run_id, "subtitle generation canceled")
@@ -745,6 +747,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._outcomes.show_generation_canceled()
+        self._resume_after_generation_dialog_if_needed()
 
     def _on_cuda_runtime_install_finished(self, run_id: int):
         run = self._require_active_run(run_id, "CUDA runtime install finished")
@@ -779,6 +782,7 @@ class SubtitleGenerationService(QObject):
                 close_progress=False,
             )
             self._outcomes.show_cuda_install_failed("GPU runtime installation finished without subtitle options.")
+            self._resume_after_generation_dialog_if_needed()
             return
 
         self._launch_subtitle_generation(run, run.subtitle_options)
@@ -799,6 +803,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._outcomes.show_cuda_install_failed(error_text)
+        self._resume_after_generation_dialog_if_needed()
 
     def _on_cuda_runtime_install_canceled(self, run_id: int):
         run = self._require_active_run(run_id, "CUDA runtime install canceled")
@@ -816,6 +821,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._outcomes.show_cuda_install_canceled()
+        self._resume_after_generation_dialog_if_needed()
 
     @Slot()
     def _clear_subtitle_thread_references(self, *_args):
@@ -918,7 +924,6 @@ class SubtitleGenerationService(QObject):
             self._ui.close_progress_dialog()
 
         self._active_run = None
-        self._clear_generation_dialog_playback_state()
         self._ensure_player_ui_resumed()
         self._complete_shutdown_if_possible()
 
