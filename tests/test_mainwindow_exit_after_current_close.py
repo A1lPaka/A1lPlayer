@@ -128,7 +128,6 @@ class _PiPControllerStub:
         self.theme_color = theme_color
         self.active = False
         self.exit_calls = 0
-        self.toggle_calls = 0
         self.enter_calls = 0
 
     def is_active(self):
@@ -146,10 +145,6 @@ class _PiPControllerStub:
         self.metrics = metrics
 
     def update_aspect_ratio(self, *_args):
-        return None
-
-    def toggle_pip(self):
-        self.toggle_calls += 1
         return None
 
     def enter_pip(self):
@@ -261,7 +256,6 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     window.enter_pip()
 
     assert fullscreen_calls == []
-    assert window.pip_controller.toggle_calls == 0
     assert window.pip_controller.enter_calls == 0
 
     window.player_window.playback.view_modes_allowed = True
@@ -271,5 +265,4 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     window.enter_pip()
 
     assert fullscreen_calls == ["enter"]
-    assert window.pip_controller.toggle_calls == 1
-    assert window.pip_controller.enter_calls == 1
+    assert window.pip_controller.enter_calls == 2
