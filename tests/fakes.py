@@ -150,7 +150,6 @@ class FakeSubtitleService(QObject):
 
     def __init__(self):
         super().__init__()
-        self.active_tasks = False
         self.shutdown_in_progress = False
         self.begin_shutdown_result = False
         self.begin_force_shutdown_result = False
@@ -158,7 +157,7 @@ class FakeSubtitleService(QObject):
         self.begin_force_shutdown_calls = 0
 
     def has_active_tasks(self) -> bool:
-        return self.active_tasks
+        return self.shutdown_in_progress
 
     def begin_shutdown(self) -> bool:
         self.begin_shutdown_calls += 1
