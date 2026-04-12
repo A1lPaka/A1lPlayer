@@ -5,7 +5,7 @@ import logging
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMainWindow
 
-from controllers.PlayerPiPController import PiPController
+from controllers.ViewModeController import ViewModeController
 
 
 class _FakeThemeState:
@@ -114,9 +114,9 @@ class _FakeHostWindow(QMainWindow):
         self.activate_calls += 1
 
 
-def _make_controller(player_window: _FakePlayerWindow) -> PiPController:
+def _make_controller(player_window: _FakePlayerWindow) -> ViewModeController:
     host_window = _FakeHostWindow()
-    return PiPController(
+    return ViewModeController(
         host_window,
         player_window,
         metrics=None,
@@ -126,7 +126,7 @@ def _make_controller(player_window: _FakePlayerWindow) -> PiPController:
 
 def _prepare_rebind_resume(player_window: _FakePlayerWindow):
     player_window.playback._is_playing = True
-    assert player_window.playback.pause_for_interruption(PiPController._PLAYBACK_INTERRUPTION_OWNER) is True
+    assert player_window.playback.pause_for_interruption(ViewModeController._PLAYBACK_INTERRUPTION_OWNER) is True
     player_window.playback.pause()
 
 

@@ -13,7 +13,7 @@ from services.MediaSettingsStore import MediaSettingsStore
 from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
 from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
-from controllers.PlayerPiPController import PiPController
+from controllers.ViewModeController import ViewModeController
 from ui.ColorThemeDialog import ColorThemeDialog
 from ui.MessageBoxService import show_playback_error
 from utils import res_path, get_metrics, build_window_title
@@ -58,15 +58,15 @@ class MainWindow(QMainWindow):
         self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
         self.setCentralWidget(self.player_window)
-        self.pip_controller = PiPController(
+        self.view_mode_controller = ViewModeController(
             self,
             self.player_window,
             metrics=self.metrics,
             theme_color=self.theme_state,
         )
-        self.player_window.fullscreen_requested.connect(self.pip_controller.toggle_fullscreen)
-        self.player_window.pip_requested.connect(self.pip_controller.toggle_pip)
-        self.player_window.pip_exit_requested.connect(self.pip_controller.exit_pip)
+        self.player_window.fullscreen_requested.connect(self.view_mode_controller.toggle_fullscreen)
+        self.player_window.pip_requested.connect(self.view_mode_controller.toggle_pip)
+        self.player_window.pip_exit_requested.connect(self.view_mode_controller.exit_pip)
         self.player_window.close_requested_after_media_end.connect(self.close)
 
         self.menu_bar_controller = MenuBarController(
@@ -82,8 +82,8 @@ class MainWindow(QMainWindow):
             self.subtitle_service,
             self.media_library,
             shutdown_playback=self.player_window.playback.shutdown,
-            is_pip_active=self.pip_controller.is_active,
-            teardown_pip_for_shutdown=self.pip_controller.teardown_for_shutdown,
+            is_pip_active=self.view_mode_controller.is_active,
+            teardown_pip_for_shutdown=self.view_mode_controller.teardown_for_shutdown,
         )
         self._init_shortcuts()
 
@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
         self.metrics = metrics
         self.player_window.apply_metrics(metrics)
         self.menu_bar_controller.apply_metrics(metrics)
-        self.pip_controller.apply_metrics(metrics)
+        self.view_mode_controller.apply_metrics(metrics)
         if self._theme_dialog is not None:
             self._theme_dialog.apply_metrics(metrics)
         self.updateGeometry()
@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self.apply_metrics(get_metrics(self))
-        self.pip_controller.sync_host_window_ui()
+        self.view_mode_controller.sync_host_window_ui()
 
         if not self._screen_connected:
             handle = self.windowHandle()
@@ -134,13 +134,13 @@ class MainWindow(QMainWindow):
         self.apply_metrics(get_metrics(self))
 
     def _init_shortcuts(self):
-        self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.pip_controller.exit_fullscreen))
+        self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.view_mode_controller.exit_fullscreen))
 
     def _build_shortcut_bindings(self, escape_handler, *, include_fullscreen: bool = True):
         bindings = [
-            ("F11", self.pip_controller.toggle_fullscreen),
-            ("Alt+Return", self.pip_controller.toggle_fullscreen),
-            ("Ctrl+Alt+Return", self.pip_controller.toggle_fullscreen),
+            ("F11", self.view_mode_controller.toggle_fullscreen),
+            ("Alt+Return", self.view_mode_controller.toggle_fullscreen),
+            ("Ctrl+Alt+Return", self.view_mode_controller.toggle_fullscreen),
             ("Esc", escape_handler),
             ("Space", self.player_window.player_actions.on_play_pause),
             ("Up", partial(self.player_window.adjust_volume, 10)),
@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         self._register_shortcuts(
             pip_window,
             self._pip_shortcuts,
-            self._build_shortcut_bindings(self.pip_controller.exit_pip, include_fullscreen=False),
+            self._build_shortcut_bindings(self.view_mode_controller.exit_pip, include_fullscreen=False),
         )
 
     def _register_shortcuts(self, parent, storage: list[QShortcut], shortcut_bindings):
@@ -192,10 +192,10 @@ class MainWindow(QMainWindow):
 
     def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)
-        self.pip_controller.update_aspect_ratio()
+        self.view_mode_controller.update_aspect_ratio()
 
     def _on_video_geometry_changed(self, width: int, height: int):
-        self.pip_controller.update_aspect_ratio(width, height)
+        self.view_mode_controller.update_aspect_ratio(width, height)
 
     def _on_playback_error(self, path: str, message: str):
         logger.warning("Playback error surfaced to UI | media=%s | message=%s", path or "<unknown>", message)
@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
     def toggle_chrome_visibility(self):
         self._chrome_hidden = not self._chrome_hidden
         self.player_window.set_chrome_hidden(self._chrome_hidden)
-        self.pip_controller.sync_host_window_ui()
+        self.view_mode_controller.sync_host_window_ui()
 
     def open_theme_dialog(self):
         if self._theme_dialog is None:
@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         self.player_window.apply_theme(self.theme_state)
         self.menu_bar_controller.apply_theme(self.theme_state)
         self.media_store.save_theme(self.theme_state)
-        self.pip_controller.apply_theme(self.theme_state)
+        self.view_mode_controller.apply_theme(self.theme_state)
         if self._theme_dialog is not None:
             self._theme_dialog.close()
 

@@ -122,7 +122,7 @@ class _MenuBarControllerStub:
         return None
 
 
-class _PiPControllerStub:
+class _ViewModeControllerStub:
     def __init__(self, _main_window, player_window, metrics, theme_color):
         self.player_window = player_window
         self.metrics = metrics
@@ -200,7 +200,7 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
     monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
     monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
-    monkeypatch.setattr(module, "PiPController", _PiPControllerStub)
+    monkeypatch.setattr(module, "ViewModeController", _ViewModeControllerStub)
     monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
     monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
 
@@ -238,7 +238,7 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
     monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
     monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
-    monkeypatch.setattr(module, "PiPController", _PiPControllerStub)
+    monkeypatch.setattr(module, "ViewModeController", _ViewModeControllerStub)
     monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
     monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
 
@@ -248,8 +248,8 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     window.player_window.pip_requested.emit()
     window.player_window.pip_requested.emit()
 
-    assert window.pip_controller.toggle_fullscreen_calls == 0
-    assert window.pip_controller.enter_calls == 0
+    assert window.view_mode_controller.toggle_fullscreen_calls == 0
+    assert window.view_mode_controller.enter_calls == 0
 
     window.player_window.playback.view_modes_allowed = True
 
@@ -257,5 +257,5 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     window.player_window.pip_requested.emit()
     window.player_window.pip_requested.emit()
 
-    assert window.pip_controller.toggle_fullscreen_calls == 1
-    assert window.pip_controller.enter_calls == 2
+    assert window.view_mode_controller.toggle_fullscreen_calls == 1
+    assert window.view_mode_controller.enter_calls == 2

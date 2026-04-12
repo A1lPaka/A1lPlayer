@@ -14,7 +14,7 @@ from utils import Metrics
 logger = logging.getLogger(__name__)
 
 
-class PiPController:
+class ViewModeController:
     _REBIND_FALLBACK_TIMEOUT_MS = 700
     _PLAYBACK_INTERRUPTION_OWNER = "pip_rebind"
 
