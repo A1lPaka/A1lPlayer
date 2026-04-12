@@ -9,6 +9,8 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QWidget
 
+from services.MediaLibraryService import MediaLibraryService
+from services.subtitles.SubtitleGenerationOutcomeHandler import SubtitleAutoOpenOutcome
 from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationContext,
     SubtitleGenerationService,
@@ -54,6 +56,12 @@ def _options(output_path: str = "C:/tmp/subtitles.srt") -> SubtitleGenerationDia
     )
 
 
+def _make_service(parent: QWidget, player: FakePlayerWindow, store: FakeMediaStore | None = None) -> tuple[SubtitleGenerationService, FakeMediaStore]:
+    resolved_store = store or FakeMediaStore()
+    media_library = MediaLibraryService(parent, player, resolved_store)
+    return SubtitleGenerationService(parent, player, resolved_store, media_library), resolved_store
+
+
 def _seed_active_run(service: SubtitleGenerationService, media_path: str = "C:/media/movie.mkv", request_id: int = 7):
     service._state = SubtitleGenerationState.RUNNING
     service._active_run = service._begin_pipeline_run(
@@ -68,7 +76,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     parent = QWidget()
-    service = SubtitleGenerationService(parent, player, FakeMediaStore())
+    service, _store = _make_service(parent, player)
 
     launches = []
     already_running_calls = []
@@ -114,7 +122,7 @@ def test_generation_dialog_pause_respects_existing_playback_interruption():
     player.playback._is_playing = True
     player.playback.pause_for_interruption("pip_rebind")
     player.playback.pause()
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     assert service.generate_subtitle() is True
     service._ui.dialog_requests[-1]["on_cancel"]()
@@ -126,7 +134,7 @@ def test_generation_dialog_pause_respects_existing_playback_interruption():
 
 def test_cancel_transitions_to_canceling_and_is_idempotent():
     player = FakePlayerWindow()
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
     _seed_active_run(service)
@@ -142,7 +150,7 @@ def test_cancel_transitions_to_canceling_and_is_idempotent():
 
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     player = FakePlayerWindow()
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
     _seed_active_run(service)
@@ -160,7 +168,7 @@ def test_begin_shutdown_requests_graceful_stop_for_active_worker():
 
 def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     player = FakePlayerWindow()
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
     _seed_active_run(service)
@@ -179,7 +187,7 @@ def test_stale_run_events_are_ignored():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     current_run = _seed_active_run(service)
 
@@ -196,7 +204,7 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     store = FakeMediaStore()
-    service = SubtitleGenerationService(QWidget(), player, store)
+    service, _store = _make_service(QWidget(), player, store)
 
     run = _seed_active_run(service)
     service._ensure_player_ui_suspended()
@@ -211,11 +219,44 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     assert service._outcomes.successes
 
 
+def test_generated_auto_open_uses_unified_context_guard():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/other.mkv"
+    player.playback._request_id = 99
+    store = FakeMediaStore()
+    service, _store = _make_service(QWidget(), player, store)
+
+    run = _seed_active_run(service, media_path="C:/media/movie.mkv", request_id=7)
+
+    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
+
+    assert player.playback.opened_subtitles == []
+    assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
+    assert service._outcomes.successes[-1][1] == SubtitleAutoOpenOutcome.CONTEXT_CHANGED
+
+
+def test_generated_auto_open_uses_unified_failure_path():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback.open_subtitle_result = False
+    store = FakeMediaStore()
+    service, _store = _make_service(QWidget(), player, store)
+
+    run = _seed_active_run(service)
+
+    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
+
+    assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
+    assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
+    assert service._outcomes.successes[-1][1] == SubtitleAutoOpenOutcome.LOAD_FAILED
+
+
 def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     loading_messages = []
     launch_calls = []
@@ -245,7 +286,7 @@ def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     launches = []
     service.generate_subtitle()
@@ -278,7 +319,7 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     failed_messages = []
     launch_calls = []
@@ -306,7 +347,7 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
 def test_stale_audio_probe_result_is_ignored_after_dialog_close():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
     probe_request_id = service._current_audio_stream_probe_request_id
@@ -326,7 +367,7 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_close():
 def test_stale_audio_probe_result_is_ignored_after_dialog_reopen():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
     first_probe_request_id = service._current_audio_stream_probe_request_id
@@ -649,7 +690,7 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+    service, _store = _make_service(QWidget(), player)
 
     assert service.generate_subtitle() is True
     first_probe_request_id = service._current_audio_stream_probe_request_id

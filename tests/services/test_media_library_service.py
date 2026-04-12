@@ -1,7 +1,7 @@
 from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QWidget
 
-from services.MediaLibraryService import MediaLibraryService
+from services.MediaLibraryService import MediaLibraryService, SubtitleAttachResult
 
 from tests.fakes import FakeMediaStore, FakePlayerWindow
 
@@ -180,3 +180,60 @@ def test_drop_still_scans_directory_and_opens_media(workspace_tmp_path):
 
     assert service.open_dropped_paths([str(media_dir)]) is True
     assert player.playback.last_open_paths["file_paths"] == [str(first_media), str(second_media)]
+
+
+def test_attach_subtitle_unifies_manual_failure_ui(monkeypatch):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback.open_subtitle_result = False
+    failure_calls = []
+
+    monkeypatch.setattr("services.MediaLibraryService.show_open_subtitle_failed", lambda _parent: failure_calls.append(True))
+
+    result = service.attach_subtitle(
+        "C:/subs/manual.srt",
+        source="manual",
+        save_last_dir=True,
+        show_failure_ui=True,
+    )
+
+    assert result == SubtitleAttachResult.LOAD_FAILED
+    assert player.playback.opened_subtitles == ["C:/subs/manual.srt"]
+    assert store.saved_last_open_dir == ["C:/subs/manual.srt"]
+    assert failure_calls == [True]
+
+
+def test_attach_subtitle_unifies_drop_flow(workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._has_media_loaded = True
+    subtitle_path = workspace_tmp_path / "dropped.srt"
+    subtitle_path.write_text("1")
+
+    assert service.open_dropped_paths([str(subtitle_path)]) is True
+    assert player.playback.opened_subtitles == [str(subtitle_path)]
+    assert store.saved_last_open_dir == [str(subtitle_path)]
+
+
+def test_attach_subtitle_reports_context_change_without_touching_vlc():
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    player.playback._media_path = "C:/media/other.mkv"
+    player.playback._request_id = 11
+
+    result = service.attach_subtitle(
+        "C:/subs/generated.srt",
+        source="generated",
+        save_last_dir=True,
+        guard_media_path="C:/media/movie.mkv",
+        guard_request_id=7,
+    )
+
+    assert result == SubtitleAttachResult.CONTEXT_CHANGED
+    assert player.playback.opened_subtitles == []
+    assert store.saved_last_open_dir == ["C:/subs/generated.srt"]

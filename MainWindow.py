@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
         
         self.player_window = PlayerWindow(self.metrics, theme_color=self.theme_state)
         self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
-        self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store)
+        self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store, self.media_library)
         self.player_window.open_file_requested.connect(self.media_library.open_file)
         self.player_window.media_drop_requested.connect(self._handle_player_drop_event)
         self.player_window.media_finished.connect(self._on_media_finished)

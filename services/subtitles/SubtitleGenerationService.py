@@ -2,11 +2,13 @@ import logging
 import time
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
 from services.MediaSettingsStore import MediaSettingsStore
+from services.MediaLibraryService import SubtitleAttachResult
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitleGenerationOutcomeHandler import (
     SubtitleAutoOpenOutcome,
@@ -29,6 +31,9 @@ from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from services.MediaLibraryService import MediaLibraryService
 
 
 @dataclass(frozen=True)
@@ -74,11 +79,13 @@ class SubtitleGenerationService(QObject):
         parent: QWidget,
         player_window: PlayerWindow,
         store: MediaSettingsStore,
+        media_library: "MediaLibraryService",
     ):
         super().__init__(parent)
         self._parent = parent
         self._player = player_window
         self._store = store
+        self._media_library = media_library
         self._ui = SubtitleGenerationUiCoordinator(
             parent,
             theme_color_getter=lambda: self._player.theme_color,
@@ -686,26 +693,22 @@ class SubtitleGenerationService(QObject):
         if self._state == SubtitleGenerationState.SHUTTING_DOWN:
             return
 
-        self._store.save_last_open_dir(output_path)
-
         auto_open_outcome = SubtitleAutoOpenOutcome.LOADED
         if auto_open:
-            if not self._matches_active_playback_context(run.context):
-                current_media_path = self._player.playback.current_media_path()
-                current_request_id = self._player.playback.current_request_id()
-                logger.info(
-                    "Skipping subtitle auto-open because playback context changed | run_id=%s | generated_media=%s | generated_request_id=%s | active_media=%s | active_request_id=%s | output=%s",
-                    run.run_id,
-                    run.context.media_path,
-                    run.context.request_id,
-                    current_media_path or "<none>",
-                    current_request_id,
-                    output_path,
-                )
+            attach_result = self._media_library.attach_subtitle(
+                output_path,
+                source="generated",
+                save_last_dir=True,
+                guard_media_path=run.context.media_path,
+                guard_request_id=run.context.request_id,
+            )
+            if attach_result == SubtitleAttachResult.CONTEXT_CHANGED:
                 auto_open_outcome = SubtitleAutoOpenOutcome.CONTEXT_CHANGED
-            elif not self._player.playback.open_subtitle_file(output_path):
+            elif attach_result == SubtitleAttachResult.LOAD_FAILED:
                 logger.error("Generated subtitle could not be auto-loaded into playback | run_id=%s | output=%s", run.run_id, output_path)
                 auto_open_outcome = SubtitleAutoOpenOutcome.LOAD_FAILED
+        else:
+            self._store.save_last_open_dir(output_path)
 
         self._outcomes.show_generation_success(
             output_path,
@@ -849,16 +852,6 @@ class SubtitleGenerationService(QObject):
             media_path=media_path,
             request_id=self._player.playback.current_request_id(),
         )
-
-    def _matches_active_playback_context(self, generation_context: SubtitleGenerationContext) -> bool:
-        current_media_path = self._player.playback.current_media_path()
-        if current_media_path != generation_context.media_path:
-            return False
-
-        current_request_id = self._player.playback.current_request_id()
-        if generation_context.request_id is None:
-            return True
-        return current_request_id == generation_context.request_id
 
     def _begin_pipeline_run(
         self,

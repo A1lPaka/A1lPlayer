@@ -29,6 +29,7 @@ class FakePlaybackForSubtitle(QObject):
         self._request_id = None
         self._is_playing = False
         self.opened_subtitles = []
+        self.open_subtitle_result = True
         self._has_media_loaded = False
         self._session_snapshot = None
         self.last_open_paths = None
@@ -89,7 +90,7 @@ class FakePlaybackForSubtitle(QObject):
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
         self.opened_subtitles.append(subtitle_path)
-        return True
+        return self.open_subtitle_result
 
     def has_media_loaded(self):
         return self._has_media_loaded

@@ -1,4 +1,5 @@
 import logging
+from enum import Enum, auto
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -15,6 +16,12 @@ from ui.PlayerWindow import PlayerWindow
 
 
 logger = logging.getLogger(__name__)
+
+
+class SubtitleAttachResult(Enum):
+    LOADED = auto()
+    CONTEXT_CHANGED = auto()
+    LOAD_FAILED = auto()
 
 
 class MediaLibraryService(QObject):
@@ -106,14 +113,12 @@ class MediaLibraryService(QObject):
         if not subtitle_path:
             return False
 
-        self._store.save_last_open_dir(subtitle_path)
-        logger.info("Opening subtitle from file dialog | subtitle=%s", subtitle_path)
-        if self._player.playback.open_subtitle_file(subtitle_path):
-            return True
-
-        logger.warning("Subtitle open failed; current subtitles were preserved")
-        show_open_subtitle_failed(self._player)
-        return False
+        return self.attach_subtitle(
+            subtitle_path,
+            source="manual",
+            save_last_dir=True,
+            show_failure_ui=True,
+        ) == SubtitleAttachResult.LOADED
 
     def open_media_paths(self, file_paths: list[str]) -> bool:
         normalized_paths = self._paths.deduplicate_paths(file_paths)
@@ -200,15 +205,57 @@ class MediaLibraryService(QObject):
         if media_paths:
             return self.open_media_paths(media_paths)
         if len(subtitle_paths) == 1 and self._player.playback.has_media_loaded():
-            subtitle_path = subtitle_paths[0]
-            self._store.save_last_open_dir(subtitle_path)
-            logger.info("Opening dropped subtitle | subtitle=%s", subtitle_path)
-            if self._player.playback.open_subtitle_file(subtitle_path):
-                return True
-            logger.warning("Subtitle open failed; current subtitles were preserved")
-            show_open_subtitle_failed(self._player)
-            return False
+            return self.attach_subtitle(
+                subtitle_paths[0],
+                source="drop",
+                save_last_dir=True,
+                show_failure_ui=True,
+            ) == SubtitleAttachResult.LOADED
         return False
+
+    def attach_subtitle(
+        self,
+        subtitle_path: str,
+        *,
+        source: str,
+        save_last_dir: bool = False,
+        guard_media_path: str | None = None,
+        guard_request_id: int | None = None,
+        show_failure_ui: bool = False,
+    ) -> SubtitleAttachResult:
+        if save_last_dir:
+            self._store.save_last_open_dir(subtitle_path)
+
+        if guard_media_path is not None:
+            current_media_path = self._player.playback.current_media_path()
+            current_request_id = self._player.playback.current_request_id()
+            if current_media_path != guard_media_path or (
+                guard_request_id is not None and current_request_id != guard_request_id
+            ):
+                logger.info(
+                    "Skipping subtitle attach because playback context changed | source=%s | subtitle=%s | expected_media=%s | expected_request_id=%s | active_media=%s | active_request_id=%s",
+                    source,
+                    subtitle_path,
+                    guard_media_path,
+                    guard_request_id,
+                    current_media_path or "<none>",
+                    current_request_id,
+                )
+                return SubtitleAttachResult.CONTEXT_CHANGED
+
+        logger.info(
+            "Attaching subtitle to current playback | source=%s | subtitle=%s | media=%s",
+            source,
+            subtitle_path,
+            self._player.playback.current_media_path(),
+        )
+        if self._player.playback.open_subtitle_file(subtitle_path):
+            return SubtitleAttachResult.LOADED
+
+        logger.warning("Subtitle attach failed; current subtitles were preserved | source=%s | subtitle=%s", source, subtitle_path)
+        if show_failure_ui:
+            show_open_subtitle_failed(self._player)
+        return SubtitleAttachResult.LOAD_FAILED
 
     def get_recent_media(self) -> list[str]:
         return self._store.get_recent_media()
