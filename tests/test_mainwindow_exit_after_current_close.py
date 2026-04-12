@@ -29,7 +29,6 @@ class _PlayerActionsStub:
 
 class _PlayerWindowStub(QWidget):
     open_file_requested = Signal()
-    media_drop_requested = Signal(object)
     media_finished = Signal(str)
     active_media_changed = Signal(object)
     playback_error = Signal(str, str)
@@ -88,12 +87,6 @@ class _MediaLibraryServiceStub:
 
     def open_file(self):
         return None
-
-    def handle_drag_enter_event(self, _event):
-        return False
-
-    def handle_drop_event(self, _event):
-        return False
 
     def shutdown(self):
         self.shutdown_calls += 1

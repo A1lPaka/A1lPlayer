@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor, QCursor
+from PySide6.QtGui import QPalette, QColor, QCursor
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
@@ -15,7 +15,6 @@ from models.ThemeColor import ThemeState
 
 class PlayerWindow(QWidget):
     open_file_requested = Signal()
-    media_drop_requested = Signal(object)
     media_finished = Signal(str)
     media_assigned = Signal(str)
     current_media_changed = Signal(str)
@@ -32,7 +31,6 @@ class PlayerWindow(QWidget):
     def __init__(self, metrics: Metrics | None, theme_color: ThemeState):
         super().__init__()
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setAcceptDrops(True)
 
         self.metrics = metrics
         self.theme_color = theme_color
@@ -191,18 +189,6 @@ class PlayerWindow(QWidget):
             self._position_speed_popup()
 
         self._emit_video_host_ready_if_possible()
-
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        self.media_drop_requested.emit(event)
-        if event.isAccepted():
-            return
-        super().dragEnterEvent(event)
-
-    def dropEvent(self, event: QDropEvent):
-        self.media_drop_requested.emit(event)
-        if event.isAccepted():
-            return
-        super().dropEvent(event)
 
     def eventFilter(self, watched, event):
         speed_popup = self.speed_popup if hasattr(self, "speed_popup") and isValid(self.speed_popup) else None
