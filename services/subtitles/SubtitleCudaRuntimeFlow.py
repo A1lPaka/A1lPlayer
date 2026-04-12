@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
@@ -32,7 +33,13 @@ class SubtitleCudaRuntimeFlow(QObject):
         self._cancel_requested = False
         self._run_id: int | None = None
 
-    def start(self, run_id: int, missing_packages: list[str]) -> bool:
+    def start(
+        self,
+        run_id: int,
+        missing_packages: list[str],
+        *,
+        on_cancel: Callable[[], None],
+    ) -> bool:
         if self.is_active():
             logger.warning(
                 "Rejected CUDA runtime flow start because a previous install flow is still active | active_run_id=%s | new_run_id=%s",
@@ -48,7 +55,7 @@ class SubtitleCudaRuntimeFlow(QObject):
         )
         self._ui.open_cuda_install_progress(
             missing_packages,
-            on_cancel=self.cancel,
+            on_cancel=on_cancel,
         )
 
         thread = QThread(self.parent())
@@ -76,31 +83,24 @@ class SubtitleCudaRuntimeFlow(QObject):
         QTimer.singleShot(0, lambda run_id=run_id, thread=thread: self._deferred_start(run_id, thread))
         return True
 
-    @Slot()
-    def cancel(self):
+    def request_stop(self, *, force: bool) -> bool:
         if self._worker is None:
-            logger.debug("CUDA runtime flow cancel ignored because no worker is active")
-            return
-
-        if self._cancel_requested:
-            logger.info("Repeated cancel request ignored for CUDA runtime flow")
-            return
-
-        self._cancel_requested = True
-        logger.info("Cancel requested for CUDA runtime flow | run_id=%s", self._current_run_id())
-        self._worker.cancel()
-        self._ui.show_cuda_install_cancel_pending()
-
-    def request_stop(self, *, force: bool):
-        if self._worker is None:
-            return
+            logger.debug("CUDA runtime flow stop ignored because no worker is active | force=%s", force)
+            return False
 
         if force:
             logger.warning("Force-stop requested for CUDA runtime flow | run_id=%s", self._current_run_id())
             self._worker.force_stop()
-            return
+            return True
 
-        self.cancel()
+        if self._cancel_requested:
+            logger.info("Repeated stop request ignored for CUDA runtime flow")
+            return False
+
+        self._cancel_requested = True
+        logger.info("Cancel requested for CUDA runtime flow | run_id=%s", self._current_run_id())
+        self._worker.cancel()
+        return True
 
     def is_active(self) -> bool:
         return self._thread is not None and self._thread.isRunning()

@@ -266,6 +266,7 @@ def _install_subtitle_service_stubs():
                 self.progress_updates = []
                 self.detail_updates = []
                 self.cancel_pending_calls = 0
+                self.cuda_cancel_pending_calls = 0
                 self.closed_generation_dialogs = 0
                 self.closed_progress_dialogs = 0
                 self.audio_tracks_loading_calls = 0
@@ -329,6 +330,9 @@ def _install_subtitle_service_stubs():
 
             def show_subtitle_cancel_pending(self):
                 self.cancel_pending_calls += 1
+
+            def show_cuda_install_cancel_pending(self):
+                self.cuda_cancel_pending_calls += 1
 
         ui_module.SubtitleGenerationUiCoordinator = SubtitleGenerationUiCoordinator
         sys.modules["services.subtitles.SubtitleGenerationUiCoordinator"] = ui_module
@@ -495,11 +499,14 @@ def _install_subtitle_service_stubs():
                 super().__init__(parent)
                 self.ui = ui
                 self._active = False
+                self._cancel_requested = False
                 self.cancel_calls = 0
                 self.request_stop_calls = []
 
-            def start(self, _run_id, _missing_packages):
+            def start(self, _run_id, _missing_packages, *, on_cancel):
                 self._active = True
+                self._cancel_requested = False
+                self.on_cancel = on_cancel
                 return True
 
             def is_active(self):
@@ -509,7 +516,14 @@ def _install_subtitle_service_stubs():
                 self.cancel_calls += 1
 
             def request_stop(self, force=False):
+                if not self._active:
+                    return False
+                if not force and self._cancel_requested:
+                    return False
+                if not force:
+                    self._cancel_requested = True
                 self.request_stop_calls.append(force)
+                return True
 
         cuda_module.SubtitleCudaRuntimeFlow = SubtitleCudaRuntimeFlow
         sys.modules["services.subtitles.SubtitleCudaRuntimeFlow"] = cuda_module

@@ -13,6 +13,7 @@ from services.MediaLibraryService import MediaLibraryService
 from services.subtitles.SubtitleGenerationOutcomeHandler import SubtitleAutoOpenOutcome
 from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationContext,
+    SubtitlePipelineTask,
     SubtitleGenerationService,
     SubtitleGenerationState,
 )
@@ -140,12 +141,28 @@ def test_cancel_transitions_to_canceling_and_is_idempotent():
     _seed_active_run(service)
     service._subtitle_worker = worker
 
-    service._cancel_subtitle_generation()
-    service._cancel_subtitle_generation()
+    service._request_active_task_stop()
+    service._request_active_task_stop()
 
     assert service._state == SubtitleGenerationState.CANCELING
     assert worker.cancel_calls == 1
     assert service._ui.cancel_pending_calls == 1
+
+
+def test_cancel_active_cuda_install_uses_unified_stop_path():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.CUDA_INSTALL
+    service._cuda_runtime_flow._active = True
+
+    service._request_active_task_stop()
+    service._request_active_task_stop()
+
+    assert service._state == SubtitleGenerationState.CANCELING
+    assert service._cuda_runtime_flow.request_stop_calls == [False]
+    assert service._ui.cuda_cancel_pending_calls == 1
 
 
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
@@ -166,6 +183,23 @@ def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     assert service.is_shutdown_in_progress() is True
 
 
+def test_begin_shutdown_requests_graceful_stop_for_active_cuda_flow():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.CUDA_INSTALL
+    service._cuda_runtime_flow._active = True
+
+    pending = service.begin_shutdown()
+
+    assert pending is True
+    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._cuda_runtime_flow.request_stop_calls == [False]
+    assert service._ui.closed_generation_dialogs == 1
+    assert service.is_shutdown_in_progress() is True
+
+
 def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
@@ -180,6 +214,22 @@ def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     assert pending is True
     assert service._state == SubtitleGenerationState.SHUTTING_DOWN
     assert worker.force_stop_calls == 1
+    assert service._ui.closed_progress_dialogs == 1
+
+
+def test_begin_force_shutdown_requests_force_stop_for_active_cuda_flow():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.CUDA_INSTALL
+    service._cuda_runtime_flow._active = True
+
+    pending = service.begin_force_shutdown()
+
+    assert pending is True
+    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._cuda_runtime_flow.request_stop_calls == [True]
     assert service._ui.closed_progress_dialogs == 1
 
 

@@ -290,7 +290,7 @@ class SubtitleGenerationService(QObject):
             options.model_size,
         )
         run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
-        self._ui.open_generation_progress(options, on_cancel=self._cancel_subtitle_generation)
+        self._ui.open_generation_progress(options, on_cancel=self._request_active_task_stop)
 
         launch_preparation_started_at = time.perf_counter()
         thread = QThread(self._parent)
@@ -386,7 +386,11 @@ class SubtitleGenerationService(QObject):
             ", ".join(missing_packages),
         )
         run.task = SubtitlePipelineTask.CUDA_INSTALL
-        if not self._cuda_runtime_flow.start(run.run_id, missing_packages):
+        if not self._cuda_runtime_flow.start(
+            run.run_id,
+            missing_packages,
+            on_cancel=self._request_active_task_stop,
+        ):
             logger.error("CUDA runtime install flow could not be started | run_id=%s", run.run_id)
             self._complete_run(
                 run.run_id,
@@ -439,47 +443,70 @@ class SubtitleGenerationService(QObject):
 
         thread.start()
 
-    @Slot()
-    def _cancel_subtitle_generation(self):
-        if self._state not in (SubtitleGenerationState.RUNNING, SubtitleGenerationState.CANCELING):
-            logger.debug("Subtitle generation cancel ignored because pipeline is not running | state=%s", self._state.name)
-            return
-
-        if self._subtitle_worker is None:
-            logger.debug("Subtitle generation cancel ignored because no subtitle worker is active")
-            return
-
-        if self._subtitle_cancel_requested:
-            logger.info("Repeated cancel request ignored for subtitle generation worker")
-            return
-
-        self._transition_state(
-            SubtitleGenerationState.CANCELING,
-            "cancel subtitle generation",
-            allowed=(SubtitleGenerationState.RUNNING, SubtitleGenerationState.CANCELING),
-        )
-        self._subtitle_cancel_requested = True
-        logger.info("Cancel requested for subtitle generation worker | run_id=%s", self._current_run_id())
-        self._subtitle_worker.cancel()
-        self._ui.show_subtitle_cancel_pending()
+    def _active_pipeline_task(self) -> SubtitlePipelineTask:
+        if self._subtitle_worker is not None:
+            return SubtitlePipelineTask.SUBTITLE_GENERATION
+        if self._cuda_runtime_flow.is_active():
+            return SubtitlePipelineTask.CUDA_INSTALL
+        return SubtitlePipelineTask.NONE
 
     @Slot()
-    def _cancel_cuda_runtime_install(self):
-        if self._state not in (SubtitleGenerationState.RUNNING, SubtitleGenerationState.CANCELING):
-            logger.debug("CUDA runtime install cancel ignored because pipeline is not running | state=%s", self._state.name)
-            return
-
-        if not self._cuda_runtime_flow.is_active():
-            logger.debug("CUDA runtime install cancel ignored because no CUDA flow is active")
-            return
-
-        self._transition_state(
+    def _request_active_task_stop(self, force: bool = False):
+        if self._state not in (
+            SubtitleGenerationState.RUNNING,
             SubtitleGenerationState.CANCELING,
-            "cancel CUDA runtime install",
-            allowed=(SubtitleGenerationState.RUNNING, SubtitleGenerationState.CANCELING),
-        )
-        logger.info("Cancel requested for CUDA runtime install worker | run_id=%s", self._current_run_id())
-        self._cuda_runtime_flow.cancel()
+            SubtitleGenerationState.SHUTTING_DOWN,
+        ):
+            logger.debug(
+                "Active task stop ignored because pipeline is not stoppable | state=%s | force=%s",
+                self._state.name,
+                force,
+            )
+            return
+
+        active_task = self._active_pipeline_task()
+        if active_task == SubtitlePipelineTask.NONE:
+            logger.debug("Active task stop ignored because no pipeline task is active | force=%s", force)
+            return
+
+        if self._state != SubtitleGenerationState.SHUTTING_DOWN:
+            self._transition_state(
+                SubtitleGenerationState.CANCELING,
+                f"request stop for {active_task.name.lower()}",
+                allowed=(SubtitleGenerationState.RUNNING, SubtitleGenerationState.CANCELING),
+            )
+
+        run_id = self._current_run_id()
+        if active_task == SubtitlePipelineTask.SUBTITLE_GENERATION:
+            if self._subtitle_worker is None:
+                logger.debug("Subtitle generation stop ignored because no worker is active | force=%s", force)
+                return
+
+            if force:
+                logger.warning("Force-stop requested for subtitle generation worker | run_id=%s", run_id)
+                self._subtitle_worker.force_stop()
+                return
+
+            if self._subtitle_cancel_requested:
+                logger.info("Repeated stop request ignored for subtitle generation worker")
+                return
+
+            self._subtitle_cancel_requested = True
+            logger.info("Cancel requested for subtitle generation worker | run_id=%s", run_id)
+            self._subtitle_worker.cancel()
+            self._ui.show_subtitle_cancel_pending()
+            return
+
+        requested = self._cuda_runtime_flow.request_stop(force=force)
+        if not requested:
+            return
+
+        if force:
+            logger.warning("Force-stop requested for CUDA runtime install flow | run_id=%s", run_id)
+            return
+
+        logger.info("Cancel requested for CUDA runtime install flow | run_id=%s", run_id)
+        self._ui.show_cuda_install_cancel_pending()
 
     def has_active_tasks(self) -> bool:
         return self._is_thread_active(self._subtitle_thread) or self._cuda_runtime_flow.is_active()
@@ -507,7 +534,8 @@ class SubtitleGenerationService(QObject):
         )
         self._force_shutdown_requested = False
         self._ui.close_generation_dialog()
-        self._request_background_task_stop(force=False)
+        self._request_active_task_stop(force=False)
+        self._invalidate_active_audio_stream_probe_request("shutdown")
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
@@ -532,29 +560,10 @@ class SubtitleGenerationService(QObject):
         logger.warning("Subtitle generation service async force shutdown started")
         self._force_shutdown_requested = True
         self._ui.close_progress_dialog()
-        self._request_background_task_stop(force=True)
+        self._request_active_task_stop(force=True)
+        self._invalidate_active_audio_stream_probe_request("shutdown")
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
-
-    def _request_background_task_stop(self, force: bool):
-        if self._subtitle_worker is not None:
-            if force:
-                self._subtitle_worker.force_stop()
-            elif not self._subtitle_cancel_requested:
-                self._subtitle_cancel_requested = True
-                logger.info("Cancel requested for subtitle generation worker during shutdown | run_id=%s", self._current_run_id())
-                self._subtitle_worker.cancel()
-                self._ui.show_subtitle_cancel_pending()
-
-        if self._cuda_runtime_flow.is_active():
-            logger.info(
-                "Stop requested for CUDA runtime install flow during shutdown | run_id=%s | force=%s",
-                self._current_run_id(),
-                force,
-            )
-            self._cuda_runtime_flow.request_stop(force=force)
-
-        self._invalidate_active_audio_stream_probe_request("shutdown")
 
     def _finalize_shutdown_state(self):
         self._ui.close_progress_dialog()
