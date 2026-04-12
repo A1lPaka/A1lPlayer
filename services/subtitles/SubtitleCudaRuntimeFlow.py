@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
-from PySide6.QtWidgets import QWidget
 
 from services.runtime.CudaRuntimeInstallWorker import CudaRuntimeInstallWorker
-from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 
 
 logger = logging.getLogger(__name__)
@@ -23,11 +20,9 @@ class SubtitleCudaRuntimeFlow(QObject):
 
     def __init__(
         self,
-        parent: QWidget,
-        ui: SubtitleGenerationUiCoordinator,
+        parent: QObject,
     ):
         super().__init__(parent)
-        self._ui = ui
         self._thread: QThread | None = None
         self._worker: CudaRuntimeInstallWorker | None = None
         self._cancel_requested = False
@@ -37,8 +32,6 @@ class SubtitleCudaRuntimeFlow(QObject):
         self,
         run_id: int,
         missing_packages: list[str],
-        *,
-        on_cancel: Callable[[], None],
     ) -> bool:
         if self.is_active():
             logger.warning(
@@ -52,10 +45,6 @@ class SubtitleCudaRuntimeFlow(QObject):
             "Starting CUDA runtime flow helper | run_id=%s | packages=%s",
             run_id,
             ", ".join(missing_packages),
-        )
-        self._ui.open_cuda_install_progress(
-            missing_packages,
-            on_cancel=on_cancel,
         )
 
         thread = QThread(self.parent())

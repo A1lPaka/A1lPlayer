@@ -165,6 +165,35 @@ def test_cancel_active_cuda_install_uses_unified_stop_path():
     assert service._ui.cuda_cancel_pending_calls == 1
 
 
+def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatch):
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    service._state = SubtitleGenerationState.STARTING
+    run = service._begin_pipeline_run(
+        SubtitleGenerationContext(media_path="C:/media/movie.mkv", request_id=7),
+        _options(),
+    )
+    missing_packages = ["nvidia-cuda-runtime-cu12"]
+    start_calls = []
+
+    def fake_start(run_id, packages):
+        start_calls.append((run_id, list(packages)))
+        return True
+
+    monkeypatch.setattr(service._cuda_runtime_flow, "start", fake_start)
+
+    service._start_cuda_runtime_install(run, missing_packages)
+
+    assert service._ui.progress_requests == [
+        {
+            "options": missing_packages,
+            "on_cancel": service._request_active_task_stop,
+        }
+    ]
+    assert start_calls == [(run.run_id, missing_packages)]
+    assert run.task == SubtitlePipelineTask.CUDA_INSTALL
+
+
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)

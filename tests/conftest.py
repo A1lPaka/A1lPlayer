@@ -312,6 +312,9 @@ def _install_subtitle_service_stubs():
             def open_generation_progress(self, options, on_cancel):
                 self.progress_requests.append({"options": options, "on_cancel": on_cancel})
 
+            def open_cuda_install_progress(self, missing_packages, on_cancel):
+                self.progress_requests.append({"options": list(missing_packages), "on_cancel": on_cancel})
+
             def update_progress_status(self, text):
                 self.status_updates.append(text)
 
@@ -495,18 +498,16 @@ def _install_subtitle_service_stubs():
             canceled = Signal(int)
             thread_finished = Signal(int)
 
-            def __init__(self, parent, ui):
+            def __init__(self, parent):
                 super().__init__(parent)
-                self.ui = ui
                 self._active = False
                 self._cancel_requested = False
                 self.cancel_calls = 0
                 self.request_stop_calls = []
 
-            def start(self, _run_id, _missing_packages, *, on_cancel):
+            def start(self, _run_id, _missing_packages):
                 self._active = True
                 self._cancel_requested = False
-                self.on_cancel = on_cancel
                 return True
 
             def is_active(self):

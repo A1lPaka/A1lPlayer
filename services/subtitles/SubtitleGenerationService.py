@@ -151,9 +151,9 @@ class SubtitleGenerationService(QObject):
         self._audio_stream_probe_workers: dict[int, AudioStreamProbeWorker] = {}
         self._dialog_request_started_at: float | None = None
         self._dialog_request_media_path: str | None = None
-        self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent, self._ui)
-        self._cuda_runtime_flow.status_changed.connect(self._on_cuda_flow_status_changed)
-        self._cuda_runtime_flow.details_changed.connect(self._on_cuda_flow_details_changed)
+        self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
+        self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
+        self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
         self._cuda_runtime_flow.finished.connect(self._on_cuda_runtime_install_finished)
         self._cuda_runtime_flow.failed.connect(self._on_cuda_runtime_install_failed)
         self._cuda_runtime_flow.canceled.connect(self._on_cuda_runtime_install_canceled)
@@ -386,11 +386,11 @@ class SubtitleGenerationService(QObject):
             ", ".join(missing_packages),
         )
         run.task = SubtitlePipelineTask.CUDA_INSTALL
-        if not self._cuda_runtime_flow.start(
-            run.run_id,
+        self._ui.open_cuda_install_progress(
             missing_packages,
             on_cancel=self._request_active_task_stop,
-        ):
+        )
+        if not self._cuda_runtime_flow.start(run.run_id, missing_packages):
             logger.error("CUDA runtime install flow could not be started | run_id=%s", run.run_id)
             self._complete_run(
                 run.run_id,
@@ -700,9 +700,6 @@ class SubtitleGenerationService(QObject):
             return
         self._ui.update_progress_status(text)
 
-    def _on_cuda_flow_status_changed(self, run_id: int, text: str):
-        self._on_worker_status_changed(run_id, text)
-
     def _on_worker_progress_changed(self, run_id: int, value: int):
         if not self._is_current_run_event(run_id, "progress update"):
             return
@@ -712,9 +709,6 @@ class SubtitleGenerationService(QObject):
         if not self._is_current_run_event(run_id, "details update"):
             return
         self._ui.update_progress_details(text)
-
-    def _on_cuda_flow_details_changed(self, run_id: int, text: str):
-        self._on_worker_details_changed(run_id, text)
 
     def _on_subtitle_generation_finished(self, run_id: int, output_path: str, auto_open: bool, used_fallback_output_path: bool):
         run = self._require_active_run(run_id, "subtitle generation finished")
