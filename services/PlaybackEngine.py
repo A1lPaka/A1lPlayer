@@ -42,6 +42,7 @@ class PlaybackService(QObject):
         self._runtime_subtitle_copy_path: str | None = None
         self._current_request_id = 0
         self._queued_player_events: deque[tuple[str, int, str]] = deque()
+        self._is_shutdown = False
         self._audio_modes = {
             "stereo": {
                 "channel": int(vlc.AudioOutputChannel.Stereo.value),
@@ -86,6 +87,68 @@ class PlaybackService(QObject):
         event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
         event_manager.event_attach(vlc.EventType.MediaPlayerEncounteredError, self._on_vlc_error_event)
 
+    def _has_backend(self) -> bool:
+        return not self._is_shutdown and getattr(self, "player", None) is not None and getattr(self, "instance", None) is not None
+
+    def shutdown(self):
+        if self._is_shutdown:
+            logger.debug("Playback backend shutdown skipped because it already completed")
+            return
+
+        logger.info("Shutting down VLC playback backend | media=%s", self._current_media_path or "<none>")
+        self._is_shutdown = True
+        self._delayed_audio_sync_timer.stop()
+        self._queued_player_events.clear()
+        player = getattr(self, "player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+                logger.debug("Failed to stop VLC player during shutdown", exc_info=True)
+        self._cleanup_runtime_subtitle_copy()
+        self._release_backend()
+        self._current_media_path = None
+        self._bound_win_id = None
+        self._last_video_geometry = None
+
+    def _release_backend(self):
+        player = getattr(self, "player", None)
+        instance = getattr(self, "instance", None)
+
+        if player is not None:
+            self._detach_event_handlers(player)
+            try:
+                player.release()
+            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+                logger.debug("Failed to release VLC player during shutdown", exc_info=True)
+            self.player = None
+
+        if instance is not None:
+            try:
+                instance.release()
+            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+                logger.debug("Failed to release VLC instance during shutdown", exc_info=True)
+            self.instance = None
+
+    def _detach_event_handlers(self, player):
+        try:
+            event_manager = player.event_manager()
+        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+            logger.debug("Failed to get VLC event manager during shutdown", exc_info=True)
+            return
+
+        for event_type in (
+            vlc.EventType.MediaPlayerPlaying,
+            vlc.EventType.MediaPlayerPaused,
+            vlc.EventType.MediaPlayerStopped,
+            vlc.EventType.MediaPlayerEndReached,
+            vlc.EventType.MediaPlayerEncounteredError,
+        ):
+            try:
+                event_manager.event_detach(event_type)
+            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+                logger.debug("Failed to detach VLC event handler during shutdown", exc_info=True)
+
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
         return self._audio_modes[mode]["channel"]
 
@@ -104,6 +167,8 @@ class PlaybackService(QObject):
             node = item.next
 
     def bind_video_output(self, win_id: int):
+        if not self._has_backend():
+            return
         self._bound_win_id = win_id
         if os.name == "nt":
             self.player.set_hwnd(win_id)
@@ -112,6 +177,9 @@ class PlaybackService(QObject):
         self._disable_vout_input()
 
     def load_media(self, media_path: str) -> int:
+        if not self._has_backend():
+            logger.warning("Media load rejected because playback backend is shut down | media=%s", media_path)
+            return self._current_request_id
         self._cleanup_runtime_subtitle_copy()
         self._current_request_id += 1
         self._current_media_path = media_path
@@ -125,35 +193,55 @@ class PlaybackService(QObject):
         return self._current_request_id
 
     def get_media(self):
+        if not self._has_backend():
+            return None
         return self.player.get_media()
 
     def is_playing(self) -> bool:
+        if not self._has_backend():
+            return False
         return self.player.get_state() == vlc.State.Playing
 
     def is_seekable(self) -> bool:
+        if not self._has_backend():
+            return False
         return self.player.is_seekable()
 
     def play(self):
+        if not self._has_backend():
+            return
         self.player.play()
 
     def pause(self):
+        if not self._has_backend():
+            return
         self.player.pause()
 
     def stop(self):
         logger.info("Stopping playback | media=%s", self._current_media_path)
         self._cleanup_runtime_subtitle_copy()
+        if not self._has_backend():
+            return
         self.player.stop()
 
     def set_time(self, position_ms: int):
+        if not self._has_backend():
+            return
         self.player.set_time(position_ms)
 
     def get_time(self) -> int:
+        if not self._has_backend():
+            return 0
         return int(self.player.get_time())
 
     def get_length(self) -> int:
+        if not self._has_backend():
+            return 0
         return int(self.player.get_length())
 
     def get_video_dimensions(self) -> tuple[int, int] | None:
+        if not self._has_backend():
+            return None
         try:
             size = self.player.video_get_size(0)
         except (AttributeError, TypeError, ValueError, vlc.VLCException):
@@ -170,26 +258,38 @@ class PlaybackService(QObject):
         return width, height
 
     def set_position(self, position: float):
+        if not self._has_backend():
+            return
         self.player.set_position(position)
 
     def set_rate(self, rate: float) -> bool:
         clamped_rate = max(0.25, min(4.0, float(rate)))
         self._desired_rate = clamped_rate
+        if not self._has_backend():
+            return False
         return self.player.set_rate(clamped_rate) == 0
 
     def get_rate(self) -> float:
         return self._desired_rate
 
     def get_audio_tracks(self):
+        if not self._has_backend():
+            return []
         return self.player.audio_get_track_description() or []
 
     def get_current_audio_track(self) -> int:
+        if not self._has_backend():
+            return -1
         return int(self.player.audio_get_track())
 
     def set_audio_track(self, track_id: int) -> bool:
+        if not self._has_backend():
+            return False
         return self.player.audio_set_track(int(track_id)) == 0
 
     def get_audio_devices(self) -> list[tuple[str, str]]:
+        if not self._has_backend():
+            return [(AUDIO_DEVICE_DEFAULT_ID, "Default Device")]
         devices: list[tuple[str, str]] = []
         seen_device_ids: set[str] = set()
         device_list = self.player.audio_output_device_enum()
@@ -215,12 +315,16 @@ class PlaybackService(QObject):
         return devices
 
     def get_current_audio_device(self) -> str:
+        if not self._has_backend():
+            return AUDIO_DEVICE_DEFAULT_ID
         current_device_id = self._decode_vlc_text(self.player.audio_output_device_get())
         return current_device_id or AUDIO_DEVICE_DEFAULT_ID
 
     def set_audio_device(self, device_id: str) -> bool:
         normalized_device_id = None if device_id == AUDIO_DEVICE_DEFAULT_ID else str(device_id)
         self._desired_audio_device_id = normalized_device_id
+        if not self._has_backend():
+            return False
         self.player.audio_output_device_set(None, normalized_device_id)
         return True
 
@@ -238,21 +342,31 @@ class PlaybackService(QObject):
         self._desired_audio_mode = mode
 
         runtime_channel = self._get_runtime_audio_channel(mode)
+        if not self._has_backend():
+            return False
         if runtime_channel is not None:
             return self.player.audio_set_channel(runtime_channel) == 0
 
         return True
 
     def get_subtitle_tracks(self):
+        if not self._has_backend():
+            return []
         return self.player.video_get_spu_description() or []
 
     def get_current_subtitle_track(self) -> int:
+        if not self._has_backend():
+            return -1
         return int(self.player.video_get_spu())
 
     def set_subtitle_track(self, track_id: int) -> bool:
+        if not self._has_backend():
+            return False
         return self.player.video_set_spu(int(track_id)) == 0
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
+        if not self._has_backend():
+            return False
         if not subtitle_path or self.get_media() is None:
             logger.warning(
                 "Subtitle load skipped because no media is active or subtitle path is empty | subtitle=%s | media=%s",
@@ -291,6 +405,8 @@ class PlaybackService(QObject):
 
     def set_volume(self, volume: int):
         self._desired_volume = max(0, min(100, volume))
+        if not self._has_backend():
+            return
         self.player.audio_set_volume(self._desired_volume)
 
     def get_desired_volume(self) -> int:
@@ -298,6 +414,8 @@ class PlaybackService(QObject):
 
     def set_muted(self, muted: bool):
         self._desired_muted = bool(muted)
+        if not self._has_backend():
+            return
         self.player.audio_set_mute(self._desired_muted)
 
     def is_muted(self) -> bool:
@@ -310,6 +428,8 @@ class PlaybackService(QObject):
         self._last_volume_before_mute = max(0, min(100, volume))
 
     def _apply_desired_audio_state(self):
+        if not self._has_backend():
+            return
         self.player.set_rate(self._desired_rate)
         self.player.audio_set_volume(self._desired_volume)
         self.player.audio_set_mute(self._desired_muted)
@@ -370,10 +490,14 @@ class PlaybackService(QObject):
             )
 
     def _queue_player_event(self, event_name: str, request_id: int, media_path: str):
+        if self._is_shutdown:
+            return
         self._queued_player_events.append((event_name, int(request_id), str(media_path)))
         QMetaObject.invokeMethod(self, "_flush_player_events_from_qt_thread", Qt.QueuedConnection)
 
     def _disable_vout_input(self):
+        if not self._has_backend():
+            return
         try:
             self.player.video_set_mouse_input(False)
         except (AttributeError, TypeError, ValueError, vlc.VLCException):
@@ -385,6 +509,8 @@ class PlaybackService(QObject):
             logger.debug("Failed to disable VLC key input", exc_info=True)
 
     def _schedule_video_geometry_probe(self, attempts: int = 12, delay_ms: int = 120):
+        if self._is_shutdown:
+            return
         if attempts <= 0:
             return
 
@@ -423,6 +549,8 @@ class PlaybackService(QObject):
         return f"file://{quote(normalized_posix_path)}"
 
     def _attach_subtitle_file(self, subtitle_path: str | Path, *, subtitle_path_for_logs: str | None = None) -> bool:
+        if not self._has_backend():
+            return False
         subtitle_runtime_path = str(subtitle_path)
         runtime_uri = self._build_vlc_file_uri(subtitle_runtime_path)
 
@@ -452,6 +580,8 @@ class PlaybackService(QObject):
         previous_runtime_path: str | None,
         previous_track_id: int,
     ):
+        if not self._has_backend():
+            return
         if previous_runtime_path:
             if not self._attach_subtitle_file(previous_runtime_path):
                 logger.warning(

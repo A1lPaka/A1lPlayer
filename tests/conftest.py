@@ -34,11 +34,13 @@ def _install_playback_engine_stub():
             self.play_calls = 0
             self.pause_calls = 0
             self.stop_calls = 0
+            self.shutdown_calls = 0
             self.sync_calls = 0
             self.subtitle_opens = []
             self._time = 0
             self._length = 0
             self._is_playing = False
+            self._is_shutdown = False
 
         def load_media(self, media_path: str) -> int:
             request_id = self._next_request_id
@@ -60,6 +62,11 @@ def _install_playback_engine_stub():
         def stop(self):
             self.stop_calls += 1
             self._is_playing = False
+
+        def shutdown(self):
+            self.shutdown_calls += 1
+            self._is_playing = False
+            self._is_shutdown = True
 
         def is_playing(self) -> bool:
             return self._is_playing

@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
             self,
             self.subtitle_service,
             self.media_library,
+            shutdown_playback=self.player_window.playback.shutdown,
             is_pip_active=self.pip_controller.is_active,
             exit_pip=self.exit_pip,
         )

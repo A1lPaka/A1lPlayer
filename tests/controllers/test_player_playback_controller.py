@@ -196,3 +196,20 @@ def test_exit_after_current_emits_close_request_and_stops_playback(workspace_tmp
     assert close_requests.calls == [()]
     assert controller.playback_state() == controller.STATE_STOPPED
     assert controller.engine.stop_calls == 1
+
+
+def test_shutdown_is_idempotent_and_resets_controller_state(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    media_path = _make_media_files(workspace_tmp_path, ["shutdown.mp4"])[0]
+
+    controller.open_paths([media_path], start_position_ms=250)
+    controller.engine.playing.emit(controller.current_request_id())
+
+    controller.shutdown()
+    controller.shutdown()
+
+    assert controller.playback_state() == controller.STATE_STOPPED
+    assert controller.has_media_loaded() is False
+    assert controller.has_assigned_media() is False
+    assert controller.current_request_id() == 0
+    assert controller.engine.shutdown_calls == 1

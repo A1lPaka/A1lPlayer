@@ -43,6 +43,7 @@ class PlayerPlaybackController(QObject):
         self._media_confirmed_loaded = False
         self._last_confirmed_media_path: str | None = None
         self._active_media_path: str | None = None
+        self._is_shutdown = False
 
         self.engine.playing.connect(self._handle_engine_playing)
         self.engine.paused.connect(self._handle_engine_paused)
@@ -50,6 +51,20 @@ class PlayerPlaybackController(QObject):
         self.engine.media_ended.connect(self._handle_media_end)
         self.engine.playback_error.connect(self._handle_engine_error)
         self.engine.video_geometry_changed.connect(self.video_geometry_changed)
+
+    def shutdown(self):
+        if self._is_shutdown:
+            return
+        self._is_shutdown = True
+        self._pending_start_position_ms = 0
+        self._resume_after_seek = False
+        self._active_request_id = 0
+        self._media_assigned = False
+        self._media_confirmed_loaded = False
+        self._last_confirmed_media_path = None
+        self._set_active_media_path(None)
+        self._set_playback_state(self.STATE_STOPPED)
+        self.engine.shutdown()
 
     def current_media_path(self) -> str | None:
         return self.playlist.current_path()

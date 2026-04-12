@@ -46,6 +46,7 @@ class AppCloseCoordinator(QObject):
         subtitle_service: SubtitleGenerationService,
         media_library: MediaLibraryService,
         *,
+        shutdown_playback: Callable[[], None],
         is_pip_active: Callable[[], bool],
         exit_pip: Callable[[], None],
     ):
@@ -53,6 +54,7 @@ class AppCloseCoordinator(QObject):
         self._parent = parent
         self._subtitle_service = subtitle_service
         self._media_library = media_library
+        self._shutdown_playback = shutdown_playback
         self._is_pip_active = is_pip_active
         self._exit_pip = exit_pip
         self._closing_in_progress = False
@@ -93,8 +95,7 @@ class AppCloseCoordinator(QObject):
         if not self._subtitle_service.has_active_tasks():
             logger.info("Application closing immediately because no subtitle background tasks are active")
             self._phase = AppClosePhase.SHUTDOWN_FINISHED
-            self._media_library.shutdown()
-            self._close_allowed = True
+            self._complete_local_shutdown()
             return AppCloseResult(can_close=True, shutdown_completed=True)
 
         self._closing_in_progress = True
@@ -195,14 +196,18 @@ class AppCloseCoordinator(QObject):
 
         self._shutdown_timeout_timer.stop()
         self._close_timeout_dialog()
+        self._phase = AppClosePhase.SHUTDOWN_FINISHED
+        self._complete_local_shutdown()
+        logger.info("Application shutdown completed")
+        self._request_final_close()
+
+    def _complete_local_shutdown(self):
         self._media_library.shutdown()
+        self._shutdown_playback()
         self._closing_in_progress = False
         self._force_requested = False
         self._force_timeout_warning_shown = False
         self._close_allowed = True
-        self._phase = AppClosePhase.SHUTDOWN_FINISHED
-        logger.info("Application shutdown completed")
-        self._request_final_close()
 
     def _request_final_close(self):
         if self._final_close_requested:

@@ -167,6 +167,14 @@ class FakeMediaStore:
         self.shutdown_calls += 1
 
 
+class FakePlaybackShutdown:
+    def __init__(self):
+        self.shutdown_calls = 0
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+
+
 class FakeCloseTarget(QWidget):
     def __init__(self):
         super().__init__()
