@@ -350,14 +350,8 @@ class PlayerPlaybackController(QObject):
         if request_id != self._active_request_id:
             return
 
-        logger.info("Media playback finished | request_id=%s | media=%s", request_id, self.current_media_path())
-        self._pending_start_position_ms = 0
-        self._clear_playback_interruptions()
-        self._media_assigned = False
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
-        self._set_active_media_path(None)
         finished_path = self.current_media_path()
+        logger.info("Media playback finished | request_id=%s | media=%s", request_id, finished_path)
         if finished_path:
             self.media_finished.emit(finished_path)
 
