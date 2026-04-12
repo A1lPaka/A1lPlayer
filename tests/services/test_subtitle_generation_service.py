@@ -106,6 +106,23 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     assert service._ui.focus_calls == 1
 
 
+def test_generation_dialog_pause_respects_existing_playback_interruption():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback._is_playing = True
+    player.playback.pause_for_interruption("pip_rebind")
+    player.playback.pause()
+    service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())
+
+    assert service.generate_subtitle() is True
+    service._ui.dialog_requests[-1]["on_cancel"]()
+
+    assert player.playback.pause_calls == 1
+    assert player.playback.play_calls == 0
+    assert player.playback.is_playing() is False
+
+
 def test_cancel_transitions_to_canceling_and_is_idempotent():
     player = FakePlayerWindow()
     service = SubtitleGenerationService(QWidget(), player, FakeMediaStore())

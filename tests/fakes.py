@@ -33,6 +33,9 @@ class FakePlaybackForSubtitle(QObject):
         self._session_snapshot = None
         self.last_open_paths = None
         self.open_paths_result = True
+        self.pause_calls = 0
+        self.play_calls = 0
+        self.interruptions = {}
 
     def current_media_path(self):
         return self._media_path
@@ -42,6 +45,47 @@ class FakePlaybackForSubtitle(QObject):
 
     def is_playing(self):
         return self._is_playing
+
+    def pause(self):
+        self.pause_calls += 1
+        self._is_playing = False
+
+    def play(self):
+        self.play_calls += 1
+        self._is_playing = True
+
+    def pause_for_interruption(self, owner: str, *, emit_pause_requested: bool = True):
+        interruption = self.interruptions.get(owner)
+        if interruption is not None:
+            return interruption["paused_by_owner"]
+
+        paused_by_owner = self._is_playing
+        self.interruptions[owner] = {
+            "paused_by_owner": paused_by_owner,
+            "media_path": self._media_path,
+            "request_id": self._request_id,
+            "emit_pause_requested": emit_pause_requested,
+        }
+        if paused_by_owner and emit_pause_requested:
+            self.pause_requested.emit()
+        return paused_by_owner
+
+    def resume_after_interruption(self, owner: str):
+        interruption = self.interruptions.pop(owner, None)
+        if interruption is None or not interruption["paused_by_owner"]:
+            return
+        if self.interruptions:
+            return
+        if self._is_playing:
+            return
+        if interruption["media_path"] != self._media_path:
+            return
+        if interruption["request_id"] != self._request_id:
+            return
+        self.play()
+
+    def clear_interruption(self, owner: str):
+        self.interruptions.pop(owner, None)
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
         self.opened_subtitles.append(subtitle_path)

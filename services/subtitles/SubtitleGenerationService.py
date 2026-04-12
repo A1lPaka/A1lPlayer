@@ -67,6 +67,7 @@ class SubtitlePipelineRun:
 
 class SubtitleGenerationService(QObject):
     shutdown_finished = Signal()
+    _PLAYBACK_INTERRUPTION_OWNER = "subtitle_generation"
 
     def __init__(
         self,
@@ -98,9 +99,6 @@ class SubtitleGenerationService(QObject):
         self._audio_stream_probe_workers: dict[int, AudioStreamProbeWorker] = {}
         self._dialog_request_started_at: float | None = None
         self._dialog_request_media_path: str | None = None
-        self._generation_dialog_context: SubtitleGenerationContext | None = None
-        self._was_playing_before_generation_dialog = False
-        self._dialog_pause_active = False
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent, self._ui)
         self._cuda_runtime_flow.status_changed.connect(self._on_cuda_flow_status_changed)
         self._cuda_runtime_flow.details_changed.connect(self._on_cuda_flow_details_changed)
@@ -146,7 +144,6 @@ class SubtitleGenerationService(QObject):
         ):
             return False
 
-        self._capture_generation_dialog_playback_state()
         self._pause_for_generation_dialog_if_needed()
         self._dialog_request_started_at = time.perf_counter()
         self._dialog_request_media_path = current_media_path
@@ -509,7 +506,7 @@ class SubtitleGenerationService(QObject):
         self._active_run = None
         self._clear_subtitle_thread_references()
         self._invalidate_active_audio_stream_probe_request("finalize-shutdown")
-        self._clear_generation_dialog_playback_state()
+        self._player.playback.clear_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
         self._ensure_player_ui_resumed()
         self._shutdown_completed = True
         self._force_shutdown_requested = False
@@ -943,49 +940,12 @@ class SubtitleGenerationService(QObject):
         self._player.resume_after_subtitle_generation()
         self._player_ui_suspended = False
 
-    def _capture_generation_dialog_playback_state(self):
-        self._generation_dialog_context = self._capture_current_generation_context()
-        self._was_playing_before_generation_dialog = self._player.playback.is_playing()
-        self._dialog_pause_active = False
-
     def _pause_for_generation_dialog_if_needed(self):
-        if self._dialog_pause_active or not self._was_playing_before_generation_dialog:
-            return
-
-        dialog_context = self._generation_dialog_context
-        if dialog_context is None or not self._matches_active_playback_context(dialog_context):
-            logger.debug("Skipping subtitle-generation playback pause because playback context changed")
-            self._clear_generation_dialog_playback_state()
-            return
-
-        if not self._player.playback.is_playing():
-            logger.debug("Skipping subtitle-generation playback pause because playback is no longer running")
-            return
-
-        self._player.pause()
-        self._dialog_pause_active = True
+        if self._player.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER):
+            self._player.playback.pause()
 
     def _resume_after_generation_dialog_if_needed(self):
-        if not self._dialog_pause_active:
-            self._clear_generation_dialog_playback_state()
-            return
-
-        dialog_context = self._generation_dialog_context
-        should_resume = (
-            self._was_playing_before_generation_dialog
-            and dialog_context is not None
-            and self._matches_active_playback_context(dialog_context)
-            and not self._player.playback.is_playing()
-        )
-        self._clear_generation_dialog_playback_state()
-
-        if should_resume:
-            self._player.play()
-
-    def _clear_generation_dialog_playback_state(self):
-        self._generation_dialog_context = None
-        self._was_playing_before_generation_dialog = False
-        self._dialog_pause_active = False
+        self._player.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
 
     def _is_current_run_event(self, run_id: int, event_name: str) -> bool:
         if self._active_run is None:

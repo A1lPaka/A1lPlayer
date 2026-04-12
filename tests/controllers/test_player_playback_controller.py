@@ -72,6 +72,28 @@ def test_stop_resets_playback_to_stopped(workspace_tmp_path):
     assert controller.engine.stop_calls == 1
 
 
+def test_nested_playback_interruptions_resume_only_when_last_owner_releases(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    media_path = _make_media_files(workspace_tmp_path, ["nested.mp4"])[0]
+
+    controller.open_paths([media_path])
+    controller.engine.playing.emit(controller.current_request_id())
+
+    assert controller.pause_for_interruption("subtitle_generation") is True
+    controller.engine.pause()
+    assert controller.pause_for_interruption("pip_rebind") is False
+
+    controller.resume_after_interruption("pip_rebind")
+
+    assert controller.engine.play_calls == 1
+    assert controller.engine.is_playing() is False
+
+    controller.resume_after_interruption("subtitle_generation")
+
+    assert controller.engine.play_calls == 2
+    assert controller.engine.is_playing() is True
+
+
 def test_media_end_without_next_item_stops_playback(workspace_tmp_path):
     controller = PlayerPlaybackController()
     media_path = _make_media_files(workspace_tmp_path, ["solo.mp4"])[0]

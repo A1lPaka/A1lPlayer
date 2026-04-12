@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class PiPController:
     _REBIND_FALLBACK_TIMEOUT_MS = 700
+    _PLAYBACK_INTERRUPTION_OWNER = "pip_rebind"
 
     def __init__(
         self,
@@ -65,9 +66,9 @@ class PiPController:
         if self.is_active() or not self._player_window.playback.can_activate_view_modes():
             return
 
-        was_playing = self._player_window.playback.is_playing()
-        if was_playing:
-            self._player_window.pause()
+        paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
+        if paused_by_pip:
+            self._player_window.playback.pause()
 
         if self._host_window.isFullScreen():
             self._host_window.showNormal()
@@ -76,6 +77,7 @@ class PiPController:
         pip_window = self._ensure_pip_window()
         player_widget = self._host_window.take_player_window()
         if player_widget is None:
+            self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
             return
 
         pip_window.setCentralWidget(player_widget)
@@ -85,19 +87,20 @@ class PiPController:
         pip_window.raise_()
         pip_window.activateWindow()
         self._host_window.hide()
-        self._start_rebind_video_output_transition(was_playing)
+        self._start_rebind_video_output_transition(paused_by_pip)
 
     def exit_pip(self):
         if not self.is_active():
             return
 
-        was_playing = self._player_window.playback.is_playing()
-        if was_playing:
-            self._player_window.pause()
+        paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
+        if paused_by_pip:
+            self._player_window.playback.pause()
 
         pip_window = self._ensure_pip_window()
         player_widget = pip_window.takeCentralWidget()
         if player_widget is None:
+            self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
             return
 
         self._host_window.restore_player_window(player_widget)
@@ -106,7 +109,7 @@ class PiPController:
         self._host_window.showNormal()
         self._host_window.raise_()
         self._host_window.activateWindow()
-        self._start_rebind_video_output_transition(was_playing)
+        self._start_rebind_video_output_transition(paused_by_pip)
 
     def toggle_fullscreen_window(self) -> bool:
         if not self.is_active():
@@ -203,8 +206,6 @@ class PiPController:
             "PiP rebind resume via geometry | transition_id=%s",
             transition_id,
         )
-        if self._pending_resume_after_rebind and not self._player_window.playback.is_playing():
-            self._player_window.play()
         self._complete_pending_rebind_transition(transition_id)
 
     def _resume_after_rebind_fallback(self, transition_id: int):
@@ -235,14 +236,13 @@ class PiPController:
                 transition_id,
                 geometry_missing,
             )
-            if not self._player_window.playback.is_playing():
-                self._player_window.play()
 
         self._complete_pending_rebind_transition(transition_id)
 
     def _complete_pending_rebind_transition(self, transition_id: int | None = None):
         if transition_id is not None and transition_id != self._pending_transition_id:
             return
+        self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
         self._cancel_pending_rebind_transition()
 
     def _on_video_host_ready(self):

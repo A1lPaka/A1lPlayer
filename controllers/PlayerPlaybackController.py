@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -12,11 +13,19 @@ from models.PlaybackPlaylist import PlaylistState
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _PlaybackInterruption:
+    paused_by_owner: bool
+    media_path: str | None
+    request_id: int
+
+
 class PlayerPlaybackController(QObject):
     STATE_STOPPED = "stopped"
     STATE_OPENING = "opening"
     STATE_PAUSED = "paused"
     STATE_PLAYING = "playing"
+    _SEEK_INTERRUPTION_OWNER = "seek"
 
     playback_state_changed = Signal(str)
     media_finished = Signal(str)
@@ -34,7 +43,6 @@ class PlayerPlaybackController(QObject):
         self.engine = PlaybackService(self)
         self.playlist = PlaylistState()
 
-        self._resume_after_seek = False
         self._exit_after_current = False
         self._pending_start_position_ms = 0
         self._playback_state = self.STATE_STOPPED
@@ -44,6 +52,7 @@ class PlayerPlaybackController(QObject):
         self._last_confirmed_media_path: str | None = None
         self._active_media_path: str | None = None
         self._is_shutdown = False
+        self._playback_interruptions: dict[str, _PlaybackInterruption] = {}
 
         self.engine.playing.connect(self._handle_engine_playing)
         self.engine.paused.connect(self._handle_engine_paused)
@@ -57,7 +66,7 @@ class PlayerPlaybackController(QObject):
             return
         self._is_shutdown = True
         self._pending_start_position_ms = 0
-        self._resume_after_seek = False
+        self._clear_playback_interruptions()
         self._active_request_id = 0
         self._media_assigned = False
         self._media_confirmed_loaded = False
@@ -142,6 +151,7 @@ class PlayerPlaybackController(QObject):
 
     def stop(self):
         self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
         logger.info("Playback stop requested | media=%s", self.current_media_path())
         self._media_confirmed_loaded = False
         self._last_confirmed_media_path = None
@@ -170,8 +180,7 @@ class PlayerPlaybackController(QObject):
         return True
 
     def begin_seek(self):
-        self._resume_after_seek = self.engine.is_playing()
-        if self._resume_after_seek:
+        if self.pause_for_interruption(self._SEEK_INTERRUPTION_OWNER, emit_pause_requested=False):
             self.engine.pause()
 
     def seek_to_ratio(self, value: float):
@@ -179,10 +188,7 @@ class PlayerPlaybackController(QObject):
             self.engine.set_position(max(0.0, min(1.0, value)))
 
     def finish_seek(self):
-        if self._resume_after_seek:
-            self.engine.play()
-            self._set_playback_state(self.STATE_OPENING)
-        self._resume_after_seek = False
+        self.resume_after_interruption(self._SEEK_INTERRUPTION_OWNER)
 
     def seek_by_hold(self, direction: str):
         current_ms = self.engine.get_time()
@@ -220,6 +226,38 @@ class PlayerPlaybackController(QObject):
 
     def is_playing(self) -> bool:
         return self.engine.is_playing()
+
+    def pause_for_interruption(self, owner: str, *, emit_pause_requested: bool = True) -> bool:
+        interruption = self._playback_interruptions.get(owner)
+        if interruption is not None:
+            return interruption.paused_by_owner
+
+        paused_by_owner = self.engine.is_playing()
+        self._playback_interruptions[owner] = _PlaybackInterruption(
+            paused_by_owner=paused_by_owner,
+            media_path=self.current_media_path(),
+            request_id=self._active_request_id,
+        )
+        if paused_by_owner and emit_pause_requested:
+            self.pause_requested.emit()
+        return paused_by_owner
+
+    def resume_after_interruption(self, owner: str):
+        interruption = self._playback_interruptions.pop(owner, None)
+        if interruption is None or not interruption.paused_by_owner:
+            return
+        if self._playback_interruptions:
+            return
+        if self.engine.is_playing():
+            return
+        if interruption.request_id != self._active_request_id:
+            return
+        if interruption.media_path != self.current_media_path():
+            return
+        self.play()
+
+    def clear_interruption(self, owner: str):
+        self._playback_interruptions.pop(owner, None)
 
     def can_activate_view_modes(self) -> bool:
         return self.has_media_loaded() and self._playback_state != self.STATE_STOPPED
@@ -314,6 +352,7 @@ class PlayerPlaybackController(QObject):
 
         logger.info("Media playback finished | request_id=%s | media=%s", request_id, self.current_media_path())
         self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
         self._media_assigned = False
         self._media_confirmed_loaded = False
         self._last_confirmed_media_path = None
@@ -387,6 +426,7 @@ class PlayerPlaybackController(QObject):
             logger.warning("Current playlist item is empty; cannot load media")
             return False
 
+        self._clear_playback_interruptions()
         if self._active_media_path is not None and self._active_media_path != media_path:
             self._set_active_media_path(None)
         self._media_confirmed_loaded = False
@@ -423,6 +463,7 @@ class PlayerPlaybackController(QObject):
     def _handle_engine_stopped(self, request_id: int):
         if request_id != self._active_request_id:
             return
+        self._clear_playback_interruptions()
         self._media_confirmed_loaded = False
         self._last_confirmed_media_path = None
         self._set_active_media_path(None)
@@ -439,6 +480,7 @@ class PlayerPlaybackController(QObject):
             message,
         )
         self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
         self._active_request_id = 0
         self._media_assigned = False
         self._media_confirmed_loaded = False
@@ -480,3 +522,6 @@ class PlayerPlaybackController(QObject):
             return
         self._active_media_path = media_path
         self.active_media_changed.emit(media_path)
+
+    def _clear_playback_interruptions(self):
+        self._playback_interruptions.clear()
