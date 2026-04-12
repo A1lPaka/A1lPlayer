@@ -12,7 +12,7 @@ from services.subtitles.SubtitleGenerationOutcomeHandler import (
     SubtitleAutoOpenOutcome,
     SubtitleGenerationOutcomeHandler,
 )
-from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
+from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.SubtitleGenerationWorkers import AudioStreamProbeWorker, SubtitleGenerationWorker
 from services.subtitles.SubtitleMaker import (
@@ -94,6 +94,10 @@ class SubtitleGenerationService(QObject):
         self._subtitle_thread: QThread | None = None
         self._subtitle_worker: SubtitleGenerationWorker | None = None
         self._subtitle_cancel_requested = False
+        self._audio_stream_probe_media_path: str | None = None
+        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
+        self._cached_audio_streams = None
+        self._cached_audio_stream_error: str | None = None
         self._audio_stream_probe_request_id = 0
         self._current_audio_stream_probe_request_id: int | None = None
         self._audio_stream_probe_workers: dict[int, AudioStreamProbeWorker] = {}
@@ -178,7 +182,13 @@ class SubtitleGenerationService(QObject):
 
         run = self._begin_pipeline_run(generation_context, options)
         preflight_started_at = time.perf_counter()
-        validation_result = self._preflight.validate_generation_request(current_media_path, options)
+        validation_result = self._preflight.validate_generation_request(
+            current_media_path,
+            options,
+            probe_state=self._get_audio_stream_probe_state(current_media_path),
+            audio_streams=self._get_cached_audio_streams_for_media(current_media_path),
+            probe_error=self._get_cached_audio_stream_error_for_media(current_media_path),
+        )
         log_timing(
             logger,
             "Subtitle timing",
@@ -1018,7 +1028,7 @@ class SubtitleGenerationService(QObject):
         self._dialog_request_media_path = None
 
     def _load_generation_audio_tracks_async(self, media_path: str):
-        cached_audio_streams = self._preflight.get_cached_audio_streams_for_media(media_path)
+        cached_audio_streams = self._get_cached_audio_streams_for_media(media_path)
         if cached_audio_streams is not None:
             logger.debug(
                 "Using cached audio stream probe result for generation dialog | media=%s | stream_count=%s",
@@ -1028,7 +1038,7 @@ class SubtitleGenerationService(QObject):
             self._apply_loaded_audio_tracks(media_path, cached_audio_streams)
             return
 
-        cached_error = self._preflight.get_cached_audio_stream_error_for_media(media_path)
+        cached_error = self._get_cached_audio_stream_error_for_media(media_path)
         if cached_error is not None:
             logger.debug(
                 "Using cached audio stream probe failure for generation dialog | media=%s | reason=%s",
@@ -1039,7 +1049,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._ui.set_generation_dialog_audio_tracks_loading()
-        self._preflight.begin_audio_stream_probe(media_path)
+        self._begin_audio_stream_probe(media_path)
         self._audio_stream_probe_request_id += 1
         probe_request_id = self._audio_stream_probe_request_id
         self._current_audio_stream_probe_request_id = probe_request_id
@@ -1054,13 +1064,55 @@ class SubtitleGenerationService(QObject):
     def _invalidate_active_audio_stream_probe_request(self, reason: str):
         if self._current_audio_stream_probe_request_id is None:
             return
-        self._preflight.abandon_loading_audio_stream_probe(self._dialog_request_media_path)
+        self._abandon_loading_audio_stream_probe()
         logger.debug(
             "Invalidating active audio stream probe request | probe_request_id=%s | reason=%s",
             self._current_audio_stream_probe_request_id,
             reason,
         )
         self._current_audio_stream_probe_request_id = None
+
+    def _get_audio_stream_probe_state(self, media_path: str | None) -> AudioStreamProbeState:
+        normalized_media_path = str(media_path or "")
+        if not normalized_media_path or self._audio_stream_probe_media_path != normalized_media_path:
+            return AudioStreamProbeState.IDLE
+        return self._audio_stream_probe_state
+
+    def _get_cached_audio_streams_for_media(self, media_path: str | None):
+        if self._get_audio_stream_probe_state(media_path) != AudioStreamProbeState.READY:
+            return None
+        return self._cached_audio_streams
+
+    def _get_cached_audio_stream_error_for_media(self, media_path: str | None) -> str | None:
+        if self._get_audio_stream_probe_state(media_path) != AudioStreamProbeState.FAILED:
+            return None
+        return self._cached_audio_stream_error
+
+    def _begin_audio_stream_probe(self, media_path: str):
+        self._audio_stream_probe_media_path = str(media_path)
+        self._audio_stream_probe_state = AudioStreamProbeState.LOADING
+        self._cached_audio_streams = None
+        self._cached_audio_stream_error = None
+
+    def _abandon_loading_audio_stream_probe(self):
+        if self._audio_stream_probe_state != AudioStreamProbeState.LOADING:
+            return
+        self._audio_stream_probe_media_path = None
+        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
+        self._cached_audio_streams = None
+        self._cached_audio_stream_error = None
+
+    def _cache_audio_stream_probe_success(self, media_path: str, audio_streams):
+        self._audio_stream_probe_media_path = str(media_path)
+        self._audio_stream_probe_state = AudioStreamProbeState.READY
+        self._cached_audio_streams = list(audio_streams)
+        self._cached_audio_stream_error = None
+
+    def _cache_audio_stream_probe_failure(self, media_path: str, reason: str):
+        self._audio_stream_probe_media_path = str(media_path)
+        self._audio_stream_probe_state = AudioStreamProbeState.FAILED
+        self._cached_audio_streams = None
+        self._cached_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
 
     def _is_current_audio_stream_probe_result(self, probe_request_id: int, media_path: str) -> bool:
         if self._current_audio_stream_probe_request_id != probe_request_id:
@@ -1143,7 +1195,7 @@ class SubtitleGenerationService(QObject):
             return
 
         self._current_audio_stream_probe_request_id = None
-        self._preflight.cache_audio_stream_probe_success(media_path, audio_streams)
+        self._cache_audio_stream_probe_success(media_path, audio_streams)
         self._apply_loaded_audio_tracks(media_path, audio_streams)
 
     @Slot(int, str, str)
@@ -1156,5 +1208,5 @@ class SubtitleGenerationService(QObject):
             return
 
         self._current_audio_stream_probe_request_id = None
-        self._preflight.cache_audio_stream_probe_failure(media_path, reason)
+        self._cache_audio_stream_probe_failure(media_path, reason)
         self._apply_audio_track_probe_failure(media_path, reason, show_warning=True)

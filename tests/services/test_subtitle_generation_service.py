@@ -14,6 +14,7 @@ from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationService,
     SubtitleGenerationState,
 )
+from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState
 from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 from tests.fakes import FakePlayerWindow, FakeSubtitleWorker, FakeMediaStore
@@ -228,7 +229,7 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
     )
 
     assert service.generate_subtitle() is True
-    assert service._preflight.get_audio_stream_probe_state(player.playback._media_path).name == "LOADING"
+    assert service._audio_stream_probe_state == AudioStreamProbeState.LOADING
     assert service._ui.audio_tracks_loading_calls == 1
     assert len(service._audio_stream_probe_workers) == 1
 
@@ -318,7 +319,7 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_close():
     )
 
     assert service._ui.applied_audio_tracks == []
-    assert service._preflight.get_audio_stream_probe_state(player.playback._media_path).name == "IDLE"
+    assert service._audio_stream_probe_state == AudioStreamProbeState.IDLE
     assert service._state == SubtitleGenerationState.IDLE
 
 
@@ -371,17 +372,28 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
     monkeypatch.setattr(module, "show_no_audio_streams_found", lambda _parent: None)
     monkeypatch.setattr(preflight, "_validate_output_path", lambda _options: True)
 
-    result = preflight.validate_generation_request("C:/media/movie.mkv", options)
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        options,
+        probe_state=module.AudioStreamProbeState.IDLE,
+    )
     assert result.is_valid is False
     assert loading_messages == [True]
 
-    preflight.begin_audio_stream_probe("C:/media/movie.mkv")
-    result = preflight.validate_generation_request("C:/media/movie.mkv", options)
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        options,
+        probe_state=module.AudioStreamProbeState.LOADING,
+    )
     assert result.is_valid is False
     assert loading_messages == [True, True]
 
-    preflight.cache_audio_stream_probe_failure("C:/media/movie.mkv", "cached failure")
-    result = preflight.validate_generation_request("C:/media/movie.mkv", options)
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        options,
+        probe_state=module.AudioStreamProbeState.FAILED,
+        probe_error="cached failure",
+    )
     assert result.is_valid is False
     assert failed_messages == ["cached failure"]
 

@@ -349,9 +349,6 @@ def _install_subtitle_service_stubs():
         class SubtitleGenerationPreflight:
             def __init__(self, parent):
                 self.parent = parent
-                self._probe_state_by_media = {}
-                self._audio_streams_by_media = {}
-                self._errors_by_media = {}
                 self._validation_results = {}
 
             def build_generation_audio_tracks(self, _media_path):
@@ -360,44 +357,10 @@ def _install_subtitle_service_stubs():
             def build_audio_track_choices(self, audio_streams):
                 return [(None, "Current / default"), *[(stream.stream_index, stream.label) for stream in audio_streams]]
 
-            def get_cached_audio_streams_for_media(self, media_path):
-                if self.get_audio_stream_probe_state(media_path) != AudioStreamProbeState.READY:
-                    return None
-                return self._audio_streams_by_media.get(media_path)
-
-            def get_cached_audio_stream_error_for_media(self, media_path):
-                if self.get_audio_stream_probe_state(media_path) != AudioStreamProbeState.FAILED:
-                    return None
-                return self._errors_by_media.get(media_path)
-
-            def get_audio_stream_probe_state(self, media_path):
-                return self._probe_state_by_media.get(media_path, AudioStreamProbeState.IDLE)
-
-            def begin_audio_stream_probe(self, media_path):
-                self._probe_state_by_media[media_path] = AudioStreamProbeState.LOADING
-                self._audio_streams_by_media.pop(media_path, None)
-                self._errors_by_media.pop(media_path, None)
-
-            def abandon_loading_audio_stream_probe(self, media_path=None):
-                if media_path is None:
-                    return
-                if self.get_audio_stream_probe_state(media_path) == AudioStreamProbeState.LOADING:
-                    self._probe_state_by_media.pop(media_path, None)
-
-            def cache_audio_stream_probe_success(self, media_path, audio_streams):
-                self._probe_state_by_media[media_path] = AudioStreamProbeState.READY
-                self._audio_streams_by_media[media_path] = list(audio_streams)
-                self._errors_by_media.pop(media_path, None)
-
-            def cache_audio_stream_probe_failure(self, media_path, reason):
-                self._probe_state_by_media[media_path] = AudioStreamProbeState.FAILED
-                self._audio_streams_by_media.pop(media_path, None)
-                self._errors_by_media[media_path] = str(reason)
-
             def format_audio_stream_probe_error(self, reason):
                 return str(reason)
 
-            def validate_generation_request(self, media_path, _options):
+            def validate_generation_request(self, media_path, _options, *, probe_state, audio_streams=None, probe_error=None):
                 from ui.MessageBoxService import (
                     show_audio_stream_inspection_failed,
                     show_audio_streams_still_loading,
@@ -407,14 +370,13 @@ def _install_subtitle_service_stubs():
                 if override is not None:
                     return _ValidationResult(override)
 
-                state = self.get_audio_stream_probe_state(media_path)
-                if state in (AudioStreamProbeState.IDLE, AudioStreamProbeState.LOADING):
+                if probe_state in (AudioStreamProbeState.IDLE, AudioStreamProbeState.LOADING):
                     show_audio_streams_still_loading(self.parent)
                     return _ValidationResult(False)
-                if state == AudioStreamProbeState.FAILED:
+                if probe_state == AudioStreamProbeState.FAILED:
                     show_audio_stream_inspection_failed(
                         self.parent,
-                        self.format_audio_stream_probe_error(self._errors_by_media.get(media_path, "Audio stream inspection failed.")),
+                        self.format_audio_stream_probe_error(probe_error or "Audio stream inspection failed."),
                     )
                     return _ValidationResult(False)
                 return _ValidationResult(True)
