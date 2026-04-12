@@ -90,19 +90,25 @@ class PiPController:
         if paused_by_pip:
             self._player_window.playback.pause()
 
-        pip_window = self._ensure_pip_window()
-        player_widget = pip_window.takeCentralWidget()
+        player_widget = self._take_player_widget_from_pip()
         if player_widget is None:
             self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
             return
 
         self._host_window.restore_player_window(player_widget)
-        self._player_window.set_pip_active(False)
-        pip_window.hide()
         self._host_window.showNormal()
         self._host_window.raise_()
         self._host_window.activateWindow()
         self._start_rebind_video_output_transition(paused_by_pip)
+
+    def teardown_for_shutdown(self):
+        if not self.is_active():
+            return
+
+        self._cancel_pending_rebind_transition()
+        player_widget = self._take_player_widget_from_pip()
+        if player_widget is not None:
+            self._host_window.restore_player_window(player_widget)
 
     def toggle_fullscreen_window(self) -> bool:
         if not self.is_active():
@@ -135,6 +141,13 @@ class PiPController:
             self._host_window.init_pip_shortcuts(self._pip_window)
             self._pip_window.closed.connect(self.exit_pip)
         return self._pip_window
+
+    def _take_player_widget_from_pip(self) -> PlayerWindow | None:
+        pip_window = self._ensure_pip_window()
+        player_widget = pip_window.takeCentralWidget()
+        self._player_window.set_pip_active(False)
+        pip_window.hide()
+        return player_widget
 
     def _start_rebind_video_output_transition(self, resume_playback: bool):
         self._cancel_pending_rebind_transition()

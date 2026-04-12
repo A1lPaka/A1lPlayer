@@ -48,7 +48,7 @@ class AppCloseCoordinator(QObject):
         *,
         shutdown_playback: Callable[[], None],
         is_pip_active: Callable[[], bool],
-        exit_pip: Callable[[], None],
+        teardown_pip_for_shutdown: Callable[[], None],
     ):
         super().__init__(parent)
         self._parent = parent
@@ -56,7 +56,7 @@ class AppCloseCoordinator(QObject):
         self._media_library = media_library
         self._shutdown_playback = shutdown_playback
         self._is_pip_active = is_pip_active
-        self._exit_pip = exit_pip
+        self._teardown_pip_for_shutdown = teardown_pip_for_shutdown
         self._closing_in_progress = False
         self._close_allowed = False
         self._final_close_requested = False
@@ -90,7 +90,7 @@ class AppCloseCoordinator(QObject):
         self._phase = AppClosePhase.CLOSE_REQUESTED
 
         if self._is_pip_active():
-            self._exit_pip()
+            self._teardown_pip_for_shutdown()
 
         self._close_allowed = False
         self._final_close_requested = False

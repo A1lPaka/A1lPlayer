@@ -61,10 +61,14 @@ class _FakePlayerWindow(QObject):
         super().__init__()
         self.playback = _FakePlayback()
         self._video_host_ready = False
+        self._pip_active = False
         self.bind_video_output_calls = 0
 
     def is_pip_active(self) -> bool:
-        return False
+        return self._pip_active
+
+    def set_pip_active(self, active: bool):
+        self._pip_active = bool(active)
 
     def is_video_host_ready(self) -> bool:
         return self._video_host_ready
@@ -76,11 +80,30 @@ class _FakePlayerWindow(QObject):
         self.bind_video_output_calls += 1
 
 class _FakeHostWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.restored_player_widget = None
+        self.show_normal_calls = 0
+        self.raise_calls = 0
+        self.activate_calls = 0
+
     def init_pip_shortcuts(self, _pip_window):
         return None
 
     def sync_fullscreen_ui(self):
         return None
+
+    def restore_player_window(self, player_window):
+        self.restored_player_widget = player_window
+
+    def showNormal(self):
+        self.show_normal_calls += 1
+
+    def raise_(self):
+        self.raise_calls += 1
+
+    def activateWindow(self):
+        self.activate_calls += 1
 
 
 def _make_controller(player_window: _FakePlayerWindow) -> PiPController:
@@ -224,6 +247,72 @@ def test_rebind_geometry_resume_does_not_allow_duplicate_fallback_play():
     controller._on_rebind_fallback_timeout()
 
     assert player_window.playback.play_calls == 1
+
+
+class _FakePiPWindow:
+    def __init__(self, player_widget=None):
+        self._player_widget = player_widget
+        self.hide_calls = 0
+
+    def takeCentralWidget(self):
+        player_widget = self._player_widget
+        self._player_widget = None
+        return player_widget
+
+    def hide(self):
+        self.hide_calls += 1
+
+
+def test_exit_pip_restores_host_window_and_starts_rebind(monkeypatch):
+    player_window = _FakePlayerWindow()
+    player_window.set_pip_active(True)
+    player_window.set_video_host_ready(True)
+    controller = _make_controller(player_window)
+    fake_pip_window = _FakePiPWindow(player_window)
+    controller._pip_window = fake_pip_window
+    rebind_calls = []
+
+    monkeypatch.setattr(controller, "_start_rebind_video_output_transition", lambda resume: rebind_calls.append(resume))
+
+    controller.exit_pip()
+
+    assert controller._host_window.restored_player_widget is player_window
+    assert player_window.is_pip_active() is False
+    assert fake_pip_window.hide_calls == 1
+    assert controller._host_window.show_normal_calls == 1
+    assert controller._host_window.raise_calls == 1
+    assert controller._host_window.activate_calls == 1
+    assert rebind_calls == [False]
+
+
+def test_teardown_for_shutdown_restores_ownership_without_interactive_restore(monkeypatch):
+    player_window = _FakePlayerWindow()
+    player_window.set_pip_active(True)
+    controller = _make_controller(player_window)
+    fake_pip_window = _FakePiPWindow(player_window)
+    controller._pip_window = fake_pip_window
+    controller._pending_rebind_bound = True
+    controller._awaiting_rebind_geometry = True
+    controller._rebind_fallback_timer.start()
+    rebind_calls = []
+    resume_calls = []
+
+    monkeypatch.setattr(controller, "_start_rebind_video_output_transition", lambda resume: rebind_calls.append(resume))
+    monkeypatch.setattr(player_window.playback, "resume_after_interruption", lambda owner: resume_calls.append(owner))
+
+    controller.teardown_for_shutdown()
+
+    assert controller._host_window.restored_player_widget is player_window
+    assert player_window.is_pip_active() is False
+    assert fake_pip_window.hide_calls == 1
+    assert controller._host_window.show_normal_calls == 0
+    assert controller._host_window.raise_calls == 0
+    assert controller._host_window.activate_calls == 0
+    assert rebind_calls == []
+    assert resume_calls == []
+    assert controller._pending_rebind_bound is False
+    assert controller._awaiting_rebind_geometry is False
+    assert controller._rebind_fallback_timer.isActive() is False
 
 
 def test_media_finished_exits_active_pip():

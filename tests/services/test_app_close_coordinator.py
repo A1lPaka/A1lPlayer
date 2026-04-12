@@ -16,7 +16,7 @@ def test_close_without_active_subtitle_tasks_closes_immediately():
         media_store,
         shutdown_playback=playback.shutdown,
         is_pip_active=lambda: False,
-        exit_pip=lambda: None,
+        teardown_pip_for_shutdown=lambda: None,
     )
 
     result = coordinator.attempt_close()
@@ -40,7 +40,7 @@ def test_close_with_active_tasks_uses_async_shutdown_and_repeated_close_is_ignor
         media_store,
         shutdown_playback=playback.shutdown,
         is_pip_active=lambda: False,
-        exit_pip=lambda: None,
+        teardown_pip_for_shutdown=lambda: None,
     )
 
     first = coordinator.attempt_close()
@@ -65,7 +65,7 @@ def test_shutdown_finished_schedules_final_close():
         media_store,
         shutdown_playback=playback.shutdown,
         is_pip_active=lambda: False,
-        exit_pip=lambda: None,
+        teardown_pip_for_shutdown=lambda: None,
     )
 
     coordinator.attempt_close()
@@ -92,7 +92,7 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
         media_store,
         shutdown_playback=playback.shutdown,
         is_pip_active=lambda: False,
-        exit_pip=lambda: None,
+        teardown_pip_for_shutdown=lambda: None,
     )
 
     monkeypatch.setattr(
@@ -128,7 +128,7 @@ def test_force_close_with_synchronous_shutdown_requests_final_close():
         media_store,
         shutdown_playback=playback.shutdown,
         is_pip_active=lambda: False,
-        exit_pip=lambda: None,
+        teardown_pip_for_shutdown=lambda: None,
     )
 
     coordinator.attempt_close()
@@ -140,3 +140,25 @@ def test_force_close_with_synchronous_shutdown_requests_final_close():
     assert media_store.shutdown_calls == 1
     assert playback.shutdown_calls == 1
     assert target.close_calls == 1
+
+
+def test_close_with_active_pip_uses_shutdown_specific_pip_teardown():
+    subtitle_service = FakeSubtitleService()
+    media_store = FakeMediaStore()
+    playback = FakePlaybackShutdown()
+    target = FakeCloseTarget()
+    teardown_calls = []
+    coordinator = AppCloseCoordinator(
+        target,
+        subtitle_service,
+        media_store,
+        shutdown_playback=playback.shutdown,
+        is_pip_active=lambda: True,
+        teardown_pip_for_shutdown=lambda: teardown_calls.append(True),
+    )
+
+    result = coordinator.attempt_close()
+
+    assert result.can_close is True
+    assert result.shutdown_completed is True
+    assert teardown_calls == [True]

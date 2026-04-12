@@ -128,6 +128,7 @@ class _PiPControllerStub:
         self.theme_color = theme_color
         self.active = False
         self.exit_calls = 0
+        self.shutdown_teardown_calls = 0
         self.enter_calls = 0
 
     def is_active(self):
@@ -135,6 +136,11 @@ class _PiPControllerStub:
 
     def exit_pip(self):
         self.exit_calls += 1
+        self.active = False
+        return None
+
+    def teardown_for_shutdown(self):
+        self.shutdown_teardown_calls += 1
         self.active = False
         return None
 
