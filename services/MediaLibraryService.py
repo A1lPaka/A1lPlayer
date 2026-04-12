@@ -74,12 +74,6 @@ class MediaLibraryService(QObject):
         )
         self._last_saved_snapshot_key = self._build_snapshot_key(snapshot)
 
-    def clear_saved_position(self, path: str):
-        logger.info("Clearing saved playback position | media=%s", path)
-        self._store.clear_saved_position(path)
-        if self._last_saved_snapshot_key and self._last_saved_snapshot_key[0] == path:
-            self._last_saved_snapshot_key = None
-
     def shutdown(self):
         self._session_autosave_timer.stop()
         self.save_time_session()
@@ -318,6 +312,8 @@ class MediaLibraryService(QObject):
         self._sync_session_autosave_timer()
 
     def _on_media_finished(self, path: str):
+        logger.info("Clearing saved playback position after media finished | media=%s", path)
+        self._store.clear_saved_position(path)
         if self._last_saved_snapshot_key and self._last_saved_snapshot_key[0] == path:
             self._last_saved_snapshot_key = None
         self._session_autosave_timer.stop()

@@ -95,9 +95,6 @@ class _MediaLibraryServiceStub:
     def handle_drop_event(self, _event):
         return False
 
-    def clear_saved_position(self, _path: str):
-        return None
-
     def shutdown(self):
         self.shutdown_calls += 1
 
@@ -105,7 +102,7 @@ class _MediaLibraryServiceStub:
 class _SubtitleGenerationServiceStub(QObject):
     shutdown_finished = Signal()
 
-    def __init__(self, _main_window, _player_window, _media_store):
+    def __init__(self, _main_window, _player_window, _media_store, _media_library):
         super().__init__()
 
     def has_active_tasks(self):

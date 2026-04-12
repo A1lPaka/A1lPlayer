@@ -94,6 +94,24 @@ def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     assert player.playback.last_open_paths["start_position_ms"] == 3210
 
 
+def test_media_finished_clears_saved_position_and_stops_autosave(workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_path = str(workspace_tmp_path / "finished.mp4")
+    (workspace_tmp_path / "finished.mp4").write_text("media")
+
+    player.playback._has_media_loaded = True
+    player.playback.media_confirmed.emit(101, media_path)
+
+    assert service._session_autosave_timer.isActive() is True
+
+    player.playback.media_finished.emit(media_path)
+
+    assert store.cleared_positions == [media_path]
+    assert service._session_autosave_timer.isActive() is False
+
+
 def test_drag_enter_accepts_supported_local_media_without_full_classification(monkeypatch, workspace_tmp_path):
     player = FakePlayerWindow()
     store = FakeMediaStore()
