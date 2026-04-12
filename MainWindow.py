@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
             return
 
         fullscreen = self.is_fullscreen()
-        if not fullscreen and not self.player_window.playback.can_activate_view_modes():
+        if not fullscreen and not self._can_activate_view_modes():
             return
         if fullscreen:
             self.showNormal()
@@ -243,6 +243,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(build_window_title(media_path, base_title=self._BASE_WINDOW_TITLE, max_media_title_length=self._MAX_MEDIA_TITLE_LENGTH))
 
     def toggle_pip(self):
+        if not self.pip_controller.is_active() and not self._can_activate_view_modes():
+            return
         self.pip_controller.toggle_pip()
 
     def toggle_chrome_visibility(self):
@@ -275,10 +277,15 @@ class MainWindow(QMainWindow):
         self._theme_dialog = None
 
     def enter_pip(self):
+        if not self._can_activate_view_modes():
+            return
         self.pip_controller.enter_pip()
 
     def exit_pip(self):
         self.pip_controller.exit_pip()
+
+    def _can_activate_view_modes(self) -> bool:
+        return self.player_window.playback.can_activate_view_modes()
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)

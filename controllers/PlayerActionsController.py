@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from PySide6.QtCore import QObject, Signal
 
 from controllers.PlayerPlaybackController import PlayerPlaybackController
@@ -17,13 +15,11 @@ class PlayerActionsController(QObject):
         self,
         playback: PlayerPlaybackController,
         *,
-        is_fullscreen_active: Callable[[], bool],
-        is_pip_active: Callable[[], bool],
+        is_pip_active,
         parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.playback = playback
-        self._is_fullscreen_active = is_fullscreen_active
         self._is_pip_active = is_pip_active
 
     def on_play_pause(self):
@@ -38,13 +34,9 @@ class PlayerActionsController(QObject):
             self.pip_exit_requested.emit()
 
     def on_fullscreen(self):
-        if not self._is_fullscreen_active() and not self.playback.can_activate_view_modes():
-            return
         self.fullscreen_requested.emit()
 
     def on_pip(self):
-        if not self.playback.can_activate_view_modes():
-            return
         self.pip_requested.emit()
 
     def on_prev(self):

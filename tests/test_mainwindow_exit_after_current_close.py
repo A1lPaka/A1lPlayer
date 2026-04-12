@@ -9,6 +9,9 @@ from services.AppCloseCoordinator import AppCloseResult
 
 
 class _PlaybackStub:
+    def __init__(self):
+        self.view_modes_allowed = False
+
     def is_exit_after_current_enabled(self):
         return False
 
@@ -16,7 +19,7 @@ class _PlaybackStub:
         return False
 
     def can_activate_view_modes(self):
-        return False
+        return self.view_modes_allowed
 
     def shutdown(self):
         return None
@@ -125,6 +128,8 @@ class _PiPControllerStub:
         self.theme_color = theme_color
         self.active = False
         self.exit_calls = 0
+        self.toggle_calls = 0
+        self.enter_calls = 0
 
     def is_active(self):
         return self.active
@@ -144,6 +149,11 @@ class _PiPControllerStub:
         return None
 
     def toggle_pip(self):
+        self.toggle_calls += 1
+        return None
+
+    def enter_pip(self):
+        self.enter_calls += 1
         return None
 
     def apply_theme(self, theme_color):
@@ -218,3 +228,48 @@ def test_media_finished_exits_pip_before_returning_to_normal_state(monkeypatch):
     QApplication.processEvents()
 
     assert window.pip_controller.exit_calls == 1
+
+
+def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeypatch):
+    installer_module = types.ModuleType("services.runtime.RuntimeInstallerMain")
+    helper_module = types.ModuleType("services.runtime.RuntimeHelperMain")
+    installer_module.try_run_runtime_installer = lambda argv=None: None
+    helper_module.try_run_runtime_helper = lambda argv=None: None
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeInstallerMain", installer_module)
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeHelperMain", helper_module)
+    message_box_module = sys.modules.get("ui.MessageBoxService")
+    if message_box_module is not None and not hasattr(message_box_module, "show_playback_error"):
+        monkeypatch.setattr(message_box_module, "show_playback_error", lambda *_args, **_kwargs: None, raising=False)
+    sys.modules.pop("MainWindow", None)
+    module = importlib.import_module("MainWindow")
+
+    monkeypatch.setattr(module, "PlayerWindow", _PlayerWindowStub)
+    monkeypatch.setattr(module, "MediaSettingsStore", _MediaSettingsStoreStub)
+    monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
+    monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
+    monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
+    monkeypatch.setattr(module, "PiPController", _PiPControllerStub)
+    monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
+    monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
+
+    window = module.MainWindow(settings=QSettings())
+    fullscreen_calls = []
+    monkeypatch.setattr(window, "showFullScreen", lambda: fullscreen_calls.append("enter"))
+
+    window.toggle_fullscreen()
+    window.toggle_pip()
+    window.enter_pip()
+
+    assert fullscreen_calls == []
+    assert window.pip_controller.toggle_calls == 0
+    assert window.pip_controller.enter_calls == 0
+
+    window.player_window.playback.view_modes_allowed = True
+
+    window.toggle_fullscreen()
+    window.toggle_pip()
+    window.enter_pip()
+
+    assert fullscreen_calls == ["enter"]
+    assert window.pip_controller.toggle_calls == 1
+    assert window.pip_controller.enter_calls == 1

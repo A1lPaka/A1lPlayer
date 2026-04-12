@@ -64,7 +64,7 @@ class PiPController:
         self.enter_pip()
 
     def enter_pip(self):
-        if self.is_active() or not self._player_window.playback.can_activate_view_modes():
+        if self.is_active():
             return
 
         paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)

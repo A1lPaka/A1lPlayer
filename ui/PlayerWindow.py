@@ -37,7 +37,6 @@ class PlayerWindow(QWidget):
         self.playback = PlayerPlaybackController(self)
         self.player_actions = PlayerActionsController(
             self.playback,
-            is_fullscreen_active=self._is_fullscreen_active,
             is_pip_active=self.is_pip_active,
             parent=self,
         )
@@ -216,9 +215,6 @@ class PlayerWindow(QWidget):
         widget.installEventFilter(self)
         for child in widget.findChildren(QWidget):
             child.installEventFilter(self)
-
-    def _is_fullscreen_active(self) -> bool:
-        return hasattr(self, "fullscreen_controller") and self.fullscreen_controller.is_fullscreen()
 
     def set_fullscreen_mode(self, fullscreen: bool):
         self._apply_fullscreen_ui(fullscreen)
