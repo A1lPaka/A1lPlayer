@@ -1,6 +1,3 @@
-import os
-
-
 class PlaylistState:
     def __init__(self):
         self._paths: list[str] = []
@@ -15,14 +12,23 @@ class PlaylistState:
         return self._current_index
 
     def load(self, file_paths: list[str], start_index: int = 0) -> bool:
-        valid_paths = [path for path in file_paths if os.path.exists(path)]
-        if not valid_paths:
+        if not file_paths:
             self._paths = []
             self._current_index = -1
             return False
 
-        self._paths = valid_paths
+        self._paths = list(file_paths)
         self._current_index = max(0, min(start_index, len(self._paths) - 1))
+        return True
+
+    def clear(self):
+        self._paths = []
+        self._current_index = -1
+
+    def set_current_index(self, index: int) -> bool:
+        if index < 0 or index >= len(self._paths):
+            return False
+        self._current_index = index
         return True
 
     def current_path(self) -> str | None:

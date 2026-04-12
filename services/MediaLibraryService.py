@@ -1,5 +1,4 @@
 import logging
-import os
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -99,9 +98,6 @@ class MediaLibraryService(QObject):
         self.open_media_paths(media_paths)
 
     def open_recent_media(self, path: str) -> bool:
-        if not os.path.isfile(path):
-            logger.warning("Recent media file no longer exists | media=%s", path)
-            return False
         logger.info("Opening recent media item | media=%s", path)
         return self.open_media_paths([path])
 

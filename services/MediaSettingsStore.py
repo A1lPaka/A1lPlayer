@@ -106,11 +106,7 @@ class MediaSettingsStore:
             self._save_session_positions(filtered)
 
     def get_recent_media(self) -> list[str]:
-        paths = self._get_recent_media_paths()
-        valid = [p for p in paths if os.path.isfile(p)]
-        if len(valid) != len(paths):
-            self._set_recent_media_paths(valid)
-        return valid
+        return self._get_recent_media_paths()
 
     def add_recent_path(self, path: str):
         if not path:

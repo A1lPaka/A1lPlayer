@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -78,7 +79,12 @@ class PlayerPlaybackController(QObject):
         if not self.playlist.load(file_paths, start_index=start_index):
             logger.warning("Playlist load rejected | count=%s | start_index=%s", len(file_paths), start_index)
             return False
-        return self._load_current_media()
+        if self._load_from_playlist_index(self.playlist.current_index, step=1, wrap=True):
+            return True
+
+        logger.warning("Playlist load failed because no playable item was found | count=%s | start_index=%s", len(file_paths), start_index)
+        self.playlist.clear()
+        return False
 
     def open_paths(self, file_paths: list[str], start_index: int = 0, start_position_ms: int = 0) -> bool:
         logger.info(
@@ -129,17 +135,21 @@ class PlayerPlaybackController(QObject):
         self._set_playback_state(self.STATE_STOPPED)
 
     def play_previous(self) -> bool:
-        if not self.playlist.move_previous_wrap():
+        current_index = self.playlist.current_index
+        if current_index < 0 or not self.playlist.has_multiple():
             return False
-        if not self._load_current_media():
+        start_index = (current_index - 1) % len(self.playlist.paths)
+        if not self._load_from_playlist_index(start_index, step=-1, wrap=True):
             return False
         self.play_loaded_media()
         return True
 
     def play_next(self) -> bool:
-        if not self.playlist.move_next_wrap():
+        current_index = self.playlist.current_index
+        if current_index < 0 or not self.playlist.has_multiple():
             return False
-        if not self._load_current_media():
+        start_index = (current_index + 1) % len(self.playlist.paths)
+        if not self._load_from_playlist_index(start_index, step=1, wrap=True):
             return False
         self.play_loaded_media()
         return True
@@ -309,14 +319,52 @@ class PlayerPlaybackController(QObject):
         self.stop()
 
     def _play_next_from_playlist(self) -> bool:
-        if not self.playlist.move_next_linear():
+        current_index = self.playlist.current_index
+        if current_index < 0:
             logger.info("Playlist has no next item for linear advance")
             return False
-        logger.info("Advancing to next playlist item | media=%s", self.playlist.current_path())
-        if not self._load_current_media():
+        start_index = current_index + 1
+        if not self._load_from_playlist_index(start_index, step=1, wrap=False):
+            logger.info("Playlist has no playable next item for linear advance")
             return False
+        logger.info("Advancing to next playlist item | media=%s", self.playlist.current_path())
         self.play_loaded_media()
         return True
+
+    def _load_from_playlist_index(self, start_index: int, *, step: int, wrap: bool) -> bool:
+        playable_index = self._find_playable_index(start_index, step=step, wrap=wrap)
+        if playable_index is None:
+            return False
+        self.playlist.set_current_index(playable_index)
+        return self._load_current_media()
+
+    def _find_playable_index(self, start_index: int, *, step: int, wrap: bool) -> int | None:
+        paths = self.playlist.paths
+        count = len(paths)
+        if count == 0 or start_index < 0 or start_index >= count:
+            return None
+
+        index = start_index
+        checked = 0
+        while checked < count and 0 <= index < count:
+            media_path = paths[index]
+            if os.path.exists(media_path):
+                return index
+
+            logger.warning("Skipping unavailable playlist item | index=%s | media=%s", index, media_path)
+            checked += 1
+            if checked >= count:
+                break
+
+            next_index = index + step
+            if wrap:
+                index = next_index % count
+                continue
+            if next_index < 0 or next_index >= count:
+                break
+            index = next_index
+
+        return None
 
     def _load_current_media(self) -> bool:
         media_path = self.playlist.current_path()

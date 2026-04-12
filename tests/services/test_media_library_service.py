@@ -49,6 +49,23 @@ def test_failed_open_does_not_commit_recent_media(monkeypatch, workspace_tmp_pat
     assert store.saved_positions == []
 
 
+def test_open_recent_media_uses_normal_open_flow_without_prevalidation(monkeypatch):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    missing_path = r"Z:\offline\missing.mp4"
+    open_calls = []
+
+    def fake_open_media_paths(paths: list[str]) -> bool:
+        open_calls.append(list(paths))
+        return False
+
+    monkeypatch.setattr(service, "open_media_paths", fake_open_media_paths)
+
+    assert service.open_recent_media(missing_path) is False
+    assert open_calls == [[missing_path]]
+
+
 def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     player = FakePlayerWindow()
     store = FakeMediaStore()

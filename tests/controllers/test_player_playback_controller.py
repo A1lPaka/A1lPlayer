@@ -1,4 +1,5 @@
 from controllers.PlayerPlaybackController import PlayerPlaybackController
+from models.PlaybackPlaylist import PlaylistState
 
 from tests.fakes import SignalRecorder
 
@@ -98,6 +99,83 @@ def test_media_end_with_playlist_advance_loads_next_item(workspace_tmp_path):
 
     assert controller.current_media_path() == second_path
     assert controller.engine.loaded_media == [first_path, second_path]
+    assert controller.playback_state() == controller.STATE_OPENING
+
+
+def test_playlist_state_load_keeps_missing_paths_without_eager_validation():
+    playlist = PlaylistState()
+    missing_path = "Z:/definitely-missing/movie.mp4"
+
+    assert playlist.load([missing_path], start_index=0) is True
+    assert playlist.paths == [missing_path]
+    assert playlist.current_index == 0
+
+
+def test_open_paths_single_missing_file_fails_strictly():
+    controller = PlayerPlaybackController()
+    missing_path = "Z:/missing/solo.mp4"
+
+    assert controller.open_paths([missing_path]) is False
+    assert controller.current_media_path() is None
+    assert controller.engine.loaded_media == []
+
+
+def test_open_paths_playlist_skips_missing_current_item(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    valid_path = _make_media_files(workspace_tmp_path, ["second.mp4"])[0]
+    missing_path = "Z:/missing/first.mp4"
+
+    assert controller.open_paths([missing_path, valid_path]) is True
+    assert controller.current_media_path() == valid_path
+    assert controller.engine.loaded_media == [valid_path]
+
+
+def test_open_paths_playlist_fails_when_all_items_are_missing():
+    controller = PlayerPlaybackController()
+    missing_paths = [
+        "Z:/missing/first.mp4",
+        "Z:/missing/second.mp4",
+    ]
+
+    assert controller.open_paths(missing_paths) is False
+    assert controller.current_media_path() is None
+    assert controller.engine.loaded_media == []
+
+
+def test_play_next_skips_missing_items(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, third_path = _make_media_files(workspace_tmp_path, ["first.mp4", "third.mp4"])
+    missing_path = "Z:/missing/second.mp4"
+
+    assert controller.open_paths([first_path, missing_path, third_path]) is True
+    assert controller.play_next() is True
+    assert controller.current_media_path() == third_path
+    assert controller.engine.loaded_media == [first_path, third_path]
+
+
+def test_play_previous_skips_missing_items(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, third_path = _make_media_files(workspace_tmp_path, ["first.mp4", "third.mp4"])
+    missing_path = "Z:/missing/second.mp4"
+
+    assert controller.open_paths([first_path, missing_path, third_path]) is True
+    assert controller.play_previous() is True
+    assert controller.current_media_path() == third_path
+    assert controller.engine.loaded_media == [first_path, third_path]
+
+
+def test_media_end_skips_missing_items_during_linear_advance(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, third_path = _make_media_files(workspace_tmp_path, ["first.mp4", "third.mp4"])
+    missing_path = "Z:/missing/second.mp4"
+
+    assert controller.open_paths([first_path, missing_path, third_path]) is True
+    first_request_id = controller.current_request_id()
+    controller.engine.playing.emit(first_request_id)
+    controller.engine.media_ended.emit(first_request_id)
+
+    assert controller.current_media_path() == third_path
+    assert controller.engine.loaded_media == [first_path, third_path]
     assert controller.playback_state() == controller.STATE_OPENING
 
 
