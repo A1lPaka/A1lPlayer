@@ -207,7 +207,8 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     service, _store = _make_service(QWidget(), player, store)
 
     run = _seed_active_run(service)
-    service._ensure_player_ui_suspended()
+    service._playback_takeover.acquire()
+    service._playback_takeover.suspend_player_ui()
 
     service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
@@ -217,6 +218,39 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
     assert service._outcomes.successes
+
+
+def test_generation_dialog_cancel_releases_takeover_atomically():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback._is_playing = True
+    service, _store = _make_service(QWidget(), player)
+
+    assert service.generate_subtitle() is True
+    service._ui.dialog_requests[-1]["on_cancel"]()
+
+    assert service._state == SubtitleGenerationState.IDLE
+    assert player.playback.pause_calls == 1
+    assert player.playback.play_calls == 1
+    assert player.resume_calls == 0
+    assert player.playback.interruptions == {}
+
+
+def test_shutdown_clears_takeover_without_resuming_playback():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback._is_playing = True
+    service, _store = _make_service(QWidget(), player)
+
+    assert service.generate_subtitle() is True
+    pending = service.begin_shutdown()
+
+    assert pending is False
+    assert player.playback.pause_calls == 1
+    assert player.playback.play_calls == 0
+    assert player.playback.interruptions == {}
 
 
 def test_generated_auto_open_uses_unified_context_guard():
