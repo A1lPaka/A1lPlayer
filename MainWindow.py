@@ -234,6 +234,8 @@ class MainWindow(QMainWindow):
 
     def _on_media_finished(self, path: str):
         self.media_library.clear_saved_position(path)
+        if self.pip_controller.is_active():
+            self.exit_pip()
 
     def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)

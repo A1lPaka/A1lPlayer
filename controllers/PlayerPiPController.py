@@ -31,6 +31,7 @@ class PiPController:
         self._metrics = metrics
         self._theme_color = theme_color
         self._pip_window: PiPWindow | None = None
+        self._initial_video_output_bound = False
         self._pending_transition_id = 0
         self._pending_resume_after_rebind = False
         self._pending_rebind_bound = False
@@ -175,6 +176,15 @@ class PiPController:
     def _has_pending_rebind_transition(self) -> bool:
         return self._pending_rebind_bound or self._awaiting_rebind_geometry or self._rebind_fallback_timer.isActive()
 
+    def _try_bind_initial_video_output(self):
+        if self._initial_video_output_bound:
+            return
+        if not self._player_window.is_video_host_ready():
+            return
+
+        self._player_window.bind_video_output()
+        self._initial_video_output_bound = True
+
     def _try_bind_pending_video_output(self):
         if not self._has_pending_rebind_transition():
             return
@@ -246,6 +256,7 @@ class PiPController:
         self._cancel_pending_rebind_transition()
 
     def _on_video_host_ready(self):
+        self._try_bind_initial_video_output()
         self._try_bind_pending_video_output()
 
     def _on_video_geometry_changed(self, transition_id: int, width: int, height: int):

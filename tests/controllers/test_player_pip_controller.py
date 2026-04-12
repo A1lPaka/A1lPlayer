@@ -124,6 +124,25 @@ def test_rebind_resume_waits_for_valid_geometry_before_play():
     assert controller._pending_rebind_bound is False
 
 
+def test_initial_bind_is_owned_by_controller_via_video_host_ready_signal():
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+
+    player_window.video_host_ready.emit()
+
+    assert player_window.bind_video_output_calls == 0
+
+    player_window.set_video_host_ready(True)
+    player_window.video_host_ready.emit()
+
+    assert player_window.bind_video_output_calls == 1
+    assert controller._initial_video_output_bound is True
+
+    player_window.video_host_ready.emit()
+
+    assert player_window.bind_video_output_calls == 1
+
+
 def test_rebind_fallback_resumes_when_geometry_never_arrives(caplog):
     player_window = _FakePlayerWindow()
     player_window.set_video_host_ready(True)

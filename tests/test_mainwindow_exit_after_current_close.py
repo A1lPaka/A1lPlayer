@@ -18,6 +18,9 @@ class _PlaybackStub:
     def can_activate_view_modes(self):
         return False
 
+    def shutdown(self):
+        return None
+
 
 class _PlayerActionsStub:
     def on_play_pause(self):
@@ -130,11 +133,15 @@ class _PiPControllerStub:
     def __init__(self, _main_window, _player_window, metrics, theme_color):
         self.metrics = metrics
         self.theme_color = theme_color
+        self.active = False
+        self.exit_calls = 0
 
     def is_active(self):
-        return False
+        return self.active
 
     def exit_pip(self):
+        self.exit_calls += 1
+        self.active = False
         return None
 
     def toggle_fullscreen_window(self):
@@ -190,3 +197,34 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     QApplication.processEvents()
 
     assert close_attempts == [True]
+
+
+def test_media_finished_exits_pip_before_returning_to_normal_state(monkeypatch):
+    installer_module = types.ModuleType("services.runtime.RuntimeInstallerMain")
+    helper_module = types.ModuleType("services.runtime.RuntimeHelperMain")
+    installer_module.try_run_runtime_installer = lambda argv=None: None
+    helper_module.try_run_runtime_helper = lambda argv=None: None
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeInstallerMain", installer_module)
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeHelperMain", helper_module)
+    message_box_module = sys.modules.get("ui.MessageBoxService")
+    if message_box_module is not None and not hasattr(message_box_module, "show_playback_error"):
+        monkeypatch.setattr(message_box_module, "show_playback_error", lambda *_args, **_kwargs: None, raising=False)
+    sys.modules.pop("MainWindow", None)
+    module = importlib.import_module("MainWindow")
+
+    monkeypatch.setattr(module, "PlayerWindow", _PlayerWindowStub)
+    monkeypatch.setattr(module, "MediaSettingsStore", _MediaSettingsStoreStub)
+    monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
+    monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
+    monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
+    monkeypatch.setattr(module, "PiPController", _PiPControllerStub)
+    monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
+    monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
+
+    window = module.MainWindow(settings=QSettings())
+    window.pip_controller.active = True
+
+    window.player_window.media_finished.emit("final.mp4")
+    QApplication.processEvents()
+
+    assert window.pip_controller.exit_calls == 1

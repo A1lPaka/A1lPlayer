@@ -45,7 +45,6 @@ class PlayerWindow(QWidget):
         )
         self.playback_view_state = PlaybackViewStateController(self.playback, self)
 
-        self._video_bound = False
         self._pip_active = False
         self._chrome_hidden = False
         self._subtitle_generation_ui_suspended = False
@@ -178,9 +177,6 @@ class PlayerWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._video_bound:
-            self.bind_video_output()
-            self._video_bound = True
         self._emit_video_host_ready_if_possible()
 
     def resizeEvent(self, event):
