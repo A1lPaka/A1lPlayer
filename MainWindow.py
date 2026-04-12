@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
         self._theme_dialog = None
 
     def enter_pip(self):
-        if not self.player_window.playback.can_activate_view_modes():
+        if self.pip_controller.is_active() or not self.player_window.playback.can_activate_view_modes():
             return
         self.pip_controller.enter_pip()
 

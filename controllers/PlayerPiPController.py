@@ -57,16 +57,7 @@ class PiPController:
         if self._pip_window is not None:
             self._pip_window.apply_theme(theme_color)
 
-    def toggle_pip(self):
-        if self.is_active():
-            self.exit_pip()
-            return
-        self.enter_pip()
-
     def enter_pip(self):
-        if self.is_active():
-            return
-
         paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
         if paused_by_pip:
             self._player_window.playback.pause()
