@@ -92,13 +92,6 @@ class AppCloseCoordinator(QObject):
         if self._is_pip_active():
             self._exit_pip()
 
-        if not self._subtitle_service.has_active_tasks():
-            logger.info("Application closing immediately because no subtitle background tasks are active")
-            self._phase = AppClosePhase.SHUTDOWN_FINISHED
-            self._complete_local_shutdown()
-            return AppCloseResult(can_close=True, shutdown_completed=True)
-
-        self._closing_in_progress = True
         self._close_allowed = False
         self._final_close_requested = False
         self._force_requested = False
@@ -106,10 +99,12 @@ class AppCloseCoordinator(QObject):
         self._phase = AppClosePhase.GRACEFUL_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_shutdown()
         if not has_pending_shutdown and not self._subtitle_service.is_shutdown_in_progress():
-            logger.info("Application close finished immediately because subtitle shutdown completed synchronously")
-            self._finish_shutdown_and_request_final_close()
-            return AppCloseResult(can_close=False, shutdown_completed=False)
+            logger.info("Application closing immediately because subtitle shutdown completed synchronously")
+            self._phase = AppClosePhase.SHUTDOWN_FINISHED
+            self._complete_local_shutdown()
+            return AppCloseResult(can_close=True, shutdown_completed=True)
 
+        self._closing_in_progress = True
         self._phase = AppClosePhase.WAITING_FOR_SHUTDOWN
         self._arm_shutdown_timeout(self._GRACEFUL_SHUTDOWN_TIMEOUT_MS)
         logger.info("Application close switched to async shutdown flow")
