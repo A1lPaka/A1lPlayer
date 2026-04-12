@@ -53,6 +53,7 @@ class _FakePlayback:
 
 
 class _FakePlayerWindow(QObject):
+    media_finished = Signal(str)
     video_host_ready = Signal()
     video_geometry_changed = Signal(int, int)
 
@@ -223,3 +224,29 @@ def test_rebind_geometry_resume_does_not_allow_duplicate_fallback_play():
     controller._on_rebind_fallback_timeout()
 
     assert player_window.playback.play_calls == 1
+
+
+def test_media_finished_exits_active_pip():
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+    exit_calls = []
+
+    controller.is_active = lambda: True
+    controller.exit_pip = lambda: exit_calls.append(True)
+
+    player_window.media_finished.emit("final.mp4")
+
+    assert exit_calls == [True]
+
+
+def test_media_finished_does_not_exit_when_pip_is_inactive():
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+    exit_calls = []
+
+    controller.is_active = lambda: False
+    controller.exit_pip = lambda: exit_calls.append(True)
+
+    player_window.media_finished.emit("final.mp4")
+
+    assert exit_calls == []

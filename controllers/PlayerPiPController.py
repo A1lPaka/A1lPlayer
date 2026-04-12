@@ -42,6 +42,7 @@ class PiPController:
         self._rebind_fallback_timer.setInterval(self._REBIND_FALLBACK_TIMEOUT_MS)
         self._rebind_fallback_timer.timeout.connect(self._on_rebind_fallback_timeout)
 
+        self._player_window.media_finished.connect(self._on_media_finished)
         self._player_window.video_host_ready.connect(self._on_video_host_ready)
 
     def is_active(self) -> bool:
@@ -262,3 +263,7 @@ class PiPController:
     def _on_rebind_fallback_timeout(self):
         transition_id = self._pending_transition_id
         self._resume_after_rebind_fallback(transition_id)
+
+    def _on_media_finished(self, _path: str):
+        if self.is_active():
+            self.exit_pip()

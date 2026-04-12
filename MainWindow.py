@@ -54,7 +54,6 @@ class MainWindow(QMainWindow):
         self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
         self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store, self.media_library)
         self.player_window.open_file_requested.connect(self.media_library.open_file)
-        self.player_window.media_finished.connect(self._exit_pip_on_media_finished)
         self.player_window.active_media_changed.connect(self._on_active_media_changed)
         self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
@@ -225,10 +224,6 @@ class MainWindow(QMainWindow):
     def restore_player_window(self, player_window: PlayerWindow):
         self.setCentralWidget(player_window)
         self.sync_fullscreen_ui()
-
-    def _exit_pip_on_media_finished(self, _path: str):
-        if self.pip_controller.is_active():
-            self.exit_pip()
 
     def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)
