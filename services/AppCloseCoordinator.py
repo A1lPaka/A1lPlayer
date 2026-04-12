@@ -101,6 +101,7 @@ class AppCloseCoordinator(QObject):
         if self._complete_shutdown_if_synchronous(
             has_pending_shutdown,
             "Application closing immediately because subtitle shutdown completed synchronously",
+            request_final_close=False,
         ):
             return AppCloseResult(can_close=True, shutdown_completed=True)
 
@@ -168,8 +169,8 @@ class AppCloseCoordinator(QObject):
         if self._complete_shutdown_if_synchronous(
             has_pending_shutdown,
             "Application force close finished immediately because subtitle shutdown completed synchronously",
+            request_final_close=True,
         ):
-            self._finish_shutdown_and_request_final_close()
             return
 
         self._phase = AppClosePhase.WAITING_FOR_SHUTDOWN
@@ -184,28 +185,39 @@ class AppCloseCoordinator(QObject):
         if not self._closing_in_progress:
             return
 
-        self._finish_shutdown_and_request_final_close()
+        self._finish_shutdown(
+            "Application shutdown completed",
+            request_final_close=True,
+        )
 
-    def _complete_shutdown_if_synchronous(self, has_pending_shutdown: bool, log_message: str) -> bool:
+    def _complete_shutdown_if_synchronous(
+        self,
+        has_pending_shutdown: bool,
+        completion_log_message: str,
+        *,
+        request_final_close: bool,
+    ) -> bool:
         if has_pending_shutdown or self._subtitle_service.is_shutdown_in_progress():
             return False
 
-        logger.info(log_message)
-        self._phase = AppClosePhase.SHUTDOWN_FINISHED
-        self._complete_local_shutdown()
+        self._finish_shutdown(
+            completion_log_message,
+            request_final_close=request_final_close,
+        )
         return True
 
-    def _finish_shutdown_and_request_final_close(self):
+    def _finish_shutdown(self, completion_log_message: str, *, request_final_close: bool):
         if self._phase in (AppClosePhase.SHUTDOWN_FINISHED, AppClosePhase.FINAL_CLOSE_REQUESTED):
             logger.debug("Final close request ignored because shutdown completion was already processed")
             return
 
+        logger.info(completion_log_message)
         self._shutdown_timeout_timer.stop()
         self._close_timeout_dialog()
         self._phase = AppClosePhase.SHUTDOWN_FINISHED
         self._complete_local_shutdown()
-        logger.info("Application shutdown completed")
-        self._request_final_close()
+        if request_final_close:
+            self._request_final_close()
 
     def _complete_local_shutdown(self):
         self._media_library.shutdown()
