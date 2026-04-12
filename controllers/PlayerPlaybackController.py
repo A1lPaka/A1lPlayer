@@ -20,6 +20,50 @@ class _PlaybackInterruption:
     request_id: int
 
 
+class PlaybackInterruptionLease:
+    def __init__(
+        self,
+        controller: "PlayerPlaybackController",
+        owner: str,
+        *,
+        emit_pause_requested: bool = True,
+    ):
+        self._controller = controller
+        self._owner = owner
+        self._emit_pause_requested = emit_pause_requested
+        self._acquired = False
+        self._paused_playback = False
+
+    @property
+    def paused_playback(self) -> bool:
+        return self._paused_playback
+
+    def acquire(self) -> bool:
+        if self._acquired:
+            return self._paused_playback
+
+        self._acquired = True
+        self._paused_playback = self._controller.pause_for_interruption(
+            self._owner,
+            emit_pause_requested=self._emit_pause_requested,
+        )
+        if self._paused_playback:
+            self._controller.pause()
+        return self._paused_playback
+
+    def release(self, *, resume_playback: bool = True):
+        if not self._acquired:
+            return
+
+        self._acquired = False
+        self._paused_playback = False
+        if resume_playback:
+            self._controller.resume_after_interruption(self._owner)
+            return
+
+        self._controller.clear_interruption(self._owner)
+
+
 class PlayerPlaybackController(QObject):
     STATE_STOPPED = "stopped"
     STATE_OPENING = "opening"
@@ -226,6 +270,18 @@ class PlayerPlaybackController(QObject):
 
     def is_playing(self) -> bool:
         return self.engine.is_playing()
+
+    def create_interruption_lease(
+        self,
+        owner: str,
+        *,
+        emit_pause_requested: bool = True,
+    ) -> PlaybackInterruptionLease:
+        return PlaybackInterruptionLease(
+            self,
+            owner,
+            emit_pause_requested=emit_pause_requested,
+        )
 
     def pause_for_interruption(self, owner: str, *, emit_pause_requested: bool = True) -> bool:
         interruption = self._playback_interruptions.get(owner)

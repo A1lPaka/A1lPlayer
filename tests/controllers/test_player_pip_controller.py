@@ -55,6 +55,54 @@ class _FakePlayback:
             return
         self.play()
 
+    def clear_interruption(self, owner: str):
+        self._interruptions.pop(owner, None)
+
+    def create_interruption_lease(self, owner: str, *, emit_pause_requested: bool = True):
+        return _FakePlaybackInterruptionLease(
+            self,
+            owner,
+            emit_pause_requested=emit_pause_requested,
+        )
+
+
+class _FakePlaybackInterruptionLease:
+    def __init__(self, playback: _FakePlayback, owner: str, *, emit_pause_requested: bool = True):
+        self._playback = playback
+        self._owner = owner
+        self._emit_pause_requested = emit_pause_requested
+        self._acquired = False
+        self._paused_playback = False
+
+    @property
+    def paused_playback(self) -> bool:
+        return self._paused_playback
+
+    def acquire(self) -> bool:
+        if self._acquired:
+            return self._paused_playback
+
+        self._acquired = True
+        self._paused_playback = self._playback.pause_for_interruption(
+            self._owner,
+            emit_pause_requested=self._emit_pause_requested,
+        )
+        if self._paused_playback:
+            self._playback.pause()
+        return self._paused_playback
+
+    def release(self, *, resume_playback: bool = True):
+        if not self._acquired:
+            return
+
+        self._acquired = False
+        self._paused_playback = False
+        if resume_playback:
+            self._playback.resume_after_interruption(self._owner)
+            return
+
+        self._playback.clear_interruption(self._owner)
+
 
 class _FakePlayerWindow(QObject):
     media_finished = Signal(str)
@@ -124,19 +172,18 @@ def _make_controller(player_window: _FakePlayerWindow) -> ViewModeController:
     )
 
 
-def _prepare_rebind_resume(player_window: _FakePlayerWindow):
+def _prepare_rebind_resume(controller: ViewModeController, player_window: _FakePlayerWindow):
     player_window.playback._is_playing = True
-    assert player_window.playback.pause_for_interruption(ViewModeController._PLAYBACK_INTERRUPTION_OWNER) is True
-    player_window.playback.pause()
+    assert controller._rebind_lease.acquire() is True
 
 
 def test_rebind_resume_waits_for_valid_geometry_before_play():
     player_window = _FakePlayerWindow()
     player_window.set_video_host_ready(True)
     controller = _make_controller(player_window)
-    _prepare_rebind_resume(player_window)
+    _prepare_rebind_resume(controller, player_window)
 
-    controller._start_rebind_video_output_transition(resume_playback=True)
+    controller._start_rebind_video_output_transition()
 
     assert player_window.bind_video_output_calls == 1
     assert player_window.playback.play_calls == 0
@@ -179,10 +226,10 @@ def test_rebind_fallback_resumes_when_geometry_never_arrives(caplog):
     player_window = _FakePlayerWindow()
     player_window.set_video_host_ready(True)
     controller = _make_controller(player_window)
-    _prepare_rebind_resume(player_window)
+    _prepare_rebind_resume(controller, player_window)
 
     with caplog.at_level(logging.INFO):
-        controller._start_rebind_video_output_transition(resume_playback=True)
+        controller._start_rebind_video_output_transition()
         controller._on_rebind_fallback_timeout()
 
     assert player_window.bind_video_output_calls == 1
@@ -196,10 +243,10 @@ def test_rebind_fallback_resumes_when_geometry_never_arrives(caplog):
 def test_rebind_fallback_can_bind_after_late_host_ready(caplog):
     player_window = _FakePlayerWindow()
     controller = _make_controller(player_window)
-    _prepare_rebind_resume(player_window)
+    _prepare_rebind_resume(controller, player_window)
 
     with caplog.at_level(logging.INFO):
-        controller._start_rebind_video_output_transition(resume_playback=True)
+        controller._start_rebind_video_output_transition()
         player_window.set_video_host_ready(True)
         controller._on_rebind_fallback_timeout()
 
@@ -213,7 +260,7 @@ def test_rebind_without_resume_completes_after_bind_only():
     player_window.set_video_host_ready(True)
     controller = _make_controller(player_window)
 
-    controller._start_rebind_video_output_transition(resume_playback=False)
+    controller._start_rebind_video_output_transition()
 
     assert player_window.bind_video_output_calls == 1
     assert player_window.playback.play_calls == 0
@@ -226,11 +273,11 @@ def test_rebind_stale_geometry_does_not_resume_new_transition():
     player_window = _FakePlayerWindow()
     player_window.set_video_host_ready(True)
     controller = _make_controller(player_window)
-    _prepare_rebind_resume(player_window)
+    _prepare_rebind_resume(controller, player_window)
 
-    controller._start_rebind_video_output_transition(resume_playback=True)
+    controller._start_rebind_video_output_transition()
     stale_transition_id = controller._pending_transition_id
-    controller._start_rebind_video_output_transition(resume_playback=True)
+    controller._start_rebind_video_output_transition()
 
     controller._on_video_geometry_changed(stale_transition_id, 1280, 720)
 
@@ -248,9 +295,9 @@ def test_rebind_geometry_resume_does_not_allow_duplicate_fallback_play():
     player_window = _FakePlayerWindow()
     player_window.set_video_host_ready(True)
     controller = _make_controller(player_window)
-    _prepare_rebind_resume(player_window)
+    _prepare_rebind_resume(controller, player_window)
 
-    controller._start_rebind_video_output_transition(resume_playback=True)
+    controller._start_rebind_video_output_transition()
     player_window.video_geometry_changed.emit(1280, 720)
     controller._on_rebind_fallback_timeout()
 
@@ -280,7 +327,11 @@ def test_exit_pip_restores_host_window_and_starts_rebind(monkeypatch):
     controller._pip_window = fake_pip_window
     rebind_calls = []
 
-    monkeypatch.setattr(controller, "_start_rebind_video_output_transition", lambda resume: rebind_calls.append(resume))
+    monkeypatch.setattr(
+        controller,
+        "_start_rebind_video_output_transition",
+        lambda: rebind_calls.append(controller._rebind_lease.paused_playback),
+    )
 
     controller.exit_pip()
 
@@ -331,10 +382,8 @@ def test_teardown_for_shutdown_restores_ownership_without_interactive_restore(mo
     controller._awaiting_rebind_geometry = True
     controller._rebind_fallback_timer.start()
     rebind_calls = []
-    resume_calls = []
 
-    monkeypatch.setattr(controller, "_start_rebind_video_output_transition", lambda resume: rebind_calls.append(resume))
-    monkeypatch.setattr(player_window.playback, "resume_after_interruption", lambda owner: resume_calls.append(owner))
+    monkeypatch.setattr(controller, "_start_rebind_video_output_transition", lambda: rebind_calls.append(controller._rebind_lease.paused_playback))
 
     controller.teardown_for_shutdown()
 
@@ -345,7 +394,6 @@ def test_teardown_for_shutdown_restores_ownership_without_interactive_restore(mo
     assert controller._host_window.raise_calls == 0
     assert controller._host_window.activate_calls == 0
     assert rebind_calls == []
-    assert resume_calls == []
     assert controller._pending_rebind_bound is False
     assert controller._awaiting_rebind_geometry is False
     assert controller._rebind_fallback_timer.isActive() is False

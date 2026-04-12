@@ -32,8 +32,8 @@ class ViewModeController:
         self._theme_color = theme_color
         self._pip_window: PiPWindow | None = None
         self._initial_video_output_bound = False
+        self._rebind_lease = self._player_window.playback.create_interruption_lease(self._PLAYBACK_INTERRUPTION_OWNER)
         self._pending_transition_id = 0
-        self._pending_resume_after_rebind = False
         self._pending_rebind_bound = False
         self._awaiting_rebind_geometry = False
         self._pending_geometry_slot = None
@@ -88,16 +88,14 @@ class ViewModeController:
         if self.is_active() or not self._player_window.playback.can_activate_view_modes():
             return
 
-        paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
-        if paused_by_pip:
-            self._player_window.playback.pause()
+        self._rebind_lease.acquire()
 
         self.exit_fullscreen()
 
         pip_window = self._ensure_pip_window()
         player_widget = self._host_window.take_player_window()
         if player_widget is None:
-            self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
+            self._rebind_lease.release()
             return
 
         pip_window.setCentralWidget(player_widget)
@@ -107,19 +105,17 @@ class ViewModeController:
         pip_window.raise_()
         pip_window.activateWindow()
         self._host_window.hide()
-        self._start_rebind_video_output_transition(paused_by_pip)
+        self._start_rebind_video_output_transition()
 
     def exit_pip(self):
         if not self.is_active():
             return
 
-        paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
-        if paused_by_pip:
-            self._player_window.playback.pause()
+        self._rebind_lease.acquire()
 
         player_widget = self._take_player_widget_from_pip()
         if player_widget is None:
-            self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
+            self._rebind_lease.release()
             return
 
         self._host_window.restore_player_window(player_widget)
@@ -127,7 +123,7 @@ class ViewModeController:
         self.sync_host_window_ui()
         self._host_window.raise_()
         self._host_window.activateWindow()
-        self._start_rebind_video_output_transition(paused_by_pip)
+        self._start_rebind_video_output_transition()
 
     def teardown_for_shutdown(self):
         if not self.is_active():
@@ -180,12 +176,11 @@ class ViewModeController:
             return
         pip_window.showFullScreen()
 
-    def _start_rebind_video_output_transition(self, resume_playback: bool):
-        self._cancel_pending_rebind_transition()
+    def _start_rebind_video_output_transition(self):
+        self._cancel_pending_rebind_transition(release_lease=False)
         self._pending_transition_id += 1
-        self._pending_resume_after_rebind = bool(resume_playback)
         self._pending_rebind_bound = False
-        self._awaiting_rebind_geometry = bool(resume_playback)
+        self._awaiting_rebind_geometry = self._rebind_lease.paused_playback
         if self._awaiting_rebind_geometry:
             transition_id = self._pending_transition_id
 
@@ -197,14 +192,15 @@ class ViewModeController:
         self._rebind_fallback_timer.start()
         self._try_bind_pending_video_output()
 
-    def _cancel_pending_rebind_transition(self):
+    def _cancel_pending_rebind_transition(self, *, release_lease: bool = True):
         if self._pending_geometry_slot is not None:
             try:
                 self._player_window.video_geometry_changed.disconnect(self._pending_geometry_slot)
             except (RuntimeError, TypeError):
                 pass
             self._pending_geometry_slot = None
-        self._pending_resume_after_rebind = False
+        if release_lease:
+            self._rebind_lease.release(resume_playback=False)
         self._pending_rebind_bound = False
         self._awaiting_rebind_geometry = False
         self._rebind_fallback_timer.stop()
@@ -235,10 +231,10 @@ class ViewModeController:
             "PiP rebind bind completed | transition_id=%s | awaiting_geometry=%s | resume_playback=%s",
             self._pending_transition_id,
             self._awaiting_rebind_geometry,
-            self._pending_resume_after_rebind,
+            self._rebind_lease.paused_playback,
         )
 
-        if not self._pending_resume_after_rebind:
+        if not self._rebind_lease.paused_playback:
             self._complete_pending_rebind_transition()
             return
 
@@ -276,7 +272,7 @@ class ViewModeController:
                 transition_id,
             )
 
-        if self._pending_resume_after_rebind:
+        if self._rebind_lease.paused_playback:
             logger.warning(
                 "PiP rebind resume via fallback | transition_id=%s | geometry_missing=%s",
                 transition_id,
@@ -288,7 +284,7 @@ class ViewModeController:
     def _complete_pending_rebind_transition(self, transition_id: int | None = None):
         if transition_id is not None and transition_id != self._pending_transition_id:
             return
-        self._player_window.playback.resume_after_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
+        self._rebind_lease.release()
         self._cancel_pending_rebind_transition()
 
     def _on_video_host_ready(self):

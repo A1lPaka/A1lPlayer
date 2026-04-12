@@ -287,7 +287,7 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
 
     run = _seed_active_run(service)
     service._playback_takeover.acquire()
-    service._playback_takeover.suspend_player_ui()
+    service._suspend_player_ui_for_generation()
 
     service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 

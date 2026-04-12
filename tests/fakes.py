@@ -6,6 +6,44 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
 
+class _FakePlaybackInterruptionLease:
+    def __init__(self, playback, owner: str, *, emit_pause_requested: bool = True):
+        self._playback = playback
+        self._owner = owner
+        self._emit_pause_requested = emit_pause_requested
+        self._acquired = False
+        self._paused_playback = False
+
+    @property
+    def paused_playback(self) -> bool:
+        return self._paused_playback
+
+    def acquire(self) -> bool:
+        if self._acquired:
+            return self._paused_playback
+
+        self._acquired = True
+        self._paused_playback = self._playback.pause_for_interruption(
+            self._owner,
+            emit_pause_requested=self._emit_pause_requested,
+        )
+        if self._paused_playback:
+            self._playback.pause()
+        return self._paused_playback
+
+    def release(self, *, resume_playback: bool = True):
+        if not self._acquired:
+            return
+
+        self._acquired = False
+        self._paused_playback = False
+        if resume_playback:
+            self._playback.resume_after_interruption(self._owner)
+            return
+
+        self._playback.clear_interruption(self._owner)
+
+
 class SignalRecorder:
     def __init__(self):
         self.calls = []
@@ -87,6 +125,13 @@ class FakePlaybackForSubtitle(QObject):
 
     def clear_interruption(self, owner: str):
         self.interruptions.pop(owner, None)
+
+    def create_interruption_lease(self, owner: str, *, emit_pause_requested: bool = True):
+        return _FakePlaybackInterruptionLease(
+            self,
+            owner,
+            emit_pause_requested=emit_pause_requested,
+        )
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
         self.opened_subtitles.append(subtitle_path)

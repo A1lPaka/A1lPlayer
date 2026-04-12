@@ -81,6 +81,7 @@ class PlayerControls(QWidget):
         self.pip_button.setVisible(not self._is_pip)
         self.speed_label.setVisible(not self._is_pip)
         self.speed_button.setVisible(not self._is_pip)
+        self.progress_bar.set_hover_preview_enabled(not self._is_pip)
         self._setup_font()
         self.updateGeometry()
         self.update()
@@ -740,6 +741,7 @@ class ProgressBar(QWidget):
 
         self.value = 0.0
         self._dragging = False
+        self._hover_preview_enabled = True
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
     def set_seekable(self, seekable: bool):
@@ -750,6 +752,14 @@ class ProgressBar(QWidget):
     def set_value(self, value: float):
         self.value = max(0.0, min(1.0, value))
         self.update()
+
+    def set_hover_preview_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if self._hover_preview_enabled == enabled:
+            return
+        self._hover_preview_enabled = enabled
+        if not self._hover_preview_enabled:
+            self.hover_left.emit()
 
     def apply_theme(self, theme_color: ThemeState):
         self.active_bg_color = theme_color.get("progress_bar_color_active")
@@ -792,13 +802,15 @@ class ProgressBar(QWidget):
         return super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        ratio = max(0.0, min(1.0, event.position().x() / max(1, self.width())))
-        self.hover_changed.emit(ratio)
+        if self._hover_preview_enabled:
+            ratio = max(0.0, min(1.0, event.position().x() / max(1, self.width())))
+            self.hover_changed.emit(ratio)
         if event.buttons() & Qt.LeftButton:
             self._update_value_from_pos(event.position().x())
 
     def leaveEvent(self, event):
-        self.hover_left.emit()
+        if self._hover_preview_enabled:
+            self.hover_left.emit()
         super().leaveEvent(event)
 
     def _update_value_from_pos(self, pos):

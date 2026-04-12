@@ -292,6 +292,9 @@ class PlayerWindow(QWidget):
         self.video_frame.update()
 
     def on_progress_hover_changed(self, ratio: float):
+        if self._pip_active:
+            self.time_popup.hide()
+            return
         _, total_ms = self.playback.get_timing()
         if total_ms <= 0:
             self.time_popup.hide()
@@ -474,6 +477,8 @@ class PlayerWindow(QWidget):
     def _apply_pip_ui(self, active: bool):
         self.fullscreen_controller.set_pip_mode(active)
         self.controls.set_pip_mode(active)
+        if active:
+            self.time_popup.hide()
         if self.speed_popup.isVisible() and active:
             self._hide_speed_popup()
         self.updateGeometry()

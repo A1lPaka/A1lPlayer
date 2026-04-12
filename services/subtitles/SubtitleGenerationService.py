@@ -70,44 +70,6 @@ class SubtitlePipelineRun:
     started_at: float = field(default_factory=time.perf_counter)
 
 
-class SubtitleGenerationPlaybackLease:
-    def __init__(self, player_window: PlayerWindow, owner: str):
-        self._player = player_window
-        self._owner = owner
-        self._acquired = False
-        self._player_ui_suspended = False
-
-    def acquire(self):
-        if self._acquired:
-            return
-
-        self._acquired = True
-        if self._player.playback.pause_for_interruption(self._owner):
-            self._player.playback.pause()
-
-    def suspend_player_ui(self):
-        if self._player_ui_suspended:
-            return
-
-        self._player.suspend_for_subtitle_generation()
-        self._player_ui_suspended = True
-
-    def release(self, *, resume_playback: bool):
-        if self._player_ui_suspended:
-            self._player.resume_after_subtitle_generation()
-            self._player_ui_suspended = False
-
-        if not self._acquired:
-            return
-
-        self._acquired = False
-        if resume_playback:
-            self._player.playback.resume_after_interruption(self._owner)
-            return
-
-        self._player.playback.clear_interruption(self._owner)
-
-
 class SubtitleGenerationService(QObject):
     shutdown_finished = Signal()
     _PLAYBACK_INTERRUPTION_OWNER = "subtitle_generation"
@@ -135,10 +97,10 @@ class SubtitleGenerationService(QObject):
         self._next_run_id = 1
         self._shutdown_completed = False
         self._force_shutdown_requested = False
-        self._playback_takeover = SubtitleGenerationPlaybackLease(
-            player_window,
+        self._playback_takeover = self._player.playback.create_interruption_lease(
             self._PLAYBACK_INTERRUPTION_OWNER,
         )
+        self._player_ui_suspended_for_generation = False
         self._subtitle_thread: QThread | None = None
         self._subtitle_worker: SubtitleGenerationWorker | None = None
         self._subtitle_cancel_requested = False
@@ -422,7 +384,7 @@ class SubtitleGenerationService(QObject):
             )
             return
 
-        self._playback_takeover.suspend_player_ui()
+        self._suspend_player_ui_for_generation()
         QTimer.singleShot(
             0,
             lambda run_id=run_id, thread=thread: self._deferred_start_subtitle_worker(run_id, thread),
@@ -570,7 +532,7 @@ class SubtitleGenerationService(QObject):
         self._active_run = None
         self._clear_subtitle_thread_references()
         self._invalidate_active_audio_stream_probe_request("finalize-shutdown")
-        self._playback_takeover.release(resume_playback=False)
+        self._release_playback_takeover(resume_playback=False)
         self._shutdown_completed = True
         self._force_shutdown_requested = False
 
@@ -607,7 +569,7 @@ class SubtitleGenerationService(QObject):
             "close generation dialog",
             allowed=(SubtitleGenerationState.DIALOG_OPEN,),
         )
-        self._playback_takeover.release(resume_playback=True)
+        self._release_playback_takeover(resume_playback=True)
 
     def _on_background_task_thread_finished(self, run_id: int, task: SubtitlePipelineTask):
         if task == SubtitlePipelineTask.SUBTITLE_GENERATION:
@@ -962,8 +924,22 @@ class SubtitleGenerationService(QObject):
             self._ui.close_progress_dialog()
 
         self._active_run = None
-        self._playback_takeover.release(resume_playback=not is_shutdown)
+        self._release_playback_takeover(resume_playback=not is_shutdown)
         self._complete_shutdown_if_possible()
+
+    def _suspend_player_ui_for_generation(self):
+        if self._player_ui_suspended_for_generation:
+            return
+
+        self._player.suspend_for_subtitle_generation()
+        self._player_ui_suspended_for_generation = True
+
+    def _release_playback_takeover(self, *, resume_playback: bool):
+        if self._player_ui_suspended_for_generation:
+            self._player.resume_after_subtitle_generation()
+            self._player_ui_suspended_for_generation = False
+
+        self._playback_takeover.release(resume_playback=resume_playback)
 
     def _is_current_run_event(self, run_id: int, event_name: str) -> bool:
         if self._active_run is None:
