@@ -31,44 +31,43 @@ class MainWindow(QMainWindow):
 
     def __init__(self, settings: QSettings | None = None):
         super().__init__()
+        self._init_window()
+        self._init_state(settings)
+        self._init_components()
+        self._wire_components()
+        self._finalize_window_setup()
+
+    def _init_window(self):
         self._update_window_title()
         self.setWindowIcon(QIcon(res_path("assets/logo.ico")))
         self.setObjectName("mainWindow")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAcceptDrops(True)
 
+    def _init_state(self, settings: QSettings | None):
         self.settings = settings
-
         self.metrics = get_metrics(self)
         self._screen_connected = False
         self._theme_dialog: ColorThemeDialog | None = None
         self._chrome_hidden = False
+        self._window_shortcuts: list[QShortcut] = []
+        self._pip_shortcuts: list[QShortcut] = []
 
         self.media_store = MediaSettingsStore(self.settings)
         self.theme_state = self.media_store.load_theme()
 
-        self._window_shortcuts: list[QShortcut] = []
-        self._pip_shortcuts: list[QShortcut] = []
-        
+    def _init_components(self):
         self.player_window = PlayerWindow(self.metrics, theme_color=self.theme_state)
+        self.setCentralWidget(self.player_window)
+
         self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
         self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store, self.media_library)
-        self.player_window.open_file_requested.connect(self.media_library.open_file)
-        self.player_window.active_media_changed.connect(self._on_active_media_changed)
-        self.player_window.playback_error.connect(self._on_playback_error)
-        self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
-        self.setCentralWidget(self.player_window)
         self.view_mode_controller = ViewModeController(
             self,
             self.player_window,
             metrics=self.metrics,
             theme_color=self.theme_state,
         )
-        self.player_window.fullscreen_requested.connect(self.view_mode_controller.toggle_fullscreen)
-        self.player_window.pip_requested.connect(self.view_mode_controller.toggle_pip)
-        self.player_window.pip_exit_requested.connect(self.view_mode_controller.exit_pip)
-        self.player_window.close_requested_after_media_end.connect(self.close)
-
         self.menu_bar_controller = MenuBarController(
             main_window=self,
             player_window=self.player_window,
@@ -85,8 +84,20 @@ class MainWindow(QMainWindow):
             is_pip_active=self.view_mode_controller.is_active,
             teardown_pip_for_shutdown=self.view_mode_controller.teardown_for_shutdown,
         )
+
+    def _wire_components(self):
+        self.player_window.open_file_requested.connect(self.media_library.open_file)
+        self.player_window.active_media_changed.connect(self._on_active_media_changed)
+        self.player_window.playback_error.connect(self._on_playback_error)
+        self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
+        self.player_window.fullscreen_requested.connect(self.view_mode_controller.toggle_fullscreen)
+        self.player_window.pip_requested.connect(self.view_mode_controller.toggle_pip)
+        self.player_window.pip_exit_requested.connect(self.view_mode_controller.exit_pip)
+        self.player_window.close_requested_after_media_end.connect(self.close)
+
         self._init_shortcuts()
 
+    def _finalize_window_setup(self):
         self.resize(self.metrics.window_width, self.metrics.window_height)
         self.setMinimumSize(self.metrics.window_width // 2, self.metrics.window_height // 2)
         self.apply_metrics(self.metrics)
