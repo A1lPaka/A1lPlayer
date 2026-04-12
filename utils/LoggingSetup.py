@@ -1,11 +1,14 @@
 import logging
 import os
 import tempfile
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUP_COUNT = 5
 _CONFIGURED = False
 
 
@@ -35,7 +38,12 @@ def configure_logging(level: int = logging.INFO) -> Path | None:
     try:
         candidate = get_log_file_path()
         candidate.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(candidate, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            candidate,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
         file_handler.setFormatter(formatter)
         handlers.append(file_handler)
         log_file_path = candidate
