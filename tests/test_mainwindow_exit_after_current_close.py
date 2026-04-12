@@ -123,7 +123,8 @@ class _MenuBarControllerStub:
 
 
 class _PiPControllerStub:
-    def __init__(self, _main_window, _player_window, metrics, theme_color):
+    def __init__(self, _main_window, player_window, metrics, theme_color):
+        self.player_window = player_window
         self.metrics = metrics
         self.theme_color = theme_color
         self.active = False
@@ -154,8 +155,15 @@ class _PiPControllerStub:
         return None
 
     def enter_pip(self):
+        if self.active or not self.player_window.playback.can_activate_view_modes():
+            return None
         self.enter_calls += 1
         return None
+
+    def toggle_pip(self):
+        if self.active:
+            return self.exit_pip()
+        return self.enter_pip()
 
     def apply_theme(self, theme_color):
         self.theme_color = theme_color
@@ -226,8 +234,8 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     monkeypatch.setattr(window, "showFullScreen", lambda: fullscreen_calls.append("enter"))
 
     window.toggle_fullscreen()
-    window.toggle_pip()
-    window.enter_pip()
+    window.player_window.pip_requested.emit()
+    window.player_window.pip_requested.emit()
 
     assert fullscreen_calls == []
     assert window.pip_controller.enter_calls == 0
@@ -235,8 +243,8 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     window.player_window.playback.view_modes_allowed = True
 
     window.toggle_fullscreen()
-    window.toggle_pip()
-    window.enter_pip()
+    window.player_window.pip_requested.emit()
+    window.player_window.pip_requested.emit()
 
     assert fullscreen_calls == ["enter"]
     assert window.pip_controller.enter_calls == 2

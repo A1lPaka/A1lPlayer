@@ -48,6 +48,12 @@ class PiPController:
     def is_active(self) -> bool:
         return self._player_window.is_pip_active()
 
+    def toggle_pip(self):
+        if self.is_active():
+            self.exit_pip()
+            return
+        self.enter_pip()
+
     def apply_metrics(self, metrics: Metrics):
         self._metrics = metrics
         if self._pip_window is not None:
@@ -59,6 +65,9 @@ class PiPController:
             self._pip_window.apply_theme(theme_color)
 
     def enter_pip(self):
+        if self.is_active() or not self._player_window.playback.can_activate_view_modes():
+            return
+
         paused_by_pip = self._player_window.playback.pause_for_interruption(self._PLAYBACK_INTERRUPTION_OWNER)
         if paused_by_pip:
             self._player_window.playback.pause()

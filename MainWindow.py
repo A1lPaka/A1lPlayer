@@ -58,8 +58,6 @@ class MainWindow(QMainWindow):
         self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
         self.player_window.fullscreen_requested.connect(self.toggle_fullscreen)
-        self.player_window.pip_requested.connect(self.toggle_pip)
-        self.player_window.pip_exit_requested.connect(self.exit_pip)
         self.player_window.close_requested_after_media_end.connect(self.close)
         self.setCentralWidget(self.player_window)
         self.pip_controller = PiPController(
@@ -68,6 +66,8 @@ class MainWindow(QMainWindow):
             metrics=self.metrics,
             theme_color=self.theme_state,
         )
+        self.player_window.pip_requested.connect(self.pip_controller.toggle_pip)
+        self.player_window.pip_exit_requested.connect(self.pip_controller.exit_pip)
 
         self.menu_bar_controller = MenuBarController(
             main_window=self,
@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         self._register_shortcuts(
             pip_window,
             self._pip_shortcuts,
-            self._build_shortcut_bindings(self.exit_pip, include_fullscreen=False),
+            self._build_shortcut_bindings(self.pip_controller.exit_pip, include_fullscreen=False),
         )
 
     def _register_shortcuts(self, parent, storage: list[QShortcut], shortcut_bindings):
@@ -195,9 +195,6 @@ class MainWindow(QMainWindow):
         self.sync_fullscreen_ui()
 
     def exit_fullscreen(self):
-        if self.pip_controller.is_active():
-            self.exit_pip()
-            return
         if not self.is_fullscreen():
             return
         self.showNormal()
@@ -239,12 +236,6 @@ class MainWindow(QMainWindow):
     def _update_window_title(self, media_path: str | None = None):
         self.setWindowTitle(build_window_title(media_path, base_title=self._BASE_WINDOW_TITLE, max_media_title_length=self._MAX_MEDIA_TITLE_LENGTH))
 
-    def toggle_pip(self):
-        if self.pip_controller.is_active():
-            self.exit_pip()
-            return
-        self.enter_pip()
-
     def toggle_chrome_visibility(self):
         self._chrome_hidden = not self._chrome_hidden
         self.player_window.set_chrome_hidden(self._chrome_hidden)
@@ -273,14 +264,6 @@ class MainWindow(QMainWindow):
 
     def _on_theme_dialog_destroyed(self):
         self._theme_dialog = None
-
-    def enter_pip(self):
-        if self.pip_controller.is_active() or not self.player_window.playback.can_activate_view_modes():
-            return
-        self.pip_controller.enter_pip()
-
-    def exit_pip(self):
-        self.pip_controller.exit_pip()
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)

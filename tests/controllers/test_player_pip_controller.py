@@ -19,6 +19,7 @@ class _FakePlayback:
         self._interruptions = {}
         self.pause_calls = 0
         self.play_calls = 0
+        self.view_modes_allowed = True
 
     def is_playing(self) -> bool:
         return self._is_playing
@@ -30,6 +31,9 @@ class _FakePlayback:
     def play(self):
         self.play_calls += 1
         self._is_playing = True
+
+    def can_activate_view_modes(self) -> bool:
+        return self.view_modes_allowed
 
     def pause_for_interruption(self, owner: str, *, emit_pause_requested: bool = True):
         interruption = self._interruptions.get(owner)
@@ -283,6 +287,34 @@ def test_exit_pip_restores_host_window_and_starts_rebind(monkeypatch):
     assert controller._host_window.raise_calls == 1
     assert controller._host_window.activate_calls == 1
     assert rebind_calls == [False]
+
+
+def test_toggle_pip_enters_and_exits_through_single_controller_owner(monkeypatch):
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+    enter_calls = []
+    exit_calls = []
+
+    monkeypatch.setattr(controller, "enter_pip", lambda: enter_calls.append(True))
+    monkeypatch.setattr(controller, "exit_pip", lambda: exit_calls.append(True))
+
+    controller.toggle_pip()
+    player_window.set_pip_active(True)
+    controller.toggle_pip()
+
+    assert enter_calls == [True]
+    assert exit_calls == [True]
+
+
+def test_enter_pip_is_gated_by_view_mode_availability():
+    player_window = _FakePlayerWindow()
+    player_window.playback.view_modes_allowed = False
+    controller = _make_controller(player_window)
+
+    controller.enter_pip()
+
+    assert controller.is_active() is False
+    assert controller._pip_window is None
 
 
 def test_teardown_for_shutdown_restores_ownership_without_interactive_restore(monkeypatch):
