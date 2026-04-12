@@ -98,10 +98,10 @@ class AppCloseCoordinator(QObject):
         self._force_timeout_warning_shown = False
         self._phase = AppClosePhase.GRACEFUL_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_shutdown()
-        if not has_pending_shutdown and not self._subtitle_service.is_shutdown_in_progress():
-            logger.info("Application closing immediately because subtitle shutdown completed synchronously")
-            self._phase = AppClosePhase.SHUTDOWN_FINISHED
-            self._complete_local_shutdown()
+        if self._complete_shutdown_if_synchronous(
+            has_pending_shutdown,
+            "Application closing immediately because subtitle shutdown completed synchronously",
+        ):
             return AppCloseResult(can_close=True, shutdown_completed=True)
 
         self._closing_in_progress = True
@@ -165,8 +165,10 @@ class AppCloseCoordinator(QObject):
         self._force_timeout_warning_shown = False
         self._phase = AppClosePhase.FORCE_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_force_shutdown()
-        if not has_pending_shutdown and not self._subtitle_service.is_shutdown_in_progress():
-            logger.info("Application force close finished immediately because subtitle shutdown completed synchronously")
+        if self._complete_shutdown_if_synchronous(
+            has_pending_shutdown,
+            "Application force close finished immediately because subtitle shutdown completed synchronously",
+        ):
             self._finish_shutdown_and_request_final_close()
             return
 
@@ -183,6 +185,15 @@ class AppCloseCoordinator(QObject):
             return
 
         self._finish_shutdown_and_request_final_close()
+
+    def _complete_shutdown_if_synchronous(self, has_pending_shutdown: bool, log_message: str) -> bool:
+        if has_pending_shutdown or self._subtitle_service.is_shutdown_in_progress():
+            return False
+
+        logger.info(log_message)
+        self._phase = AppClosePhase.SHUTDOWN_FINISHED
+        self._complete_local_shutdown()
+        return True
 
     def _finish_shutdown_and_request_final_close(self):
         if self._phase in (AppClosePhase.SHUTDOWN_FINISHED, AppClosePhase.FINAL_CLOSE_REQUESTED):
