@@ -54,6 +54,26 @@ class PiPController:
             return
         self.enter_pip()
 
+    def toggle_fullscreen(self):
+        if self.is_active():
+            self._toggle_pip_fullscreen()
+            return
+
+        if self._host_window.isFullScreen():
+            self.exit_fullscreen()
+            return
+        if not self._player_window.playback.can_activate_view_modes():
+            return
+
+        self._host_window.showFullScreen()
+        self.sync_host_window_ui()
+
+    def exit_fullscreen(self):
+        if not self._host_window.isFullScreen():
+            return
+        self._host_window.showNormal()
+        self.sync_host_window_ui()
+
     def apply_metrics(self, metrics: Metrics):
         self._metrics = metrics
         if self._pip_window is not None:
@@ -72,9 +92,7 @@ class PiPController:
         if paused_by_pip:
             self._player_window.playback.pause()
 
-        if self._host_window.isFullScreen():
-            self._host_window.showNormal()
-            self._host_window.sync_fullscreen_ui()
+        self.exit_fullscreen()
 
         pip_window = self._ensure_pip_window()
         player_widget = self._host_window.take_player_window()
@@ -106,6 +124,7 @@ class PiPController:
 
         self._host_window.restore_player_window(player_widget)
         self._host_window.showNormal()
+        self.sync_host_window_ui()
         self._host_window.raise_()
         self._host_window.activateWindow()
         self._start_rebind_video_output_transition(paused_by_pip)
@@ -119,16 +138,12 @@ class PiPController:
         if player_widget is not None:
             self._host_window.restore_player_window(player_widget)
 
-    def toggle_fullscreen_window(self) -> bool:
-        if not self.is_active():
-            return False
-
-        pip_window = self._ensure_pip_window()
-        if pip_window.isFullScreen():
-            pip_window.showNormal()
-        else:
-            pip_window.showFullScreen()
-        return True
+    def sync_host_window_ui(self):
+        fullscreen = self._host_window.isFullScreen()
+        menu_bar = self._host_window.menuBar()
+        if menu_bar is not None:
+            menu_bar.setVisible(not fullscreen and not self._player_window.is_chrome_hidden())
+        self._player_window.set_fullscreen_mode(fullscreen)
 
     def update_aspect_ratio(self, width: int | None = None, height: int | None = None):
         pip_window = self._pip_window
@@ -157,6 +172,13 @@ class PiPController:
         self._player_window.set_pip_active(False)
         pip_window.hide()
         return player_widget
+
+    def _toggle_pip_fullscreen(self):
+        pip_window = self._ensure_pip_window()
+        if pip_window.isFullScreen():
+            pip_window.showNormal()
+            return
+        pip_window.showFullScreen()
 
     def _start_rebind_video_output_transition(self, resume_playback: bool):
         self._cancel_pending_rebind_transition()

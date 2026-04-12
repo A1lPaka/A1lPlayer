@@ -66,6 +66,7 @@ class _FakePlayerWindow(QObject):
         self.playback = _FakePlayback()
         self._video_host_ready = False
         self._pip_active = False
+        self._chrome_hidden = False
         self.bind_video_output_calls = 0
 
     def is_pip_active(self) -> bool:
@@ -83,6 +84,12 @@ class _FakePlayerWindow(QObject):
     def bind_video_output(self):
         self.bind_video_output_calls += 1
 
+    def set_fullscreen_mode(self, _fullscreen: bool):
+        return None
+
+    def is_chrome_hidden(self) -> bool:
+        return self._chrome_hidden
+
 class _FakeHostWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -92,9 +99,6 @@ class _FakeHostWindow(QMainWindow):
         self.activate_calls = 0
 
     def init_pip_shortcuts(self, _pip_window):
-        return None
-
-    def sync_fullscreen_ui(self):
         return None
 
     def restore_player_window(self, player_window):

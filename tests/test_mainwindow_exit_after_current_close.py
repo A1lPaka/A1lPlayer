@@ -129,8 +129,11 @@ class _PiPControllerStub:
         self.theme_color = theme_color
         self.active = False
         self.exit_calls = 0
+        self.exit_fullscreen_calls = 0
         self.shutdown_teardown_calls = 0
         self.enter_calls = 0
+        self.toggle_fullscreen_calls = 0
+        self.sync_host_window_ui_calls = 0
 
     def is_active(self):
         return self.active
@@ -145,8 +148,18 @@ class _PiPControllerStub:
         self.active = False
         return None
 
-    def toggle_fullscreen_window(self):
-        return False
+    def toggle_fullscreen(self):
+        if self.player_window.playback.can_activate_view_modes():
+            self.toggle_fullscreen_calls += 1
+        return None
+
+    def exit_fullscreen(self):
+        self.exit_fullscreen_calls += 1
+        return None
+
+    def sync_host_window_ui(self):
+        self.sync_host_window_ui_calls += 1
+        return None
 
     def apply_metrics(self, metrics):
         self.metrics = metrics
@@ -230,21 +243,19 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
     monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
 
     window = module.MainWindow(settings=QSettings())
-    fullscreen_calls = []
-    monkeypatch.setattr(window, "showFullScreen", lambda: fullscreen_calls.append("enter"))
 
-    window.toggle_fullscreen()
+    window.player_window.fullscreen_requested.emit()
     window.player_window.pip_requested.emit()
     window.player_window.pip_requested.emit()
 
-    assert fullscreen_calls == []
+    assert window.pip_controller.toggle_fullscreen_calls == 0
     assert window.pip_controller.enter_calls == 0
 
     window.player_window.playback.view_modes_allowed = True
 
-    window.toggle_fullscreen()
+    window.player_window.fullscreen_requested.emit()
     window.player_window.pip_requested.emit()
     window.player_window.pip_requested.emit()
 
-    assert fullscreen_calls == ["enter"]
+    assert window.pip_controller.toggle_fullscreen_calls == 1
     assert window.pip_controller.enter_calls == 2

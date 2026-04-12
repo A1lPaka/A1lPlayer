@@ -57,8 +57,6 @@ class MainWindow(QMainWindow):
         self.player_window.active_media_changed.connect(self._on_active_media_changed)
         self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
-        self.player_window.fullscreen_requested.connect(self.toggle_fullscreen)
-        self.player_window.close_requested_after_media_end.connect(self.close)
         self.setCentralWidget(self.player_window)
         self.pip_controller = PiPController(
             self,
@@ -66,8 +64,10 @@ class MainWindow(QMainWindow):
             metrics=self.metrics,
             theme_color=self.theme_state,
         )
+        self.player_window.fullscreen_requested.connect(self.pip_controller.toggle_fullscreen)
         self.player_window.pip_requested.connect(self.pip_controller.toggle_pip)
         self.player_window.pip_exit_requested.connect(self.pip_controller.exit_pip)
+        self.player_window.close_requested_after_media_end.connect(self.close)
 
         self.menu_bar_controller = MenuBarController(
             main_window=self,
@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self.apply_metrics(get_metrics(self))
-        self.sync_fullscreen_ui()
+        self.pip_controller.sync_host_window_ui()
 
         if not self._screen_connected:
             handle = self.windowHandle()
@@ -134,13 +134,13 @@ class MainWindow(QMainWindow):
         self.apply_metrics(get_metrics(self))
 
     def _init_shortcuts(self):
-        self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.exit_fullscreen))
+        self._register_shortcuts(self, self._window_shortcuts, self._build_shortcut_bindings(self.pip_controller.exit_fullscreen))
 
     def _build_shortcut_bindings(self, escape_handler, *, include_fullscreen: bool = True):
         bindings = [
-            ("F11", self.toggle_fullscreen),
-            ("Alt+Return", self.toggle_fullscreen),
-            ("Ctrl+Alt+Return", self.toggle_fullscreen),
+            ("F11", self.pip_controller.toggle_fullscreen),
+            ("Alt+Return", self.pip_controller.toggle_fullscreen),
+            ("Ctrl+Alt+Return", self.pip_controller.toggle_fullscreen),
             ("Esc", escape_handler),
             ("Space", self.player_window.player_actions.on_play_pause),
             ("Up", partial(self.player_window.adjust_volume, 10)),
@@ -179,37 +179,6 @@ class MainWindow(QMainWindow):
         shortcut.activated.connect(handler)
         storage.append(shortcut)
 
-    def toggle_fullscreen(self):
-        if self.pip_controller.toggle_fullscreen_window():
-            return
-
-        if self.is_fullscreen():
-            self.exit_fullscreen()
-            return
-        self.enter_fullscreen()
-
-    def enter_fullscreen(self):
-        if not self.player_window.playback.can_activate_view_modes():
-            return
-        self.showFullScreen()
-        self.sync_fullscreen_ui()
-
-    def exit_fullscreen(self):
-        if not self.is_fullscreen():
-            return
-        self.showNormal()
-        self.sync_fullscreen_ui()
-
-    def is_fullscreen(self) -> bool:
-        return self.isFullScreen()
-
-    def sync_fullscreen_ui(self):
-        fullscreen = self.is_fullscreen()
-        menu_bar = self.menuBar()
-        if menu_bar is not None:
-            menu_bar.setVisible(not fullscreen and not self._chrome_hidden)
-        self.player_window.set_fullscreen_mode(fullscreen)
-
     def take_player_window(self) -> PlayerWindow | None:
         player_widget = self.takeCentralWidget()
         if isinstance(player_widget, PlayerWindow):
@@ -220,7 +189,6 @@ class MainWindow(QMainWindow):
 
     def restore_player_window(self, player_window: PlayerWindow):
         self.setCentralWidget(player_window)
-        self.sync_fullscreen_ui()
 
     def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)
@@ -239,7 +207,7 @@ class MainWindow(QMainWindow):
     def toggle_chrome_visibility(self):
         self._chrome_hidden = not self._chrome_hidden
         self.player_window.set_chrome_hidden(self._chrome_hidden)
-        self.sync_fullscreen_ui()
+        self.pip_controller.sync_host_window_ui()
 
     def open_theme_dialog(self):
         if self._theme_dialog is None:
