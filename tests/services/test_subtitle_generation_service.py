@@ -69,6 +69,7 @@ def _seed_active_run(service: SubtitleGenerationService, media_path: str = "C:/m
         SubtitleGenerationContext(media_path=media_path, request_id=request_id),
         _options(),
     )
+    service._active_run.phase = SubtitleGenerationState.RUNNING
     return service._active_run
 
 
@@ -138,8 +139,9 @@ def test_cancel_transitions_to_canceling_and_is_idempotent():
     service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
-    _seed_active_run(service)
-    service._subtitle_worker = worker
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_worker = worker
 
     service._request_active_task_stop()
     service._request_active_task_stop()
@@ -199,9 +201,10 @@ def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
-    _seed_active_run(service)
-    service._subtitle_worker = worker
-    service._subtitle_thread = _RunningThread()
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_worker = worker
+    run.subtitle_thread = _RunningThread()
 
     pending = service.begin_shutdown()
 
@@ -234,9 +237,10 @@ def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     service, _store = _make_service(QWidget(), player)
     worker = FakeSubtitleWorker()
 
-    _seed_active_run(service)
-    service._subtitle_worker = worker
-    service._subtitle_thread = _RunningThread()
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_worker = worker
+    run.subtitle_thread = _RunningThread()
 
     pending = service.begin_force_shutdown()
 
