@@ -79,7 +79,6 @@ class PlayerPlaybackController(QObject):
     active_media_changed = Signal(object)
     playback_error = Signal(int, str, str)
     video_geometry_changed = Signal(int, int)
-    exit_after_current_requested = Signal()
     pause_requested = Signal()
 
     def __init__(self, parent: QObject | None = None):
@@ -87,7 +86,6 @@ class PlayerPlaybackController(QObject):
         self.engine = PlaybackService(self)
         self.playlist = PlaylistState()
 
-        self._exit_after_current = False
         self._pending_start_position_ms = 0
         self._playback_state = self.STATE_STOPPED
         self._active_request_id = 0
@@ -256,12 +254,6 @@ class PlayerPlaybackController(QObject):
             target_ms = min(target_ms, total_ms)
             self.engine.set_position(target_ms / total_ms)
 
-    def set_exit_after_current(self, enabled: bool):
-        self._exit_after_current = bool(enabled)
-
-    def is_exit_after_current_enabled(self) -> bool:
-        return self._exit_after_current
-
     def has_media_loaded(self) -> bool:
         return self._media_confirmed_loaded
 
@@ -411,10 +403,8 @@ class PlayerPlaybackController(QObject):
         if finished_path:
             self.media_finished.emit(finished_path)
 
-        if self._exit_after_current:
-            logger.info("Exit-after-current triggered | request_id=%s", request_id)
-            self.stop()
-            self.exit_after_current_requested.emit()
+        if self._playback_state == self.STATE_STOPPED:
+            logger.info("Media completion handling stopped by external owner | request_id=%s", request_id)
             return
 
         if self._play_next_from_playlist():

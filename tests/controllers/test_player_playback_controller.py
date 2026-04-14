@@ -201,22 +201,21 @@ def test_media_end_skips_missing_items_during_linear_advance(workspace_tmp_path)
     assert controller.playback_state() == controller.STATE_OPENING
 
 
-def test_exit_after_current_emits_close_request_and_stops_playback(workspace_tmp_path):
+def test_media_end_can_be_stopped_by_upper_owner_before_playlist_advance(workspace_tmp_path):
     controller = PlayerPlaybackController()
-    media_path = _make_media_files(workspace_tmp_path, ["final.mp4"])[0]
+    first_path, second_path = _make_media_files(workspace_tmp_path, ["final.mp4", "next.mp4"])
     finished = SignalRecorder()
-    close_requests = SignalRecorder()
     controller.media_finished.connect(finished)
-    controller.exit_after_current_requested.connect(close_requests)
-    controller.set_exit_after_current(True)
+    controller.media_finished.connect(lambda _path: controller.stop())
 
-    controller.open_paths([media_path])
+    controller.open_paths([first_path, second_path])
     controller.engine.playing.emit(controller.current_request_id())
     controller.engine.media_ended.emit(controller.current_request_id())
 
-    assert finished.calls == [(media_path,)]
-    assert close_requests.calls == [()]
+    assert finished.calls == [(first_path,)]
     assert controller.playback_state() == controller.STATE_STOPPED
+    assert controller.current_media_path() == first_path
+    assert controller.engine.loaded_media == [first_path]
     assert controller.engine.stop_calls == 1
 
 

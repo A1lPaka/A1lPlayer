@@ -11,15 +11,16 @@ from services.AppCloseCoordinator import AppCloseResult
 class _PlaybackStub:
     def __init__(self):
         self.view_modes_allowed = False
-
-    def is_exit_after_current_enabled(self):
-        return False
+        self.stop_calls = 0
 
     def has_media_loaded(self):
         return False
 
     def can_activate_view_modes(self):
         return self.view_modes_allowed
+
+    def stop(self):
+        self.stop_calls += 1
 
     def shutdown(self):
         return None
@@ -39,7 +40,6 @@ class _PlayerWindowStub(QWidget):
     fullscreen_requested = Signal()
     pip_requested = Signal()
     pip_exit_requested = Signal()
-    close_requested_after_media_end = Signal()
 
     def __init__(self, metrics, theme_color):
         super().__init__()
@@ -205,6 +205,7 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
 
     window = module.MainWindow(settings=QSettings())
+    window.set_exit_after_current(True)
     close_attempts = []
 
     def _attempt_close():
@@ -215,10 +216,11 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     window.show()
     QApplication.processEvents()
 
-    window.player_window.close_requested_after_media_end.emit()
+    window.player_window.media_finished.emit("final.mp4")
     QApplication.processEvents()
 
     assert close_attempts == [True]
+    assert window.player_window.playback.stop_calls == 1
 
 def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeypatch):
     installer_module = types.ModuleType("services.runtime.RuntimeInstallerMain")

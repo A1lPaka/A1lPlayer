@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self._chrome_hidden = False
         self._window_shortcuts: list[QShortcut] = []
         self._pip_shortcuts: list[QShortcut] = []
+        self._exit_after_current = False
 
         self.media_store = MediaSettingsStore(self.settings)
         self.theme_state = self.media_store.load_theme()
@@ -87,13 +88,13 @@ class MainWindow(QMainWindow):
 
     def _wire_components(self):
         self.player_window.open_file_requested.connect(self.media_library.open_file)
+        self.player_window.media_finished.connect(self._on_media_finished)
         self.player_window.active_media_changed.connect(self._on_active_media_changed)
         self.player_window.playback_error.connect(self._on_playback_error)
         self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
         self.player_window.fullscreen_requested.connect(self.view_mode_controller.toggle_fullscreen)
         self.player_window.pip_requested.connect(self.view_mode_controller.toggle_pip)
         self.player_window.pip_exit_requested.connect(self.view_mode_controller.exit_pip)
-        self.player_window.close_requested_after_media_end.connect(self.close)
 
         self._init_shortcuts()
 
@@ -201,9 +202,21 @@ class MainWindow(QMainWindow):
     def restore_player_window(self, player_window: PlayerWindow):
         self.setCentralWidget(player_window)
 
+    def is_exit_after_current_enabled(self) -> bool:
+        return self._exit_after_current
+
+    def set_exit_after_current(self, enabled: bool):
+        self._exit_after_current = bool(enabled)
+
     def _on_active_media_changed(self, path: str | None):
         self._update_window_title(path)
         self.view_mode_controller.update_aspect_ratio()
+
+    def _on_media_finished(self, _path: str):
+        if not self._exit_after_current:
+            return
+        self.player_window.playback.stop()
+        self.close()
 
     def _on_video_geometry_changed(self, width: int, height: int):
         self.view_mode_controller.update_aspect_ratio(width, height)

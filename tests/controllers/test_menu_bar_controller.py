@@ -8,17 +8,11 @@ from models.ThemeColor import ThemeState
 
 
 class _PlaybackStub:
-    def is_exit_after_current_enabled(self) -> bool:
-        return False
-
     def has_media_loaded(self) -> bool:
         return False
 
     def get_current_audio_mode(self) -> str:
         return ""
-
-    def set_exit_after_current(self, _checked: bool):
-        pass
 
 
 class _PlayerWindowStub(QObject):
@@ -62,10 +56,23 @@ class _SubtitleServiceStub:
         pass
 
 
+class _MainWindowStub(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.exit_after_current = False
+
+    def is_exit_after_current_enabled(self) -> bool:
+        return self.exit_after_current
+
+    def set_exit_after_current(self, checked: bool):
+        self.exit_after_current = bool(checked)
+
+
 def test_recent_menu_rebuilds_from_raw_history_without_validation():
     missing_path = r"\\server\share\offline\movie.mkv"
+    main_window = _MainWindowStub()
     controller = MenuBarController(
-        main_window=QMainWindow(),
+        main_window=main_window,
         player_window=_PlayerWindowStub(),
         media_library=_MediaLibraryStub([missing_path]),
         subtitle_service=_SubtitleServiceStub(),

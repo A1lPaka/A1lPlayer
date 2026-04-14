@@ -52,7 +52,7 @@ class MenuBarController:
 
         self.exit_after_action = media_menu.addAction("Exit After Current")
         self.exit_after_action.setCheckable(True)
-        self.exit_after_action.setChecked(self.player_window.playback.is_exit_after_current_enabled())
+        self.exit_after_action.setChecked(self.main_window.is_exit_after_current_enabled())
         self.exit_after_action.toggled.connect(self._on_exit_after_current)
 
         self.exit_action = media_menu.addAction("Exit")
@@ -303,7 +303,7 @@ class MenuBarController:
         self.media_library.clear_recent_media()
 
     def _on_exit_after_current(self, checked: bool):
-        self.player_window.playback.set_exit_after_current(checked)
+        self.main_window.set_exit_after_current(checked)
 
     def _on_exit(self):
         self.main_window.close()

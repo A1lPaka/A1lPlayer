@@ -25,7 +25,6 @@ class PlayerWindow(QWidget):
     fullscreen_requested = Signal()
     pip_requested = Signal()
     pip_exit_requested = Signal()
-    close_requested_after_media_end = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
 
     def __init__(self, metrics: Metrics | None, theme_color: ThemeState):
@@ -111,7 +110,6 @@ class PlayerWindow(QWidget):
         self.playback.current_media_changed.connect(self._on_current_media_changed)
         self.playback.media_finished.connect(self.media_finished.emit)
         self.playback.video_geometry_changed.connect(self.video_geometry_changed.emit)
-        self.playback.exit_after_current_requested.connect(self._on_exit_after_current_requested)
         self.playback_view_state.view_state_changed.connect(self._apply_playback_view_state)
         self.playback_view_state.playback_error.connect(self.playback_error.emit)
         self.player_actions.open_file_requested.connect(self.open_file_requested.emit)
@@ -455,9 +453,6 @@ class PlayerWindow(QWidget):
 
     def _on_current_media_changed(self, path: str):
         self.current_media_changed.emit(path)
-
-    def _on_exit_after_current_requested(self):
-        self.close_requested_after_media_end.emit()
 
     def _apply_playback_view_state(self, view_state: PlaybackViewState):
         self._set_position_timer_active(view_state.position_timer_active)
