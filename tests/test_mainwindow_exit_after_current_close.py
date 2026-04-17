@@ -205,6 +205,11 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
 
     window = module.MainWindow(settings=QSettings())
+    assert not hasattr(window, "take_player_window")
+    assert not hasattr(window, "restore_player_window")
+    assert hasattr(window, "_take_player_window_for_view_mode")
+    assert hasattr(window, "_restore_player_window_from_view_mode")
+
     window.set_exit_after_current(True)
     close_attempts = []
 

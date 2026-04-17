@@ -20,6 +20,7 @@ class _FakePlayback:
         self.pause_calls = 0
         self.play_calls = 0
         self.view_modes_allowed = True
+        self.video_dimensions = (1280, 720)
 
     def is_playing(self) -> bool:
         return self._is_playing
@@ -34,6 +35,9 @@ class _FakePlayback:
 
     def can_activate_view_modes(self) -> bool:
         return self.view_modes_allowed
+
+    def get_video_dimensions(self):
+        return self.video_dimensions
 
     def pause_for_interruption(self, owner: str, *, emit_pause_requested: bool = True):
         interruption = self._interruptions.get(owner)
@@ -142,6 +146,8 @@ class _FakeHostWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.restored_player_widget = None
+        self.player_widget_to_take = None
+        self.take_player_widget_calls = 0
         self.show_normal_calls = 0
         self.raise_calls = 0
         self.activate_calls = 0
@@ -149,7 +155,13 @@ class _FakeHostWindow(QMainWindow):
     def init_pip_shortcuts(self, _pip_window):
         return None
 
-    def restore_player_window(self, player_window):
+    def _take_player_window_for_view_mode(self):
+        self.take_player_widget_calls += 1
+        player_widget = self.player_widget_to_take
+        self.player_widget_to_take = None
+        return player_widget
+
+    def _restore_player_window_from_view_mode(self, player_window):
         self.restored_player_widget = player_window
 
     def showNormal(self):
@@ -308,14 +320,59 @@ class _FakePiPWindow:
     def __init__(self, player_widget=None):
         self._player_widget = player_widget
         self.hide_calls = 0
+        self.show_calls = 0
+        self.raise_calls = 0
+        self.activate_calls = 0
+        self.aspect_ratio_updates = []
+
+    def setCentralWidget(self, player_widget):
+        self._player_widget = player_widget
 
     def takeCentralWidget(self):
         player_widget = self._player_widget
         self._player_widget = None
         return player_widget
 
+    def set_video_aspect_ratio(self, width, height):
+        self.aspect_ratio_updates.append((width, height))
+
+    def show(self):
+        self.show_calls += 1
+
+    def raise_(self):
+        self.raise_calls += 1
+
+    def activateWindow(self):
+        self.activate_calls += 1
+
     def hide(self):
         self.hide_calls += 1
+
+
+def test_enter_pip_uses_view_mode_host_adapter_and_starts_rebind(monkeypatch):
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+    fake_pip_window = _FakePiPWindow()
+    controller._pip_window = fake_pip_window
+    controller._host_window.player_widget_to_take = player_window
+    rebind_calls = []
+
+    monkeypatch.setattr(
+        controller,
+        "_start_rebind_video_output_transition",
+        lambda: rebind_calls.append(controller._rebind_lease.paused_playback),
+    )
+
+    controller.enter_pip()
+
+    assert controller._host_window.take_player_widget_calls == 1
+    assert fake_pip_window._player_widget is player_window
+    assert player_window.is_pip_active() is True
+    assert fake_pip_window.aspect_ratio_updates == [(1280, 720)]
+    assert fake_pip_window.show_calls == 1
+    assert fake_pip_window.raise_calls == 1
+    assert fake_pip_window.activate_calls == 1
+    assert rebind_calls == [False]
 
 
 def test_exit_pip_restores_host_window_and_starts_rebind(monkeypatch):

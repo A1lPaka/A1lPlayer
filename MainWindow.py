@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
         shortcut.activated.connect(handler)
         storage.append(shortcut)
 
-    def take_player_window(self) -> PlayerWindow | None:
+    def _take_player_window_for_view_mode(self) -> PlayerWindow | None:
         player_widget = self.takeCentralWidget()
         if isinstance(player_widget, PlayerWindow):
             return player_widget
@@ -199,7 +199,7 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(player_widget)
         return None
 
-    def restore_player_window(self, player_window: PlayerWindow):
+    def _restore_player_window_from_view_mode(self, player_window: PlayerWindow):
         self.setCentralWidget(player_window)
 
     def is_exit_after_current_enabled(self) -> bool:

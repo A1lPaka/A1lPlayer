@@ -93,7 +93,7 @@ class ViewModeController:
         self.exit_fullscreen()
 
         pip_window = self._ensure_pip_window()
-        player_widget = self._host_window.take_player_window()
+        player_widget = self._host_window._take_player_window_for_view_mode()
         if player_widget is None:
             self._rebind_lease.release()
             return
@@ -118,7 +118,7 @@ class ViewModeController:
             self._rebind_lease.release()
             return
 
-        self._host_window.restore_player_window(player_widget)
+        self._host_window._restore_player_window_from_view_mode(player_widget)
         self._host_window.showNormal()
         self.sync_host_window_ui()
         self._host_window.raise_()
@@ -132,7 +132,7 @@ class ViewModeController:
         self._cancel_pending_rebind_transition()
         player_widget = self._take_player_widget_from_pip()
         if player_widget is not None:
-            self._host_window.restore_player_window(player_widget)
+            self._host_window._restore_player_window_from_view_mode(player_widget)
 
     def sync_host_window_ui(self):
         fullscreen = self._host_window.isFullScreen()
