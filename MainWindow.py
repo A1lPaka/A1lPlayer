@@ -88,10 +88,10 @@ class MainWindow(QMainWindow):
 
     def _wire_components(self):
         self.player_window.open_file_requested.connect(self.media_library.open_file)
-        self.player_window.media_finished.connect(self._on_media_finished)
-        self.player_window.active_media_changed.connect(self._on_active_media_changed)
+        self.player_window.playback.media_finished.connect(self._on_media_finished)
+        self.player_window.playback.active_media_changed.connect(self._on_active_media_changed)
         self.player_window.playback_error.connect(self._on_playback_error)
-        self.player_window.video_geometry_changed.connect(self._on_video_geometry_changed)
+        self.player_window.playback.video_geometry_changed.connect(self._on_video_geometry_changed)
         self.player_window.fullscreen_requested.connect(self.view_mode_controller.toggle_fullscreen)
         self.player_window.pip_requested.connect(self.view_mode_controller.toggle_pip)
         self.player_window.pip_exit_requested.connect(self.view_mode_controller.exit_pip)

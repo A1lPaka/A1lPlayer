@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.ThemeColor import ThemeState
+from services.MediaPathService import build_file_dialog_filter
 from utils import Metrics, get_metrics, res_path
 
 
@@ -452,7 +453,7 @@ class SubtitleGenerationDialog(QWidget):
             self,
             "Save Subtitle As",
             initial_path,
-            f"{extension.upper()} Files (*.{extension});;All Files (*)",
+            build_file_dialog_filter(f"{extension.upper()} Files", (f".{extension}",)),
         )
         if not chosen_path:
             return

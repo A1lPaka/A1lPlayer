@@ -8,24 +8,6 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from utils import _format_ms
 
 
-def confirm_force_close_background_tasks(parent: QWidget) -> bool:
-    message_box = QMessageBox(parent)
-    message_box.setWindowTitle("Closing Application")
-    message_box.setIcon(QMessageBox.Icon.Warning)
-    message_box.setText("Background subtitle tasks are still stopping.")
-    message_box.setInformativeText(
-        "Wait for them to finish, or force close the application now."
-    )
-    wait_button = message_box.addButton("Wait", QMessageBox.ButtonRole.RejectRole)
-    force_close_button = message_box.addButton(
-        "Force close",
-        QMessageBox.ButtonRole.DestructiveRole,
-    )
-    message_box.setDefaultButton(wait_button)
-    message_box.exec()
-    return message_box.clickedButton() is force_close_button
-
-
 def prompt_force_close_background_tasks(
     parent: QWidget,
     *,

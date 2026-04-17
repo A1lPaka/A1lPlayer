@@ -42,7 +42,7 @@ class ViewModeController:
         self._rebind_fallback_timer.setInterval(self._REBIND_FALLBACK_TIMEOUT_MS)
         self._rebind_fallback_timer.timeout.connect(self._on_rebind_fallback_timeout)
 
-        self._player_window.media_finished.connect(self._on_media_finished)
+        self._player_window.playback.media_finished.connect(self._on_media_finished)
         self._player_window.video_host_ready.connect(self._on_video_host_ready)
 
     def is_active(self) -> bool:
@@ -188,14 +188,14 @@ class ViewModeController:
                 self._on_video_geometry_changed(transition_id, width, height)
 
             self._pending_geometry_slot = _geometry_slot
-            self._player_window.video_geometry_changed.connect(_geometry_slot)
+            self._player_window.playback.video_geometry_changed.connect(_geometry_slot)
         self._rebind_fallback_timer.start()
         self._try_bind_pending_video_output()
 
     def _cancel_pending_rebind_transition(self, *, release_lease: bool = True):
         if self._pending_geometry_slot is not None:
             try:
-                self._player_window.video_geometry_changed.disconnect(self._pending_geometry_slot)
+                self._player_window.playback.video_geometry_changed.disconnect(self._pending_geometry_slot)
             except (RuntimeError, TypeError):
                 pass
             self._pending_geometry_slot = None

@@ -7,12 +7,21 @@ from utils import _normalize_path
 logger = logging.getLogger(__name__)
 
 
+MEDIA_EXTENSIONS = (
+    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
+    ".mp3", ".wav", ".flac", ".m4a", ".aac",
+)
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+
+
+def build_file_dialog_filter(label: str, extensions) -> str:
+    patterns = " ".join(f"*{extension}" for extension in extensions)
+    return f"{label} ({patterns});;All Files (*)"
+
+
 class MediaPathService:
-    MEDIA_EXTENSIONS = {
-        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
-        ".mp3", ".wav", ".flac", ".m4a", ".aac",
-    }
-    SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
+    MEDIA_EXTENSIONS = frozenset(MEDIA_EXTENSIONS)
+    SUBTITLE_EXTENSIONS = frozenset(SUBTITLE_EXTENSIONS)
 
     def collect_media_files(self, folder_path: str) -> list[str]:
         file_paths: list[str] = []

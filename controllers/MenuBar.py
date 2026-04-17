@@ -88,7 +88,7 @@ class MenuBarController:
         self.theme_action = self.menu_bar.addAction("Theme")
         self.theme_action.triggered.connect(self._on_open_theme_dialog)
 
-        self.player_window.active_media_changed.connect(self._sync_media_actions)
+        self.player_window.playback.active_media_changed.connect(self._sync_media_actions)
 
     def _rgb(self, name: str) -> str:
         r, g, b = self.theme_color.get(name)

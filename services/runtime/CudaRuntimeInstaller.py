@@ -17,6 +17,7 @@ from services.runtime.RuntimeInstallerProtocol import (
     build_finished_event,
     build_status_event,
 )
+from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
 from services.subtitles.SubtitleMaker import get_missing_windows_cuda_runtime_packages
 
 
@@ -49,36 +50,12 @@ class CudaRuntimeInstallSource:
     location: str
 
 
-class _DiagnosticTailBuffer:
-    def __init__(self, max_lines: int = 200):
-        self._lines: list[str] = []
-        self._max_lines = max(1, int(max_lines))
-        self._lock = threading.Lock()
-
-    def append(self, text: str):
-        line = str(text or "").rstrip()
-        if not line:
-            return
-        with self._lock:
-            self._lines.append(line)
-            if len(self._lines) > self._max_lines:
-                self._lines = self._lines[-self._max_lines :]
-
-    def dump(self) -> str:
-        with self._lock:
-            return "\n".join(self._lines).strip()
-
-    def tail(self, count: int = 12) -> str:
-        with self._lock:
-            return "\n".join(self._lines[-max(1, int(count)) :]).strip()
-
-
 class _InstallerStatusReporter:
     def __init__(
         self,
         request: CudaRuntimeInstallRequest,
         source: CudaRuntimeInstallSource,
-        diagnostic_buffer: _DiagnosticTailBuffer,
+        diagnostic_buffer: BoundedLineBuffer,
         emit_event,
     ):
         self._request = request
@@ -104,7 +81,7 @@ class _InstallerStatusReporter:
             *(self._request.packages or ("<none>",)),
         ]
         if include_tail:
-            tail_text = self._diagnostic_buffer.tail()
+            tail_text = self._diagnostic_buffer.tail(12)
             if tail_text:
                 details_parts.extend(["", "Installer output:", tail_text])
         self._emit_event(build_status_event(status, "\n".join(details_parts)))
@@ -208,7 +185,7 @@ def ensure_cuda_runtime_installed(
     source = resolve_cuda_runtime_install_source()
     python_executable = resolve_installer_python_executable()
     install_command = build_cuda_runtime_install_command(request, source, python_executable)
-    diagnostics = _DiagnosticTailBuffer()
+    diagnostics = BoundedLineBuffer(max_lines=200)
     reporter = _InstallerStatusReporter(request, source, diagnostics, emit_event)
 
     logger.info(
@@ -264,7 +241,7 @@ def build_cuda_runtime_failure_event(exc: BaseException, diagnostics_text: str =
 def _run_install_command(
     install_command: list[str],
     reporter: _InstallerStatusReporter,
-    diagnostics: _DiagnosticTailBuffer,
+    diagnostics: BoundedLineBuffer,
     cancel_event: threading.Event,
 ):
     process = subprocess.Popen(
@@ -311,11 +288,11 @@ def _run_install_command(
     if int(return_code) != 0:
         raise RuntimeError(
             f"Installer command failed with exit code {return_code}.\n"
-            + diagnostics.dump()
+            + diagnostics.consume_text()
         )
 
 
-def _collect_process_output(stream, diagnostics: _DiagnosticTailBuffer, reporter: _InstallerStatusReporter):
+def _collect_process_output(stream, diagnostics: BoundedLineBuffer, reporter: _InstallerStatusReporter):
     if stream is None:
         return
     try:

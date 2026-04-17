@@ -108,6 +108,9 @@ def _format_ms(ms: int) -> str:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
 
+def _format_speed(speed: float) -> str:
+    return f"x{float(speed):.2f}"
+
 def _normalize_path(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 

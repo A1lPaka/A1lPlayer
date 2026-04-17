@@ -9,7 +9,7 @@ from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QP
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QEvent
 
-from utils import Metrics, res_path, _format_ms
+from utils import Metrics, res_path, _format_ms, _format_speed
 from models.ThemeColor import ThemeState
 
 class ClickableLabel(QLabel):
@@ -184,7 +184,7 @@ class PlayerControls(QWidget):
         return int(round(self.volume_controls.volume_bar.volume * 100))
 
     def set_speed_value(self, speed: float):
-        self.speed_label.setText(self._format_speed(speed))
+        self.speed_label.setText(_format_speed(speed))
 
     def update_timing(self, current_ms: int, total_ms: int):
         current_ms = current_ms if current_ms and current_ms > 0 else 0
@@ -197,9 +197,6 @@ class PlayerControls(QWidget):
             self.progress_bar.set_value(current_ms / total_ms)
         else:
             self.progress_bar.set_value(0.0)
-
-    def _format_speed(self, speed: float) -> str:
-        return f"x{float(speed):.2f}"
 
 class TimePopup(QWidget):
     def __init__(self, parent: QWidget | None, metrics: Metrics, theme_color: ThemeState):
@@ -285,7 +282,7 @@ class SpeedPopup(QWidget):
         self.metrics = metrics
         self.theme_color = theme_color
 
-        self.speed_label = QLabel(self._format_speed(self._step_to_speed(self.DEFAULT_STEP)), self, alignment=Qt.AlignCenter)
+        self.speed_label = QLabel(_format_speed(self._step_to_speed(self.DEFAULT_STEP)), self, alignment=Qt.AlignCenter)
         self.speed_slider = QSlider(Qt.Horizontal, self)
         self.speed_slider.setRange(self.MIN_STEP, self.MAX_STEP)
         self.speed_slider.setSingleStep(1)
@@ -317,7 +314,7 @@ class SpeedPopup(QWidget):
 
     def set_speed(self, speed: float):
         self.speed_slider.setValue(self._speed_to_step(speed))
-        self.speed_label.setText(self._format_speed(self.current_speed()))
+        self.speed_label.setText(_format_speed(self.current_speed()))
 
     def current_speed(self) -> float:
         return self.speed_slider.value() * self.STEP_SIZE
@@ -378,7 +375,7 @@ class SpeedPopup(QWidget):
 
     def _on_slider_value_changed(self, step: int):
         speed = step * self.STEP_SIZE
-        self.speed_label.setText(self._format_speed(speed))
+        self.speed_label.setText(_format_speed(speed))
         self.speed_changed.emit(speed)
 
     def _step_to_speed(self, step: int) -> float:
@@ -387,9 +384,6 @@ class SpeedPopup(QWidget):
     def _speed_to_step(self, speed: float) -> int:
         clamped = max(self.MIN_SPEED, min(self.MAX_SPEED, float(speed)))
         return int(round(clamped / self.STEP_SIZE))
-
-    def _format_speed(self, speed: float) -> str:
-        return f"x{speed:.2f}"
 
 class BaseButton(QAbstractButton):
     _pixmap_cache: Dict[Tuple[str, int, int, int, int], QPixmap] = {}

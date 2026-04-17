@@ -1,9 +1,15 @@
 from PySide6.QtWidgets import QFileDialog, QWidget
 
+from services.MediaPathService import (
+    MEDIA_EXTENSIONS,
+    SUBTITLE_EXTENSIONS,
+    build_file_dialog_filter,
+)
+
 
 class MediaDialogs:
-    MEDIA_FILTER = "Media Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mp3 *.wav *.flac *.m4a *.aac);;All Files (*)"
-    SUBTITLE_FILTER = "Subtitle Files (*.srt *.ass *.ssa *.sub *.vtt);;All Files (*)"
+    MEDIA_FILTER = build_file_dialog_filter("Media Files", MEDIA_EXTENSIONS)
+    SUBTITLE_FILTER = build_file_dialog_filter("Subtitle Files", SUBTITLE_EXTENSIONS)
 
     def __init__(self, parent: QWidget):
         self._parent = parent

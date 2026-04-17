@@ -36,7 +36,7 @@ class TerminalEventMixin:
 
 class BoundedLineBuffer:
     def __init__(self, max_lines: int):
-        self._lines: deque[str] = deque(maxlen=max_lines)
+        self._lines: deque[str] = deque(maxlen=max(1, int(max_lines)))
         self._lock = threading.Lock()
 
     def append(self, text: str):
@@ -46,6 +46,10 @@ class BoundedLineBuffer:
     def consume_text(self) -> str:
         with self._lock:
             return "\n".join(self._lines).strip()
+
+    def tail(self, count: int) -> str:
+        with self._lock:
+            return "\n".join(list(self._lines)[-max(1, int(count)) :]).strip()
 
 
 def build_process_diagnostics(return_code: int | None, sections: Iterable[tuple[str | None, str]]) -> str:

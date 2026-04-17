@@ -8,8 +8,13 @@ from PySide6.QtWidgets import QApplication, QWidget
 from services.AppCloseCoordinator import AppCloseResult
 
 
-class _PlaybackStub:
+class _PlaybackStub(QObject):
+    media_finished = Signal(str)
+    active_media_changed = Signal(object)
+    video_geometry_changed = Signal(int, int)
+
     def __init__(self):
+        super().__init__()
         self.view_modes_allowed = False
         self.stop_calls = 0
 
@@ -33,10 +38,7 @@ class _PlayerActionsStub:
 
 class _PlayerWindowStub(QWidget):
     open_file_requested = Signal()
-    media_finished = Signal(str)
-    active_media_changed = Signal(object)
     playback_error = Signal(str, str)
-    video_geometry_changed = Signal(int, int)
     fullscreen_requested = Signal()
     pip_requested = Signal()
     pip_exit_requested = Signal()
@@ -221,7 +223,7 @@ def test_exit_after_current_uses_mainwindow_close_flow(monkeypatch):
     window.show()
     QApplication.processEvents()
 
-    window.player_window.media_finished.emit("final.mp4")
+    window.player_window.playback.media_finished.emit("final.mp4")
     QApplication.processEvents()
 
     assert close_attempts == [True]

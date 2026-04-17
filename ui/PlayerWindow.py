@@ -30,12 +30,7 @@ class SubtitleGenerationUiSuspendLease:
 
 class PlayerWindow(QWidget):
     open_file_requested = Signal()
-    media_finished = Signal(str)
-    media_assigned = Signal(str)
-    current_media_changed = Signal(str)
-    active_media_changed = Signal(object)
     playback_error = Signal(str, str)
-    video_geometry_changed = Signal(int, int)
     video_host_ready = Signal()
     fullscreen_requested = Signal()
     pip_requested = Signal()
@@ -120,11 +115,6 @@ class PlayerWindow(QWidget):
         self._install_local_event_filters(self.controls)
         self.speed_popup.installEventFilter(self)
 
-        self.playback.media_assigned.connect(self.media_assigned.emit)
-        self.playback.active_media_changed.connect(self.active_media_changed.emit)
-        self.playback.current_media_changed.connect(self._on_current_media_changed)
-        self.playback.media_finished.connect(self.media_finished.emit)
-        self.playback.video_geometry_changed.connect(self.video_geometry_changed.emit)
         self.playback_view_state.view_state_changed.connect(self._apply_playback_view_state)
         self.playback_view_state.playback_error.connect(self.playback_error.emit)
         self.player_actions.open_file_requested.connect(self.open_file_requested.emit)
@@ -469,9 +459,6 @@ class PlayerWindow(QWidget):
             return int(self.video_frame.winId()) != 0
         except RuntimeError:
             return False
-
-    def _on_current_media_changed(self, path: str):
-        self.current_media_changed.emit(path)
 
     def _apply_playback_view_state(self, view_state: PlaybackViewState):
         self._set_position_timer_active(view_state.position_timer_active)

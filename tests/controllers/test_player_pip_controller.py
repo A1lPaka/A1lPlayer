@@ -13,8 +13,12 @@ class _FakeThemeState:
         return default
 
 
-class _FakePlayback:
+class _FakePlayback(QObject):
+    media_finished = Signal(str)
+    video_geometry_changed = Signal(int, int)
+
     def __init__(self):
+        super().__init__()
         self._is_playing = False
         self._interruptions = {}
         self.pause_calls = 0
@@ -109,9 +113,7 @@ class _FakePlaybackInterruptionLease:
 
 
 class _FakePlayerWindow(QObject):
-    media_finished = Signal(str)
     video_host_ready = Signal()
-    video_geometry_changed = Signal(int, int)
 
     def __init__(self):
         super().__init__()
@@ -202,12 +204,12 @@ def test_rebind_resume_waits_for_valid_geometry_before_play():
     assert controller._pending_rebind_bound is True
     assert controller._awaiting_rebind_geometry is True
 
-    player_window.video_geometry_changed.emit(0, 720)
+    player_window.playback.video_geometry_changed.emit(0, 720)
 
     assert player_window.playback.play_calls == 0
     assert controller._awaiting_rebind_geometry is True
 
-    player_window.video_geometry_changed.emit(1280, 720)
+    player_window.playback.video_geometry_changed.emit(1280, 720)
 
     assert player_window.playback.play_calls == 1
     assert player_window.playback.is_playing() is True
@@ -297,7 +299,7 @@ def test_rebind_stale_geometry_does_not_resume_new_transition():
     assert player_window.playback.play_calls == 0
     assert controller._awaiting_rebind_geometry is True
 
-    player_window.video_geometry_changed.emit(1280, 720)
+    player_window.playback.video_geometry_changed.emit(1280, 720)
 
     assert player_window.playback.play_calls == 1
     assert controller._awaiting_rebind_geometry is False
@@ -310,7 +312,7 @@ def test_rebind_geometry_resume_does_not_allow_duplicate_fallback_play():
     _prepare_rebind_resume(controller, player_window)
 
     controller._start_rebind_video_output_transition()
-    player_window.video_geometry_changed.emit(1280, 720)
+    player_window.playback.video_geometry_changed.emit(1280, 720)
     controller._on_rebind_fallback_timeout()
 
     assert player_window.playback.play_calls == 1
@@ -464,7 +466,7 @@ def test_media_finished_exits_active_pip():
     controller.is_active = lambda: True
     controller.exit_pip = lambda: exit_calls.append(True)
 
-    player_window.media_finished.emit("final.mp4")
+    player_window.playback.media_finished.emit("final.mp4")
 
     assert exit_calls == [True]
 
@@ -477,6 +479,6 @@ def test_media_finished_does_not_exit_when_pip_is_inactive():
     controller.is_active = lambda: False
     controller.exit_pip = lambda: exit_calls.append(True)
 
-    player_window.media_finished.emit("final.mp4")
+    player_window.playback.media_finished.emit("final.mp4")
 
     assert exit_calls == []
