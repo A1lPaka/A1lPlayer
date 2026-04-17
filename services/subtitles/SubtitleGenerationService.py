@@ -136,6 +136,7 @@ class SubtitleGenerationService(QObject):
         self._service_state = SubtitleServiceState.IDLE
         self._last_result: SubtitlePipelineResult | None = None
         self._active_run: SubtitlePipelineRun | None = None
+        self._pending_subtitle_thread_run_ids: set[int] = set()
         self._next_run_id = 1
         self._shutdown_completed = False
         self._force_shutdown_requested = False
@@ -324,6 +325,7 @@ class SubtitleGenerationService(QObject):
         run.subtitle_thread = thread
         run.subtitle_worker = worker
         run.subtitle_cancel_requested = False
+        self._pending_subtitle_thread_run_ids.add(run.run_id)
         QTimer.singleShot(
             0,
             lambda run_id=run.run_id, thread=thread: self._deferred_suspend_and_start_subtitle_worker(run_id, thread),
@@ -508,7 +510,14 @@ class SubtitleGenerationService(QObject):
         self._ui.show_cuda_install_cancel_pending()
 
     def has_active_tasks(self) -> bool:
-        return self._active_run is not None and self._active_run.keeps_shutdown_pending()
+        if self._pending_subtitle_thread_run_ids or self._cuda_runtime_flow.is_active():
+            return True
+
+        run = self._active_run
+        if run is None:
+            return False
+
+        return run.keeps_shutdown_pending()
 
     def is_shutdown_in_progress(self) -> bool:
         return self._service_state == SubtitleServiceState.SHUTTING_DOWN and not self._shutdown_completed
@@ -607,6 +616,9 @@ class SubtitleGenerationService(QObject):
         self._release_playback_takeover(resume_playback=True)
 
     def _on_background_task_thread_finished(self, run_id: int, task: SubtitlePipelineTask):
+        if task == SubtitlePipelineTask.SUBTITLE_GENERATION:
+            self._pending_subtitle_thread_run_ids.discard(run_id)
+
         run = self._active_run if self._active_run is not None and self._active_run.run_id == run_id else None
         if run is not None and task == SubtitlePipelineTask.SUBTITLE_GENERATION:
             self._clear_subtitle_runtime(run)
@@ -626,6 +638,8 @@ class SubtitleGenerationService(QObject):
                 self._service_state.name,
             )
 
+        if run is not None and self._run_is_terminal(run):
+            self._active_run = None
         self._complete_shutdown_if_possible()
 
     def _on_cuda_runtime_flow_thread_finished(self, run_id: int):
@@ -944,6 +958,20 @@ class SubtitleGenerationService(QObject):
         run.subtitle_worker = None
         run.subtitle_cancel_requested = False
 
+    def _run_is_terminal(self, run: SubtitlePipelineRun) -> bool:
+        return run.phase in (
+            SubtitlePipelinePhase.SUCCEEDED,
+            SubtitlePipelinePhase.FAILED,
+            SubtitlePipelinePhase.CANCELED,
+        )
+
+    def _run_is_waiting_for_thread_cleanup(self, run: SubtitlePipelineRun) -> bool:
+        if run.task == SubtitlePipelineTask.SUBTITLE_GENERATION:
+            return run.run_id in self._pending_subtitle_thread_run_ids
+        if run.task == SubtitlePipelineTask.CUDA_INSTALL:
+            return self._cuda_runtime_flow.is_active()
+        return False
+
     def _transition_back_to_dialog(self, reason: str):
         self._transition_service_state(
             SubtitleServiceState.DIALOG_OPEN,
@@ -988,8 +1016,9 @@ class SubtitleGenerationService(QObject):
         if close_progress:
             self._ui.close_progress_dialog()
 
-        self._clear_subtitle_runtime(run)
-        self._active_run = None
+        if not self._run_is_waiting_for_thread_cleanup(run):
+            self._clear_subtitle_runtime(run)
+            self._active_run = None
         if not is_shutdown:
             self._last_result = self._result_from_terminal_phase(terminal_phase)
             self._transition_service_state(
@@ -1111,7 +1140,18 @@ class SubtitleGenerationService(QObject):
                 media_path,
                 cached_error,
             )
-            self._apply_audio_track_probe_failure(media_path, cached_error, show_warning=False)
+            self._apply_audio_track_probe_failure(media_path, cached_error, show_warning=True)
+            return
+
+        player_audio_track_count = self._get_player_audio_track_count()
+        if player_audio_track_count == 1:
+            logger.debug(
+                "Skipping audio stream probe for generation dialog because player reports a single audio track | media=%s | player_audio_track_count=%s",
+                media_path,
+                player_audio_track_count,
+            )
+            self._cache_audio_stream_probe_success(media_path, [])
+            self._apply_default_audio_track_only(media_path)
             return
 
         self._ui.set_generation_dialog_audio_tracks_loading()
@@ -1180,6 +1220,19 @@ class SubtitleGenerationService(QObject):
         self._cached_audio_streams = None
         self._cached_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
 
+    def _get_player_audio_track_count(self) -> int | None:
+        try:
+            tracks = self._player.get_audio_tracks()
+        except (AttributeError, TypeError, ValueError):
+            logger.debug("Player audio track list is unavailable for subtitle generation preflight", exc_info=True)
+            return None
+
+        try:
+            return sum(1 for track_id, _title in tracks if int(track_id) >= 0)
+        except (TypeError, ValueError):
+            logger.debug("Player audio track list was malformed for subtitle generation preflight", exc_info=True)
+            return None
+
     def _is_current_audio_stream_probe_result(self, probe_request_id: int, media_path: str) -> bool:
         if self._current_audio_stream_probe_request_id != probe_request_id:
             logger.debug(
@@ -1233,6 +1286,18 @@ class SubtitleGenerationService(QObject):
             media_path,
             len(audio_streams),
             selector_enabled,
+        )
+
+    def _apply_default_audio_track_only(self, media_path: str):
+        self._ui.apply_generation_dialog_audio_tracks(
+            self._preflight.build_audio_track_choices([]),
+            selected_track_id=None,
+            selector_enabled=False,
+            generate_enabled=True,
+        )
+        logger.debug(
+            "Generation dialog using default audio track only | media=%s",
+            media_path,
         )
 
     def _apply_audio_track_probe_failure(self, media_path: str, reason: str, *, show_warning: bool):

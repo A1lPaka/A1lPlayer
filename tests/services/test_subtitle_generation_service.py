@@ -403,6 +403,55 @@ def test_shutdown_terminal_completion_releases_player_ui_suspend_lease_without_p
     assert player.playback.interruptions == {}
 
 
+def test_shutdown_waits_for_subtitle_thread_cleanup_after_terminal_event():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    finished = []
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    service._pending_subtitle_thread_run_ids.add(run.run_id)
+    service._service_state = SubtitleServiceState.SHUTTING_DOWN
+    service.shutdown_finished.connect(lambda: finished.append(True))
+
+    service._on_subtitle_generation_canceled(run.run_id)
+
+    assert service._active_run is run
+    assert service.is_shutdown_in_progress() is True
+    assert finished == []
+
+    service._on_background_task_thread_finished(run.run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
+
+    assert service._active_run is None
+    assert service.is_shutdown_in_progress() is False
+    assert finished == [True]
+
+
+def test_shutdown_waits_for_cuda_thread_cleanup_after_terminal_event():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    finished = []
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.CUDA_INSTALL
+    service._cuda_runtime_flow._active = True
+    service._service_state = SubtitleServiceState.SHUTTING_DOWN
+    service.shutdown_finished.connect(lambda: finished.append(True))
+
+    service._on_cuda_runtime_install_canceled(run.run_id)
+
+    assert service._active_run is run
+    assert service.is_shutdown_in_progress() is True
+    assert finished == []
+
+    service._cuda_runtime_flow._active = False
+    service._on_cuda_runtime_flow_thread_finished(run.run_id)
+
+    assert service._active_run is None
+    assert service.is_shutdown_in_progress() is False
+    assert finished == [True]
+
+
 def test_generation_dialog_cancel_releases_takeover_atomically():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
@@ -532,17 +581,54 @@ def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
     ]
 
 
+def test_generation_dialog_uses_default_only_when_player_reports_single_audio_track(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.get_audio_tracks = lambda: [(1, "Audio 1")]
+    service, _store = _make_service(QWidget(), player)
+
+    launches = []
+    monkeypatch.setattr(
+        service,
+        "_launch_subtitle_generation",
+        lambda run, options: launches.append((run, options)),
+    )
+
+    assert service.generate_subtitle() is True
+
+    assert service._audio_stream_probe_state == AudioStreamProbeState.READY
+    assert service._cached_audio_streams == []
+    assert service._audio_stream_probe_workers == {}
+    assert service._ui.audio_tracks_loading_calls == 0
+    assert service._ui.applied_audio_tracks == [
+        {
+            "audio_tracks": [(None, "Current / default")],
+            "selected_track_id": None,
+            "selector_enabled": False,
+            "generate_enabled": True,
+        }
+    ]
+
+    service._ui.dialog_requests[-1]["on_generate"](_options())
+
+    assert len(launches) == 1
+    assert launches[0][1].audio_stream_index is None
+
+
 def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     service, _store = _make_service(QWidget(), player)
 
-    failed_messages = []
+    warning_messages = []
     launch_calls = []
-    message_box = sys.modules["ui.MessageBoxService"]
 
-    monkeypatch.setattr(message_box, "show_audio_stream_inspection_failed", lambda _parent, reason: failed_messages.append(reason))
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationService.show_audio_stream_inspection_warning",
+        lambda _parent, reason: warning_messages.append(reason),
+    )
     monkeypatch.setattr(
         service,
         "_launch_subtitle_generation",
@@ -555,10 +641,9 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
 
     service._ui.dialog_requests[-1]["on_generate"](_options())
 
-    assert failed_messages == ["probe failed"]
-    assert launch_calls == []
-    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
-    assert service._active_run is None
+    assert warning_messages == ["probe failed"]
+    assert len(launch_calls) == 1
+    assert launch_calls[0][1].audio_stream_index is None
 
 
 def test_stale_audio_probe_result_is_ignored_after_dialog_close():
@@ -624,6 +709,7 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
     options = _options()
     loading_messages = []
     failed_messages = []
+    warning_messages = []
 
     monkeypatch.setattr(module, "show_audio_streams_still_loading", lambda _parent: loading_messages.append(True))
     monkeypatch.setattr(module, "show_audio_stream_inspection_failed", lambda _parent, reason: failed_messages.append(reason))
@@ -649,6 +735,18 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
     result = preflight.validate_generation_request(
         "C:/media/movie.mkv",
         options,
+        probe_state=module.AudioStreamProbeState.FAILED,
+        probe_error="cached failure",
+    )
+    assert result.is_valid is True
+    assert failed_messages == []
+    assert warning_messages == []
+
+    selected_track_options = _options()
+    selected_track_options.audio_stream_index = 1
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        selected_track_options,
         probe_state=module.AudioStreamProbeState.FAILED,
         probe_error="cached failure",
     )

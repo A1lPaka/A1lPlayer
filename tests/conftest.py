@@ -421,6 +421,8 @@ def _install_subtitle_service_stubs():
                     show_audio_streams_still_loading(self.parent)
                     return _ValidationResult(False)
                 if probe_state == AudioStreamProbeState.FAILED:
+                    if _options.audio_stream_index is None:
+                        return _ValidationResult(True)
                     show_audio_stream_inspection_failed(
                         self.parent,
                         self.format_audio_stream_probe_error(probe_error or "Audio stream inspection failed."),

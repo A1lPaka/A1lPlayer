@@ -11,7 +11,6 @@ from PySide6.QtWidgets import QWidget
 from ui.MessageBoxService import (
     confirm_overwrite_subtitle,
     show_audio_stream_inspection_failed,
-    show_audio_stream_inspection_warning,
     show_audio_stream_no_longer_available,
     show_audio_streams_still_loading,
     show_choose_output_path_first,
@@ -129,6 +128,13 @@ class SubtitleGenerationPreflight:
 
         if probe_state == AudioStreamProbeState.FAILED:
             reason = (probe_error or "").strip() or "Audio stream inspection failed."
+            if options.audio_stream_index is None:
+                logger.warning(
+                    "Subtitle generation continuing with default audio because audio stream inspection failed | media=%s",
+                    media_path,
+                )
+                return True
+
             logger.warning(
                 "Subtitle generation aborted because cached audio stream inspection failed during validation | media=%s",
                 media_path,
@@ -141,13 +147,13 @@ class SubtitleGenerationPreflight:
 
         audio_streams = list(audio_streams or [])
 
+        if options.audio_stream_index is None:
+            return True
+
         if not audio_streams:
             logger.warning("Subtitle generation aborted because media has no audio streams | media=%s", media_path)
             show_no_audio_streams_found(self._parent)
             return False
-
-        if options.audio_stream_index is None:
-            return True
 
         available_stream_indices = {stream.stream_index for stream in audio_streams}
         if options.audio_stream_index in available_stream_indices:
