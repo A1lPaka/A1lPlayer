@@ -15,7 +15,9 @@ from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationContext,
     SubtitlePipelineTask,
     SubtitleGenerationService,
-    SubtitleGenerationState,
+    SubtitleServiceState,
+    SubtitlePipelinePhase,
+    SubtitlePipelineResult,
 )
 from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState
 from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
@@ -68,7 +70,7 @@ def _seed_active_run(service: SubtitleGenerationService, media_path: str = "C:/m
         SubtitleGenerationContext(media_path=media_path, request_id=request_id),
         _options(),
     )
-    service._active_run.phase = SubtitleGenerationState.RUNNING
+    service._active_run.phase = SubtitlePipelinePhase.RUNNING
     return service._active_run
 
 
@@ -84,7 +86,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
 
     def fake_launch(run, options):
         launches.append((run, options))
-        run.phase = SubtitleGenerationState.RUNNING
+        run.phase = SubtitlePipelinePhase.RUNNING
 
     monkeypatch.setattr(service, "_launch_subtitle_generation", fake_launch)
     monkeypatch.setattr(
@@ -93,7 +95,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     )
 
     assert service.generate_subtitle() is True
-    assert service._state == SubtitleGenerationState.DIALOG_OPEN
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._ui.dialog_requests[-1]["media_path"] == "C:/media/movie.mkv"
 
     probe_request_id = service._current_audio_stream_probe_request_id
@@ -110,7 +112,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     # This test stubs the real launch path, so deferred UI suspend is not expected here.
     assert player.suspend_calls == 0
     assert service._active_run is not None
-    assert service._state == SubtitleGenerationState.DIALOG_OPEN
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
 
     assert service.generate_subtitle() is False
     assert already_running_calls == [True]
@@ -146,8 +148,8 @@ def test_cancel_transitions_to_canceling_and_is_idempotent():
     service._request_active_task_stop()
     service._request_active_task_stop()
 
-    assert service._state == SubtitleGenerationState.IDLE
-    assert run.phase == SubtitleGenerationState.CANCELING
+    assert service._service_state == SubtitleServiceState.IDLE
+    assert run.phase == SubtitlePipelinePhase.CANCELING
     assert worker.cancel_calls == 1
     assert service._ui.cancel_pending_calls == 1
 
@@ -163,8 +165,8 @@ def test_cancel_active_cuda_install_uses_unified_stop_path():
     service._request_active_task_stop()
     service._request_active_task_stop()
 
-    assert service._state == SubtitleGenerationState.IDLE
-    assert run.phase == SubtitleGenerationState.CANCELING
+    assert service._service_state == SubtitleServiceState.IDLE
+    assert run.phase == SubtitlePipelinePhase.CANCELING
     assert service._cuda_runtime_flow.request_stop_calls == [False]
     assert service._ui.cuda_cancel_pending_calls == 1
 
@@ -177,7 +179,7 @@ def test_active_run_phase_is_pipeline_lifecycle_owner(monkeypatch):
 
     run = _seed_active_run(service)
     run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
-    service._state = SubtitleGenerationState.IDLE
+    service._service_state = SubtitleServiceState.IDLE
 
     monkeypatch.setattr(
         "services.subtitles.SubtitleGenerationService.show_subtitle_generation_already_running",
@@ -185,10 +187,12 @@ def test_active_run_phase_is_pipeline_lifecycle_owner(monkeypatch):
     )
 
     assert service.has_active_tasks() is True
+    assert service._service_state == SubtitleServiceState.IDLE
+    assert run.phase == SubtitlePipelinePhase.RUNNING
     assert service.generate_subtitle() is False
     assert already_running_calls == [True]
 
-    run.phase = SubtitleGenerationState.SUCCEEDED
+    run.phase = SubtitlePipelinePhase.SUCCEEDED
 
     assert service.has_active_tasks() is False
 
@@ -196,7 +200,7 @@ def test_active_run_phase_is_pipeline_lifecycle_owner(monkeypatch):
 def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatch):
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
-    service._state = SubtitleGenerationState.DIALOG_OPEN
+    service._service_state = SubtitleServiceState.DIALOG_OPEN
     run = service._begin_pipeline_run(
         SubtitleGenerationContext(media_path="C:/media/movie.mkv", request_id=7),
         _options(),
@@ -220,8 +224,8 @@ def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatc
     ]
     assert start_calls == [(run.run_id, missing_packages)]
     assert run.task == SubtitlePipelineTask.CUDA_INSTALL
-    assert run.phase == SubtitleGenerationState.RUNNING
-    assert service._state == SubtitleGenerationState.IDLE
+    assert run.phase == SubtitlePipelinePhase.RUNNING
+    assert service._service_state == SubtitleServiceState.IDLE
 
 
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
@@ -237,7 +241,8 @@ def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     pending = service.begin_shutdown()
 
     assert pending is True
-    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
+    assert run.phase == SubtitlePipelinePhase.CANCELING
     assert worker.cancel_calls == 1
     assert service._ui.closed_generation_dialogs == 1
     assert service.is_shutdown_in_progress() is True
@@ -254,7 +259,7 @@ def test_begin_shutdown_requests_graceful_stop_for_active_cuda_flow():
     pending = service.begin_shutdown()
 
     assert pending is True
-    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
     assert service._cuda_runtime_flow.request_stop_calls == [False]
     assert service._ui.closed_generation_dialogs == 1
     assert service.is_shutdown_in_progress() is True
@@ -273,7 +278,7 @@ def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     pending = service.begin_force_shutdown()
 
     assert pending is True
-    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
     assert worker.force_stop_calls == 1
     assert service._ui.closed_progress_dialogs == 1
 
@@ -289,7 +294,7 @@ def test_begin_force_shutdown_requests_force_stop_for_active_cuda_flow():
     pending = service.begin_force_shutdown()
 
     assert pending is True
-    assert service._state == SubtitleGenerationState.SHUTTING_DOWN
+    assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
     assert service._cuda_runtime_flow.request_stop_calls == [True]
     assert service._ui.closed_progress_dialogs == 1
 
@@ -323,8 +328,9 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
 
     service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
-    assert service._state == SubtitleGenerationState.SUCCEEDED
     assert service._active_run is None
+    assert service._service_state == SubtitleServiceState.IDLE
+    assert service._last_result == SubtitlePipelineResult.SUCCEEDED
     assert player.resume_calls == 1
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
@@ -341,7 +347,7 @@ def test_generation_dialog_cancel_releases_takeover_atomically():
     assert service.generate_subtitle() is True
     service._ui.dialog_requests[-1]["on_cancel"]()
 
-    assert service._state == SubtitleGenerationState.IDLE
+    assert service._service_state == SubtitleServiceState.IDLE
     assert player.playback.pause_calls == 1
     assert player.playback.play_calls == 1
     assert player.resume_calls == 0
@@ -423,7 +429,7 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
 
     assert loading_messages == [True]
     assert launch_calls == []
-    assert service._state == SubtitleGenerationState.DIALOG_OPEN
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._active_run is None
 
 
@@ -485,7 +491,7 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
 
     assert failed_messages == ["probe failed"]
     assert launch_calls == []
-    assert service._state == SubtitleGenerationState.DIALOG_OPEN
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._active_run is None
 
 
@@ -506,7 +512,7 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_close():
 
     assert service._ui.applied_audio_tracks == []
     assert service._audio_stream_probe_state == AudioStreamProbeState.IDLE
-    assert service._state == SubtitleGenerationState.IDLE
+    assert service._service_state == SubtitleServiceState.IDLE
 
 
 def test_stale_audio_probe_result_is_ignored_after_dialog_reopen():
