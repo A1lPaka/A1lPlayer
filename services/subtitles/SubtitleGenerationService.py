@@ -151,15 +151,15 @@ class SubtitleGenerationService(QObject):
             logger.info("Subtitle generation request ignored because shutdown is in progress")
             return False
 
-        if self._state == SubtitleGenerationState.DIALOG_OPEN:
-            self._ui.focus_active_dialog()
-            logger.info("Subtitle generation request focused the existing generation dialog")
-            return False
-
         if self._active_run is not None and self._active_run.blocks_new_requests():
             self._ui.focus_active_dialog()
             show_subtitle_generation_already_running(self._parent)
             logger.info("Subtitle generation request ignored because another background task is running")
+            return False
+
+        if self._state == SubtitleGenerationState.DIALOG_OPEN:
+            self._ui.focus_active_dialog()
+            logger.info("Subtitle generation request focused the existing generation dialog")
             return False
 
         if not self._transition_state(
@@ -187,11 +187,11 @@ class SubtitleGenerationService(QObject):
 
     def _start_subtitle_generation(self, options: SubtitleGenerationDialogResult):
         self._log_dialog_confirm_timing(options.output_path)
-        if not self._transition_state(
-            SubtitleGenerationState.STARTING,
-            "start subtitle generation",
-            allowed=(SubtitleGenerationState.DIALOG_OPEN,),
-        ):
+        if self._state != SubtitleGenerationState.DIALOG_OPEN:
+            logger.warning(
+                "Rejected subtitle generation start because the generation dialog is not active | state=%s",
+                self._state.name,
+            )
             return
 
         current_media_path = self._player.playback.current_media_path()
@@ -263,7 +263,11 @@ class SubtitleGenerationService(QObject):
 
         self._set_run_phase(run, SubtitleGenerationState.RUNNING, "launch subtitle generation worker")
         if self._state != SubtitleGenerationState.SHUTTING_DOWN:
-            self._state = SubtitleGenerationState.RUNNING
+            self._transition_state(
+                SubtitleGenerationState.IDLE,
+                "generation dialog replaced by subtitle progress",
+                allowed=(SubtitleGenerationState.DIALOG_OPEN, SubtitleGenerationState.IDLE),
+            )
 
         logger.info(
             "Launching subtitle generation | run_id=%s | media=%s | request_id=%s | output=%s | format=%s | requested_device=%s | model=%s",
@@ -370,7 +374,11 @@ class SubtitleGenerationService(QObject):
 
         self._set_run_phase(run, SubtitleGenerationState.RUNNING, "start CUDA runtime install")
         if self._state != SubtitleGenerationState.SHUTTING_DOWN:
-            self._state = SubtitleGenerationState.RUNNING
+            self._transition_state(
+                SubtitleGenerationState.IDLE,
+                "generation dialog replaced by CUDA runtime progress",
+                allowed=(SubtitleGenerationState.DIALOG_OPEN, SubtitleGenerationState.IDLE),
+            )
 
         logger.info(
             "Starting CUDA runtime install flow | run_id=%s | media=%s | request_id=%s | packages=%s",
@@ -451,8 +459,6 @@ class SubtitleGenerationService(QObject):
             logger.debug("Active task stop ignored because no pipeline task is active | force=%s", force)
             return
 
-        if self._state != SubtitleGenerationState.SHUTTING_DOWN:
-            self._state = SubtitleGenerationState.CANCELING
         self._set_run_phase(run, SubtitleGenerationState.CANCELING, f"request stop for {run.task.name.lower()}")
 
         run_id = self._current_run_id()
@@ -899,7 +905,7 @@ class SubtitleGenerationService(QObject):
         self._transition_state(
             SubtitleGenerationState.DIALOG_OPEN,
             reason,
-            allowed=(SubtitleGenerationState.STARTING, SubtitleGenerationState.DIALOG_OPEN),
+            allowed=(SubtitleGenerationState.DIALOG_OPEN,),
         )
 
     def _complete_run(
@@ -932,18 +938,21 @@ class SubtitleGenerationService(QObject):
             result=terminal_state.name.lower(),
         )
 
-        previous_state = self._state
-        is_shutdown = previous_state == SubtitleGenerationState.SHUTTING_DOWN
+        is_shutdown = self._state == SubtitleGenerationState.SHUTTING_DOWN
 
         self._set_run_phase(run, terminal_state, f"complete run {run_id}")
-        if not is_shutdown:
-            self._state = terminal_state
 
         if close_progress:
             self._ui.close_progress_dialog()
 
         self._clear_subtitle_runtime(run)
         self._active_run = None
+        if not is_shutdown:
+            self._transition_state(
+                terminal_state,
+                f"record terminal result for run {run_id}",
+                allowed=(SubtitleGenerationState.IDLE, SubtitleGenerationState.DIALOG_OPEN),
+            )
         self._release_playback_takeover(resume_playback=not is_shutdown)
         self._complete_shutdown_if_possible()
 

@@ -64,7 +64,6 @@ def _make_service(parent: QWidget, player: FakePlayerWindow, store: FakeMediaSto
 
 
 def _seed_active_run(service: SubtitleGenerationService, media_path: str = "C:/media/movie.mkv", request_id: int = 7):
-    service._state = SubtitleGenerationState.RUNNING
     service._active_run = service._begin_pipeline_run(
         SubtitleGenerationContext(media_path=media_path, request_id=request_id),
         _options(),
@@ -85,7 +84,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
 
     def fake_launch(run, options):
         launches.append((run, options))
-        service._state = SubtitleGenerationState.RUNNING
+        run.phase = SubtitleGenerationState.RUNNING
 
     monkeypatch.setattr(service, "_launch_subtitle_generation", fake_launch)
     monkeypatch.setattr(
@@ -111,6 +110,7 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     # This test stubs the real launch path, so deferred UI suspend is not expected here.
     assert player.suspend_calls == 0
     assert service._active_run is not None
+    assert service._state == SubtitleGenerationState.DIALOG_OPEN
 
     assert service.generate_subtitle() is False
     assert already_running_calls == [True]
@@ -146,7 +146,8 @@ def test_cancel_transitions_to_canceling_and_is_idempotent():
     service._request_active_task_stop()
     service._request_active_task_stop()
 
-    assert service._state == SubtitleGenerationState.CANCELING
+    assert service._state == SubtitleGenerationState.IDLE
+    assert run.phase == SubtitleGenerationState.CANCELING
     assert worker.cancel_calls == 1
     assert service._ui.cancel_pending_calls == 1
 
@@ -162,15 +163,40 @@ def test_cancel_active_cuda_install_uses_unified_stop_path():
     service._request_active_task_stop()
     service._request_active_task_stop()
 
-    assert service._state == SubtitleGenerationState.CANCELING
+    assert service._state == SubtitleGenerationState.IDLE
+    assert run.phase == SubtitleGenerationState.CANCELING
     assert service._cuda_runtime_flow.request_stop_calls == [False]
     assert service._ui.cuda_cancel_pending_calls == 1
+
+
+def test_active_run_phase_is_pipeline_lifecycle_owner(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    service, _store = _make_service(QWidget(), player)
+    already_running_calls = []
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    service._state = SubtitleGenerationState.IDLE
+
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationService.show_subtitle_generation_already_running",
+        lambda _parent: already_running_calls.append(True),
+    )
+
+    assert service.has_active_tasks() is True
+    assert service.generate_subtitle() is False
+    assert already_running_calls == [True]
+
+    run.phase = SubtitleGenerationState.SUCCEEDED
+
+    assert service.has_active_tasks() is False
 
 
 def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatch):
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
-    service._state = SubtitleGenerationState.STARTING
+    service._state = SubtitleGenerationState.DIALOG_OPEN
     run = service._begin_pipeline_run(
         SubtitleGenerationContext(media_path="C:/media/movie.mkv", request_id=7),
         _options(),
@@ -194,6 +220,8 @@ def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatc
     ]
     assert start_calls == [(run.run_id, missing_packages)]
     assert run.task == SubtitlePipelineTask.CUDA_INSTALL
+    assert run.phase == SubtitleGenerationState.RUNNING
+    assert service._state == SubtitleGenerationState.IDLE
 
 
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
