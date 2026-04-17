@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QWidget
 
 from services.MediaLibraryService import MediaLibraryService
-from services.subtitles.SubtitleGenerationOutcomeHandler import SubtitleAutoOpenOutcome
 from services.subtitles.SubtitleGenerationService import (
     SubtitleGenerationContext,
     SubtitlePipelineTask,
@@ -334,7 +333,7 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     assert player.resume_calls == 1
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
-    assert service._outcomes.successes
+    assert sys.modules["ui.MessageBoxService"].subtitle_created_calls == ["C:/tmp/generated.srt"]
 
 
 def test_generation_dialog_cancel_releases_takeover_atomically():
@@ -383,7 +382,7 @@ def test_generated_auto_open_uses_unified_context_guard():
 
     assert player.playback.opened_subtitles == []
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
-    assert service._outcomes.successes[-1][1] == SubtitleAutoOpenOutcome.CONTEXT_CHANGED
+    assert sys.modules["ui.MessageBoxService"].subtitle_created_context_changed_calls == ["C:/tmp/generated.srt"]
 
 
 def test_generated_auto_open_uses_unified_failure_path():
@@ -400,7 +399,7 @@ def test_generated_auto_open_uses_unified_failure_path():
 
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
-    assert service._outcomes.successes[-1][1] == SubtitleAutoOpenOutcome.LOAD_FAILED
+    assert sys.modules["ui.MessageBoxService"].subtitle_auto_load_failed_calls == ["C:/tmp/generated.srt"]
 
 
 def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch):

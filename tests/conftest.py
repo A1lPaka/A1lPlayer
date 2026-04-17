@@ -178,6 +178,14 @@ def _install_message_box_stub():
         return
 
     message_box = types.ModuleType("ui.MessageBoxService")
+    message_box.subtitle_created_calls = []
+    message_box.subtitle_created_fallback_calls = []
+    message_box.subtitle_created_context_changed_calls = []
+    message_box.subtitle_auto_load_failed_calls = []
+    message_box.subtitle_generation_failures = []
+    message_box.subtitle_generation_canceled_calls = 0
+    message_box.cuda_runtime_install_failures = []
+    message_box.cuda_runtime_install_canceled_calls = 0
 
     def prompt_cuda_runtime_choice(_parent, _packages):
         return "cancel"
@@ -208,6 +216,30 @@ def _install_message_box_stub():
 
     def show_subtitle_output_path_unavailable(_parent, _output_path, _reason=None):
         return None
+
+    def show_subtitle_created_not_loaded_due_to_context_change(_parent, output_path):
+        message_box.subtitle_created_context_changed_calls.append(output_path)
+
+    def show_subtitle_auto_load_failed(_parent, output_path):
+        message_box.subtitle_auto_load_failed_calls.append(output_path)
+
+    def show_subtitle_created(_parent, output_path):
+        message_box.subtitle_created_calls.append(output_path)
+
+    def show_subtitle_created_with_fallback_name(_parent, requested_output_path, actual_output_path):
+        message_box.subtitle_created_fallback_calls.append((requested_output_path, actual_output_path))
+
+    def show_subtitle_generation_failed(_parent, error_text):
+        message_box.subtitle_generation_failures.append(error_text)
+
+    def show_subtitle_generation_canceled(_parent):
+        message_box.subtitle_generation_canceled_calls += 1
+
+    def show_cuda_runtime_install_failed(_parent, error_text):
+        message_box.cuda_runtime_install_failures.append(error_text)
+
+    def show_cuda_runtime_install_canceled(_parent):
+        message_box.cuda_runtime_install_canceled_calls += 1
 
     def prompt_force_close_background_tasks(_parent, on_wait, on_force_close):
         class _Dialog(QObject):
@@ -243,6 +275,14 @@ def _install_message_box_stub():
     message_box.show_choose_output_path_first = show_choose_output_path_first
     message_box.show_no_audio_streams_found = show_no_audio_streams_found
     message_box.show_subtitle_output_path_unavailable = show_subtitle_output_path_unavailable
+    message_box.show_subtitle_created_not_loaded_due_to_context_change = show_subtitle_created_not_loaded_due_to_context_change
+    message_box.show_subtitle_auto_load_failed = show_subtitle_auto_load_failed
+    message_box.show_subtitle_created = show_subtitle_created
+    message_box.show_subtitle_created_with_fallback_name = show_subtitle_created_with_fallback_name
+    message_box.show_subtitle_generation_failed = show_subtitle_generation_failed
+    message_box.show_subtitle_generation_canceled = show_subtitle_generation_canceled
+    message_box.show_cuda_runtime_install_failed = show_cuda_runtime_install_failed
+    message_box.show_cuda_runtime_install_canceled = show_cuda_runtime_install_canceled
     message_box.prompt_force_close_background_tasks = prompt_force_close_background_tasks
     message_box.show_force_close_still_running = show_force_close_still_running
     message_box.confirm_resume_playback = confirm_resume_playback
@@ -391,56 +431,6 @@ def _install_subtitle_service_stubs():
         preflight_module.SubtitleGenerationPreflight = SubtitleGenerationPreflight
         preflight_module.AudioStreamProbeState = AudioStreamProbeState
         sys.modules["services.subtitles.SubtitleGenerationPreflight"] = preflight_module
-
-    if "services.subtitles.SubtitleGenerationOutcomeHandler" not in sys.modules:
-        outcomes_module = types.ModuleType("services.subtitles.SubtitleGenerationOutcomeHandler")
-
-        class SubtitleAutoOpenOutcome(Enum):
-            LOADED = auto()
-            CONTEXT_CHANGED = auto()
-            LOAD_FAILED = auto()
-
-        class SubtitleGenerationOutcomeHandler:
-            def __init__(self, parent):
-                self.parent = parent
-                self.successes = []
-                self.failures = []
-                self.canceled_calls = 0
-                self.cuda_failures = []
-                self.cuda_canceled_calls = 0
-
-            def show_generation_success(
-                self,
-                output_path,
-                auto_open_outcome,
-                *,
-                used_fallback_output_path=False,
-                requested_output_path=None,
-            ):
-                self.successes.append(
-                    (
-                        output_path,
-                        auto_open_outcome,
-                        bool(used_fallback_output_path),
-                        requested_output_path,
-                    )
-                )
-
-            def show_generation_failed(self, error_text):
-                self.failures.append(error_text)
-
-            def show_generation_canceled(self):
-                self.canceled_calls += 1
-
-            def show_cuda_install_failed(self, error_text):
-                self.cuda_failures.append(error_text)
-
-            def show_cuda_install_canceled(self):
-                self.cuda_canceled_calls += 1
-
-        outcomes_module.SubtitleAutoOpenOutcome = SubtitleAutoOpenOutcome
-        outcomes_module.SubtitleGenerationOutcomeHandler = SubtitleGenerationOutcomeHandler
-        sys.modules["services.subtitles.SubtitleGenerationOutcomeHandler"] = outcomes_module
 
     if "services.subtitles.SubtitleGenerationWorkers" not in sys.modules:
         workers_module = types.ModuleType("services.subtitles.SubtitleGenerationWorkers")

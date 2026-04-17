@@ -10,10 +10,6 @@ from PySide6.QtWidgets import QWidget
 from services.MediaSettingsStore import MediaSettingsStore
 from services.MediaLibraryService import SubtitleAttachResult
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.subtitles.SubtitleGenerationOutcomeHandler import (
-    SubtitleAutoOpenOutcome,
-    SubtitleGenerationOutcomeHandler,
-)
 from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.SubtitleGenerationWorkers import AudioStreamProbeWorker, SubtitleGenerationWorker
@@ -23,8 +19,16 @@ from services.subtitles.SubtitleMaker import (
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import (
     prompt_cuda_runtime_choice,
+    show_cuda_runtime_install_canceled,
+    show_cuda_runtime_install_failed,
     show_audio_stream_inspection_warning,
+    show_subtitle_auto_load_failed,
+    show_subtitle_created,
+    show_subtitle_created_with_fallback_name,
+    show_subtitle_created_not_loaded_due_to_context_change,
     show_subtitle_generation_already_running,
+    show_subtitle_generation_canceled,
+    show_subtitle_generation_failed,
 )
 from ui.PlayerWindow import PlayerWindow
 from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
@@ -61,6 +65,12 @@ class SubtitlePipelineResult(Enum):
     SUCCEEDED = auto()
     FAILED = auto()
     CANCELED = auto()
+
+
+class SubtitleAutoOpenOutcome(Enum):
+    LOADED = auto()
+    CONTEXT_CHANGED = auto()
+    LOAD_FAILED = auto()
 
 
 class SubtitlePipelineTask(Enum):
@@ -123,7 +133,6 @@ class SubtitleGenerationService(QObject):
             theme_color_getter=lambda: self._player.theme_color,
         )
         self._preflight = SubtitleGenerationPreflight(parent)
-        self._outcomes = SubtitleGenerationOutcomeHandler(parent)
         self._service_state = SubtitleServiceState.IDLE
         self._last_result: SubtitlePipelineResult | None = None
         self._active_run: SubtitlePipelineRun | None = None
@@ -405,7 +414,7 @@ class SubtitleGenerationService(QObject):
                 close_progress=True,
             )
             if self._service_state != SubtitleServiceState.SHUTTING_DOWN:
-                self._outcomes.show_cuda_install_failed("GPU runtime installation could not be started.")
+                show_cuda_runtime_install_failed(self._parent, "GPU runtime installation could not be started.")
             return
 
     def _deferred_suspend_and_start_subtitle_worker(self, run_id: int, thread: QThread):
@@ -736,7 +745,7 @@ class SubtitleGenerationService(QObject):
         else:
             self._store.save_last_open_dir(output_path)
 
-        self._outcomes.show_generation_success(
+        self._show_generation_success_outcome(
             output_path,
             auto_open_outcome,
             used_fallback_output_path=used_fallback_output_path,
@@ -767,7 +776,7 @@ class SubtitleGenerationService(QObject):
         if self._service_state == SubtitleServiceState.SHUTTING_DOWN:
             return
 
-        self._outcomes.show_generation_failed(error_text)
+        show_subtitle_generation_failed(self._parent, error_text)
 
     def _on_subtitle_generation_canceled(self, run_id: int):
         run = self._require_active_run(run_id, "subtitle generation canceled")
@@ -784,7 +793,7 @@ class SubtitleGenerationService(QObject):
         if self._service_state == SubtitleServiceState.SHUTTING_DOWN:
             return
 
-        self._outcomes.show_generation_canceled()
+        show_subtitle_generation_canceled(self._parent)
 
     def _on_cuda_runtime_install_finished(self, run_id: int):
         run = self._require_active_run(run_id, "CUDA runtime install finished")
@@ -818,7 +827,10 @@ class SubtitleGenerationService(QObject):
                 SubtitlePipelinePhase.FAILED,
                 close_progress=False,
             )
-            self._outcomes.show_cuda_install_failed("GPU runtime installation finished without subtitle options.")
+            show_cuda_runtime_install_failed(
+                self._parent,
+                "GPU runtime installation finished without subtitle options.",
+            )
             return
 
         self._launch_subtitle_generation(run, run.subtitle_options)
@@ -838,7 +850,7 @@ class SubtitleGenerationService(QObject):
         if self._service_state == SubtitleServiceState.SHUTTING_DOWN:
             return
 
-        self._outcomes.show_cuda_install_failed(error_text)
+        show_cuda_runtime_install_failed(self._parent, error_text)
 
     def _on_cuda_runtime_install_canceled(self, run_id: int):
         run = self._require_active_run(run_id, "CUDA runtime install canceled")
@@ -855,7 +867,33 @@ class SubtitleGenerationService(QObject):
         if self._service_state == SubtitleServiceState.SHUTTING_DOWN:
             return
 
-        self._outcomes.show_cuda_install_canceled()
+        show_cuda_runtime_install_canceled(self._parent)
+
+    def _show_generation_success_outcome(
+        self,
+        output_path: str,
+        auto_open_outcome: SubtitleAutoOpenOutcome,
+        *,
+        used_fallback_output_path: bool,
+        requested_output_path: str | None,
+    ):
+        if auto_open_outcome == SubtitleAutoOpenOutcome.CONTEXT_CHANGED:
+            show_subtitle_created_not_loaded_due_to_context_change(self._parent, output_path)
+            return
+
+        if auto_open_outcome == SubtitleAutoOpenOutcome.LOAD_FAILED:
+            show_subtitle_auto_load_failed(self._parent, output_path)
+            return
+
+        if used_fallback_output_path:
+            show_subtitle_created_with_fallback_name(
+                self._parent,
+                requested_output_path or output_path,
+                output_path,
+            )
+            return
+
+        show_subtitle_created(self._parent, output_path)
 
     def _capture_current_generation_context(self) -> SubtitleGenerationContext | None:
         media_path = self._player.playback.current_media_path()
