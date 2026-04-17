@@ -185,7 +185,6 @@ class PlayerPlaybackController(QObject):
     def play(self):
         self.engine.sync_audio_to_player()
         self.engine.play()
-        self._set_playback_state(self.STATE_OPENING)
 
     def pause(self):
         self.pause_requested.emit()
