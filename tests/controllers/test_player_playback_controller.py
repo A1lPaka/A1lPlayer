@@ -1,4 +1,5 @@
 from controllers.PlayerPlaybackController import PlayerPlaybackController
+from controllers.PlaybackViewStateController import PlaybackViewStateController
 from models.PlaybackPlaylist import PlaylistState
 
 from tests.fakes import SignalRecorder
@@ -70,6 +71,84 @@ def test_stop_resets_playback_to_stopped(workspace_tmp_path):
     assert controller.playback_state() == controller.STATE_STOPPED
     assert controller.has_media_loaded() is False
     assert controller.engine.stop_calls == 1
+
+
+def test_play_after_confirmed_paused_media_does_not_enter_opening_view_semantics(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    view_state_controller = PlaybackViewStateController(controller)
+    media_path = _make_media_files(workspace_tmp_path, ["resume.mp4"])[0]
+    view_states = SignalRecorder()
+    view_state_controller.view_state_changed.connect(view_states)
+
+    controller.open_paths([media_path])
+    controller.engine.playing.emit(controller.current_request_id())
+    controller.pause()
+    controller.engine.paused.emit(controller.current_request_id())
+
+    assert controller.playback_state() == controller.STATE_PAUSED
+    view_states.calls.clear()
+
+    controller.play()
+
+    assert controller.playback_state() == controller.STATE_PAUSED
+    assert controller.engine.play_calls == 2
+    assert view_states.calls == []
+
+    paused_view_state = view_state_controller.current_view_state()
+    assert paused_view_state.phase == controller.STATE_PAUSED
+    assert paused_view_state.media_confirmed_loaded is True
+    assert paused_view_state.placeholder_visible is False
+    assert paused_view_state.progress_seekable is True
+    assert paused_view_state.position_timer_active is True
+    assert paused_view_state.play_pause_shows_playing is False
+
+
+def test_resume_after_interruption_does_not_enter_opening_view_semantics(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    view_state_controller = PlaybackViewStateController(controller)
+    media_path = _make_media_files(workspace_tmp_path, ["interrupted.mp4"])[0]
+    view_states = SignalRecorder()
+    view_state_controller.view_state_changed.connect(view_states)
+
+    controller.open_paths([media_path])
+    controller.engine.playing.emit(controller.current_request_id())
+    assert controller.pause_for_interruption("subtitle_generation") is True
+    controller.pause()
+    controller.engine.paused.emit(controller.current_request_id())
+
+    assert controller.playback_state() == controller.STATE_PAUSED
+    view_states.calls.clear()
+
+    controller.resume_after_interruption("subtitle_generation")
+
+    assert controller.playback_state() == controller.STATE_PAUSED
+    assert controller.engine.play_calls == 2
+    assert view_states.calls == []
+
+    paused_view_state = view_state_controller.current_view_state()
+    assert paused_view_state.phase == controller.STATE_PAUSED
+    assert paused_view_state.media_confirmed_loaded is True
+    assert paused_view_state.placeholder_visible is False
+    assert paused_view_state.progress_seekable is True
+    assert paused_view_state.position_timer_active is True
+    assert paused_view_state.play_pause_shows_playing is False
+
+
+def test_new_media_open_enters_opening_view_semantics_before_first_confirmation(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    view_state_controller = PlaybackViewStateController(controller)
+    media_path = _make_media_files(workspace_tmp_path, ["new.mp4"])[0]
+
+    assert controller.open_paths([media_path]) is True
+
+    opening_view_state = view_state_controller.current_view_state()
+    assert opening_view_state.phase == controller.STATE_OPENING
+    assert opening_view_state.media_assigned is True
+    assert opening_view_state.media_confirmed_loaded is False
+    assert opening_view_state.placeholder_visible is True
+    assert opening_view_state.progress_seekable is False
+    assert opening_view_state.position_timer_active is False
+    assert opening_view_state.play_pause_shows_playing is False
 
 
 def test_nested_playback_interruptions_resume_only_when_last_owner_releases(workspace_tmp_path):
