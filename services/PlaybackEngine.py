@@ -1,7 +1,9 @@
 import logging
 import os
 import shutil
+import threading
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
@@ -15,6 +17,12 @@ AUDIO_DEVICE_DEFAULT_ID = "__default__"
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PlaybackToken:
+    request_id: int
+    media_path: str
 
 
 class PlaybackService(QObject):
@@ -41,7 +49,12 @@ class PlaybackService(QObject):
         self._last_video_geometry: tuple[int, int] | None = None
         self._runtime_subtitle_copy_path: str | None = None
         self._current_request_id = 0
+        self._current_playback_token: _PlaybackToken | None = None
+        self._current_media = None
+        self._current_media_event_manager = None
         self._queued_player_events: deque[tuple[str, int, str]] = deque()
+        self._queued_player_events_lock = threading.Lock()
+        self._player_events_flush_scheduled = False
         self._is_shutdown = False
         self._audio_modes = {
             "stereo": {
@@ -74,18 +87,9 @@ class PlaybackService(QObject):
         logger.info("Creating VLC playback backend")
         self.instance = vlc.Instance()
         self.player = self.instance.media_player_new()
-        self._attach_event_handlers()
 
         if self._bound_win_id is not None:
             self.bind_video_output(self._bound_win_id)
-
-    def _attach_event_handlers(self):
-        event_manager = self.player.event_manager()
-        event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, self._on_vlc_playing_event)
-        event_manager.event_attach(vlc.EventType.MediaPlayerPaused, self._on_vlc_paused_event)
-        event_manager.event_attach(vlc.EventType.MediaPlayerStopped, self._on_vlc_stopped_event)
-        event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_media_ended_event)
-        event_manager.event_attach(vlc.EventType.MediaPlayerEncounteredError, self._on_vlc_error_event)
 
     def _has_backend(self) -> bool:
         return not self._is_shutdown and getattr(self, "player", None) is not None and getattr(self, "instance", None) is not None
@@ -98,7 +102,10 @@ class PlaybackService(QObject):
         logger.info("Shutting down VLC playback backend | media=%s", self._current_media_path or "<none>")
         self._is_shutdown = True
         self._delayed_audio_sync_timer.stop()
-        self._queued_player_events.clear()
+        with self._queued_player_events_lock:
+            self._queued_player_events.clear()
+            self._player_events_flush_scheduled = False
+        self._detach_current_media_event_handlers()
         player = getattr(self, "player", None)
         if player is not None:
             try:
@@ -108,6 +115,7 @@ class PlaybackService(QObject):
         self._cleanup_runtime_subtitle_copy()
         self._release_backend()
         self._current_media_path = None
+        self._current_playback_token = None
         self._bound_win_id = None
         self._last_video_geometry = None
 
@@ -116,7 +124,6 @@ class PlaybackService(QObject):
         instance = getattr(self, "instance", None)
 
         if player is not None:
-            self._detach_event_handlers(player)
             try:
                 player.release()
             except (AttributeError, TypeError, ValueError, vlc.VLCException):
@@ -130,24 +137,22 @@ class PlaybackService(QObject):
                 logger.debug("Failed to release VLC instance during shutdown", exc_info=True)
             self.instance = None
 
-    def _detach_event_handlers(self, player):
-        try:
-            event_manager = player.event_manager()
-        except (AttributeError, TypeError, ValueError, vlc.VLCException):
-            logger.debug("Failed to get VLC event manager during shutdown", exc_info=True)
-            return
+    def _attach_media_event_handlers(self, media, token: _PlaybackToken):
+        event_manager = media.event_manager()
+        event_manager.event_attach(vlc.EventType.MediaStateChanged, self._on_vlc_media_state_changed_event, token)
+        self._current_media = media
+        self._current_media_event_manager = event_manager
 
-        for event_type in (
-            vlc.EventType.MediaPlayerPlaying,
-            vlc.EventType.MediaPlayerPaused,
-            vlc.EventType.MediaPlayerStopped,
-            vlc.EventType.MediaPlayerEndReached,
-            vlc.EventType.MediaPlayerEncounteredError,
-        ):
-            try:
-                event_manager.event_detach(event_type)
-            except (AttributeError, TypeError, ValueError, vlc.VLCException):
-                logger.debug("Failed to detach VLC event handler during shutdown", exc_info=True)
+    def _detach_current_media_event_handlers(self):
+        event_manager = self._current_media_event_manager
+        if event_manager is None:
+            return
+        try:
+            event_manager.event_detach(vlc.EventType.MediaStateChanged)
+        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+            logger.debug("Failed to detach VLC media event handler", exc_info=True)
+        self._current_media_event_manager = None
+        self._current_media = None
 
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
         return self._audio_modes[mode]["channel"]
@@ -183,9 +188,12 @@ class PlaybackService(QObject):
         self._cleanup_runtime_subtitle_copy()
         self._current_request_id += 1
         self._current_media_path = media_path
+        self._current_playback_token = _PlaybackToken(self._current_request_id, media_path)
         self._last_video_geometry = None
         logger.info("Loading media into VLC | request_id=%s | media=%s", self._current_request_id, media_path)
+        self._detach_current_media_event_handlers()
         media = self.instance.media_new(media_path)
+        self._attach_media_event_handlers(media, self._current_playback_token)
         self.player.set_media(media)
         return self._current_request_id
 
@@ -442,30 +450,34 @@ class PlaybackService(QObject):
         self._apply_desired_audio_state()
         self._delayed_audio_sync_timer.start()
 
-    def _on_vlc_playing_event(self, event):
-        self._queue_player_event("playing", self._current_request_id, self._current_media_path or "")
+    def _on_vlc_media_state_changed_event(self, event, token: _PlaybackToken):
+        state = int(event.u.new_state)
+        if state == int(vlc.State.Playing.value):
+            self._queue_player_event("playing", token.request_id, token.media_path)
+            return
+        if state == int(vlc.State.Paused.value):
+            self._queue_player_event("paused", token.request_id, token.media_path)
+            return
+        if state == int(vlc.State.Stopped.value):
+            self._queue_player_event("stopped", token.request_id, token.media_path)
+            return
+        if state == int(vlc.State.Ended.value):
+            self._queue_player_event("ended", token.request_id, token.media_path)
+            return
+        if state != int(vlc.State.Error.value):
+            return
 
-    def _on_vlc_paused_event(self, event):
-        self._queue_player_event("paused", self._current_request_id, self._current_media_path or "")
-
-    def _on_vlc_stopped_event(self, event):
-        self._queue_player_event("stopped", self._current_request_id, self._current_media_path or "")
-
-    def _on_vlc_media_ended_event(self, event):
-        self._queue_player_event("ended", self._current_request_id, self._current_media_path or "")
-
-    def _on_vlc_error_event(self, event):
-        logger.error(
-            "VLC reported playback error | request_id=%s | media=%s",
-            self._current_request_id,
-            self._current_media_path or "<none>",
-        )
-        self._queue_player_event("error", self._current_request_id, self._current_media_path or "")
+        logger.error("VLC reported playback error | request_id=%s | media=%s", token.request_id, token.media_path)
+        self._queue_player_event("error", token.request_id, token.media_path)
 
     @Slot()
     def _flush_player_events_from_qt_thread(self):
-        while self._queued_player_events:
-            event_name, request_id, media_path = self._queued_player_events.popleft()
+        while True:
+            with self._queued_player_events_lock:
+                if not self._queued_player_events:
+                    self._player_events_flush_scheduled = False
+                    return
+                event_name, request_id, media_path = self._queued_player_events.popleft()
             if event_name == "playing":
                 self.playing.emit(request_id)
                 if request_id == self._current_request_id:
@@ -492,7 +504,11 @@ class PlaybackService(QObject):
     def _queue_player_event(self, event_name: str, request_id: int, media_path: str):
         if self._is_shutdown:
             return
-        self._queued_player_events.append((event_name, int(request_id), str(media_path)))
+        with self._queued_player_events_lock:
+            self._queued_player_events.append((event_name, int(request_id), str(media_path)))
+            if self._player_events_flush_scheduled:
+                return
+            self._player_events_flush_scheduled = True
         QMetaObject.invokeMethod(self, "_flush_player_events_from_qt_thread", Qt.QueuedConnection)
 
     def _disable_vout_input(self):
