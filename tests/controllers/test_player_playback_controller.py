@@ -1,3 +1,4 @@
+from controllers.PlayerActionsController import PlayerActionsController
 from controllers.PlayerPlaybackController import PlayerPlaybackController
 from controllers.PlaybackViewStateController import PlaybackViewStateController
 from models.PlaybackPlaylist import PlaylistState
@@ -43,7 +44,7 @@ def test_open_paths_assigns_media_and_session_snapshot_waits_for_confirmation(wo
     }
 
 
-def test_playback_error_resets_confirmed_state_and_emits_error(workspace_tmp_path):
+def test_fatal_playback_error_clears_assigned_media_and_emits_error(workspace_tmp_path):
     controller = PlayerPlaybackController()
     media_path = _make_media_files(workspace_tmp_path, ["broken.mp4"])[0]
     errors = SignalRecorder()
@@ -60,9 +61,12 @@ def test_playback_error_resets_confirmed_state_and_emits_error(workspace_tmp_pat
     assert errors.calls == [(1, media_path, "boom")]
 
 
-def test_stop_resets_playback_to_stopped(workspace_tmp_path):
+def test_stop_keeps_assigned_media_and_allows_play_on_same_media(workspace_tmp_path):
     controller = PlayerPlaybackController()
+    actions = PlayerActionsController(controller, is_pip_active=lambda: False)
     media_path = _make_media_files(workspace_tmp_path, ["clip.mp4"])[0]
+    open_requests = SignalRecorder()
+    actions.open_file_requested.connect(open_requests)
 
     controller.open_paths([media_path])
     controller.engine.playing.emit(controller.current_request_id())
@@ -70,7 +74,28 @@ def test_stop_resets_playback_to_stopped(workspace_tmp_path):
 
     assert controller.playback_state() == controller.STATE_STOPPED
     assert controller.has_media_loaded() is False
+    assert controller.has_assigned_media() is True
+    assert controller.current_media_path() == media_path
     assert controller.engine.stop_calls == 1
+
+    actions.on_play_pause()
+
+    assert open_requests.calls == []
+    assert controller.engine.play_calls == 2
+
+
+def test_engine_stopped_clears_confirmed_playback_but_keeps_assigned_media(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    media_path = _make_media_files(workspace_tmp_path, ["engine-stop.mp4"])[0]
+
+    controller.open_paths([media_path])
+    controller.engine.playing.emit(controller.current_request_id())
+    controller.engine.stopped.emit(controller.current_request_id())
+
+    assert controller.playback_state() == controller.STATE_STOPPED
+    assert controller.has_media_loaded() is False
+    assert controller.has_assigned_media() is True
+    assert controller.current_media_path() == media_path
 
 
 def test_play_after_confirmed_paused_media_does_not_enter_opening_view_semantics(workspace_tmp_path):
@@ -149,6 +174,27 @@ def test_new_media_open_enters_opening_view_semantics_before_first_confirmation(
     assert opening_view_state.progress_seekable is False
     assert opening_view_state.position_timer_active is False
     assert opening_view_state.play_pause_shows_playing is False
+
+
+def test_new_media_load_resets_confirmed_active_state_and_assigns_new_media(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, second_path = _make_media_files(workspace_tmp_path, ["old.mp4", "new.mp4"])
+    active_media_changes = SignalRecorder()
+    controller.active_media_changed.connect(active_media_changes)
+
+    controller.open_paths([first_path, second_path])
+    first_request_id = controller.current_request_id()
+    controller.engine.playing.emit(first_request_id)
+    active_media_changes.calls.clear()
+
+    assert controller.play_next() is True
+
+    assert controller.current_media_path() == second_path
+    assert controller.current_request_id() != first_request_id
+    assert controller.has_assigned_media() is True
+    assert controller.has_media_loaded() is False
+    assert controller.playback_state() == controller.STATE_OPENING
+    assert active_media_changes.calls == [(None,)]
 
 
 def test_nested_playback_interruptions_resume_only_when_last_owner_releases(workspace_tmp_path):

@@ -107,14 +107,7 @@ class PlayerPlaybackController(QObject):
         if self._is_shutdown:
             return
         self._is_shutdown = True
-        self._pending_start_position_ms = 0
-        self._clear_playback_interruptions()
-        self._active_request_id = 0
-        self._media_assigned = False
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
-        self._set_active_media_path(None)
-        self._set_playback_state(self.STATE_STOPPED)
+        self._reset_for_shutdown()
         self.engine.shutdown()
 
     def current_media_path(self) -> str | None:
@@ -191,12 +184,8 @@ class PlayerPlaybackController(QObject):
         self.engine.pause()
 
     def stop(self):
-        self._pending_start_position_ms = 0
-        self._clear_playback_interruptions()
         logger.info("Playback stop requested | media=%s", self.current_media_path())
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
-        self._set_active_media_path(None)
+        self._clear_stopped_playback_state()
         self.engine.stop()
         self._set_playback_state(self.STATE_STOPPED)
 
@@ -465,11 +454,7 @@ class PlayerPlaybackController(QObject):
             logger.warning("Current playlist item is empty; cannot load media")
             return False
 
-        self._clear_playback_interruptions()
-        if self._active_media_path is not None and self._active_media_path != media_path:
-            self._set_active_media_path(None)
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
+        self._reset_for_new_media_load(media_path)
         request_id = self.engine.load_media(media_path)
         self._active_request_id = request_id
         self._media_assigned = True
@@ -502,10 +487,8 @@ class PlayerPlaybackController(QObject):
     def _handle_engine_stopped(self, request_id: int):
         if request_id != self._active_request_id:
             return
+        self._clear_confirmed_playback_state()
         self._clear_playback_interruptions()
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
-        self._set_active_media_path(None)
         self._set_playback_state(self.STATE_STOPPED)
 
     def _handle_engine_error(self, request_id: int, media_path: str, message: str):
@@ -518,13 +501,7 @@ class PlayerPlaybackController(QObject):
             media_path,
             message,
         )
-        self._pending_start_position_ms = 0
-        self._clear_playback_interruptions()
-        self._active_request_id = 0
-        self._media_assigned = False
-        self._media_confirmed_loaded = False
-        self._last_confirmed_media_path = None
-        self._set_active_media_path(None)
+        self._clear_after_fatal_playback_error()
         self._set_playback_state(self.STATE_STOPPED)
         self.playback_error.emit(request_id, media_path, message)
 
@@ -561,6 +538,39 @@ class PlayerPlaybackController(QObject):
             return
         self._active_media_path = media_path
         self.active_media_changed.emit(media_path)
+
+    def _clear_confirmed_playback_state(self):
+        self._media_confirmed_loaded = False
+        self._last_confirmed_media_path = None
+        self._set_active_media_path(None)
+
+    def _clear_stopped_playback_state(self):
+        self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
+        self._clear_confirmed_playback_state()
+
+    def _clear_assigned_media_state(self):
+        self._active_request_id = 0
+        self._media_assigned = False
+        self._clear_confirmed_playback_state()
+
+    def _reset_for_new_media_load(self, media_path: str):
+        self._clear_playback_interruptions()
+        if self._active_media_path is not None and self._active_media_path != media_path:
+            self._set_active_media_path(None)
+        self._media_confirmed_loaded = False
+        self._last_confirmed_media_path = None
+
+    def _clear_after_fatal_playback_error(self):
+        self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
+        self._clear_assigned_media_state()
+
+    def _reset_for_shutdown(self):
+        self._pending_start_position_ms = 0
+        self._clear_playback_interruptions()
+        self._clear_assigned_media_state()
+        self._set_playback_state(self.STATE_STOPPED)
 
     def _clear_playback_interruptions(self):
         self._playback_interruptions.clear()
