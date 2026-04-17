@@ -295,9 +295,6 @@ class PlayerWindow(QWidget):
         self.video_frame.setUpdatesEnabled(False)
         self.controls.setUpdatesEnabled(False)
 
-    def resume_after_subtitle_generation(self):
-        self._resume_subtitle_generation_ui_suspend()
-
     def _resume_subtitle_generation_ui_suspend(self):
         if not self._subtitle_generation_ui_suspended:
             return

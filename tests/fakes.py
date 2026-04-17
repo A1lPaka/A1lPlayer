@@ -65,7 +65,7 @@ class FakePlayerUiSuspendLease:
         if self._released:
             return
         self._released = True
-        self._player.resume_after_subtitle_generation()
+        self._player._resume_subtitle_generation_ui_suspend()
 
     def resume(self):
         self.release()
@@ -197,7 +197,7 @@ class FakePlayerWindow(QObject):
         self.suspend_leases.append(lease)
         return lease
 
-    def resume_after_subtitle_generation(self):
+    def _resume_subtitle_generation_ui_suspend(self):
         self.resume_calls += 1
 
 
