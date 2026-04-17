@@ -13,6 +13,21 @@ from utils import Metrics
 from models.ThemeColor import ThemeState
 
 
+class SubtitleGenerationUiSuspendLease:
+    def __init__(self, player_window: "PlayerWindow", *, acquired: bool):
+        self._player_window = player_window
+        self._acquired = acquired
+
+    def release(self):
+        if not self._acquired:
+            return
+        self._acquired = False
+        self._player_window._resume_subtitle_generation_ui_suspend()
+
+    def resume(self):
+        self.release()
+
+
 class PlayerWindow(QWidget):
     open_file_requested = Signal()
     media_finished = Signal(str)
@@ -267,9 +282,13 @@ class PlayerWindow(QWidget):
             return
         self.playback.pause()
 
-    def suspend_for_subtitle_generation(self):
+    def suspend_for_subtitle_generation(self) -> SubtitleGenerationUiSuspendLease:
         if self._subtitle_generation_ui_suspended:
-            return
+            return SubtitleGenerationUiSuspendLease(self, acquired=False)
+        self._apply_subtitle_generation_ui_suspend()
+        return SubtitleGenerationUiSuspendLease(self, acquired=True)
+
+    def _apply_subtitle_generation_ui_suspend(self):
         self._subtitle_generation_ui_suspended = True
         self._subtitle_generation_timer_was_active = self.position_timer.isActive()
         self.position_timer.stop()
@@ -277,6 +296,9 @@ class PlayerWindow(QWidget):
         self.controls.setUpdatesEnabled(False)
 
     def resume_after_subtitle_generation(self):
+        self._resume_subtitle_generation_ui_suspend()
+
+    def _resume_subtitle_generation_ui_suspend(self):
         if not self._subtitle_generation_ui_suspended:
             return
         self._subtitle_generation_ui_suspended = False

@@ -336,6 +336,73 @@ def test_terminal_completion_clears_active_run_and_resumes_player_ui():
     assert sys.modules["ui.MessageBoxService"].subtitle_created_calls == ["C:/tmp/generated.srt"]
 
 
+def test_service_stores_player_ui_suspend_lease_without_mirror_state_attr():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    service._suspend_player_ui_for_generation()
+    service._suspend_player_ui_for_generation()
+
+    removed_mirror_attr = "_player_ui_" + "suspended_for_generation"
+    assert not hasattr(service, removed_mirror_attr)
+    assert service._player_ui_suspend_lease is player.suspend_leases[0]
+    assert player.suspend_calls == 1
+
+
+def test_repeated_playback_takeover_release_is_idempotent_for_player_ui():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    service._suspend_player_ui_for_generation()
+
+    service._release_playback_takeover(resume_playback=False)
+    service._release_playback_takeover(resume_playback=False)
+
+    assert service._player_ui_suspend_lease is None
+    assert player.suspend_leases[0].released is True
+    assert player.resume_calls == 1
+
+
+def test_shutdown_releases_player_ui_suspend_lease_without_resuming_playback():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback._is_playing = True
+    service, _store = _make_service(QWidget(), player)
+
+    assert service.generate_subtitle() is True
+    service._suspend_player_ui_for_generation()
+    pending = service.begin_shutdown()
+
+    assert pending is False
+    assert service._player_ui_suspend_lease is None
+    assert player.resume_calls == 1
+    assert player.playback.pause_calls == 1
+    assert player.playback.play_calls == 0
+
+
+def test_shutdown_terminal_completion_releases_player_ui_suspend_lease_without_playback_resume():
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    player.playback._is_playing = True
+    service, _store = _make_service(QWidget(), player)
+
+    run = _seed_active_run(service)
+    service._playback_takeover.acquire()
+    service._suspend_player_ui_for_generation()
+    service._service_state = SubtitleServiceState.SHUTTING_DOWN
+
+    service._on_subtitle_generation_canceled(run.run_id)
+
+    assert service._active_run is None
+    assert service._player_ui_suspend_lease is None
+    assert player.resume_calls == 1
+    assert player.playback.pause_calls == 1
+    assert player.playback.play_calls == 0
+    assert player.playback.interruptions == {}
+
+
 def test_generation_dialog_cancel_releases_takeover_atomically():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"

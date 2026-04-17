@@ -142,7 +142,7 @@ class SubtitleGenerationService(QObject):
         self._playback_takeover = self._player.playback.create_interruption_lease(
             self._PLAYBACK_INTERRUPTION_OWNER,
         )
-        self._player_ui_suspended_for_generation = False
+        self._player_ui_suspend_lease = None
         self._audio_stream_probe_media_path: str | None = None
         self._audio_stream_probe_state = AudioStreamProbeState.IDLE
         self._cached_audio_streams = None
@@ -1001,16 +1001,16 @@ class SubtitleGenerationService(QObject):
         self._complete_shutdown_if_possible()
 
     def _suspend_player_ui_for_generation(self):
-        if self._player_ui_suspended_for_generation:
+        if self._player_ui_suspend_lease is not None:
             return
 
-        self._player.suspend_for_subtitle_generation()
-        self._player_ui_suspended_for_generation = True
+        self._player_ui_suspend_lease = self._player.suspend_for_subtitle_generation()
 
     def _release_playback_takeover(self, *, resume_playback: bool):
-        if self._player_ui_suspended_for_generation:
-            self._player.resume_after_subtitle_generation()
-            self._player_ui_suspended_for_generation = False
+        player_ui_suspend_lease = self._player_ui_suspend_lease
+        self._player_ui_suspend_lease = None
+        if player_ui_suspend_lease is not None:
+            player_ui_suspend_lease.release()
 
         self._playback_takeover.release(resume_playback=resume_playback)
 

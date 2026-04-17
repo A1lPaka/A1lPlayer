@@ -52,6 +52,25 @@ class SignalRecorder:
         self.calls.append(args)
 
 
+class FakePlayerUiSuspendLease:
+    def __init__(self, player):
+        self._player = player
+        self._released = False
+
+    @property
+    def released(self) -> bool:
+        return self._released
+
+    def release(self):
+        if self._released:
+            return
+        self._released = True
+        self._player.resume_after_subtitle_generation()
+
+    def resume(self):
+        self.release()
+
+
 class FakePlaybackForSubtitle(QObject):
     media_confirmed = Signal(int, str)
     playback_error = Signal(int, str, str)
@@ -166,6 +185,7 @@ class FakePlayerWindow(QObject):
         self.pause_calls = 0
         self.suspend_calls = 0
         self.resume_calls = 0
+        self.suspend_leases = []
 
     def pause(self):
         self.pause_calls += 1
@@ -173,6 +193,9 @@ class FakePlayerWindow(QObject):
 
     def suspend_for_subtitle_generation(self):
         self.suspend_calls += 1
+        lease = FakePlayerUiSuspendLease(self)
+        self.suspend_leases.append(lease)
+        return lease
 
     def resume_after_subtitle_generation(self):
         self.resume_calls += 1
