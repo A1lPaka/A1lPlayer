@@ -7,7 +7,12 @@ from controllers.MenuBar import MenuBarController
 from models.ThemeColor import ThemeState
 
 
-class _PlaybackStub:
+class _PlaybackStub(QObject):
+    active_media_changed = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+
     def has_media_loaded(self) -> bool:
         return False
 
@@ -16,8 +21,6 @@ class _PlaybackStub:
 
 
 class _PlayerWindowStub(QObject):
-    active_media_changed = Signal(object)
-
     def __init__(self):
         super().__init__()
         self.playback = _PlaybackStub()
