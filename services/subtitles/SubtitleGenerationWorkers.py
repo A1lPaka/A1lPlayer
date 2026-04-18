@@ -18,8 +18,8 @@ from services.runtime.RuntimeHelperProtocol import (
     SubtitleGenerationRequest,
 )
 from services.runtime.JsonSubprocessWorker import JsonSubprocessWorkerBase
+from services.subtitles.AudioStreamProbe import probe_audio_streams
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
-from services.subtitles.SubtitleMaker import probe_audio_streams
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
     build_exception_diagnostics,

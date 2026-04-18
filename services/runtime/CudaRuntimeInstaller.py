@@ -18,7 +18,7 @@ from services.runtime.RuntimeInstallerProtocol import (
     build_status_event,
 )
 from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
-from services.subtitles.SubtitleMaker import get_missing_windows_cuda_runtime_packages
+from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 
 
 logger = logging.getLogger(__name__)

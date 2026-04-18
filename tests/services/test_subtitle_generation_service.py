@@ -1113,6 +1113,20 @@ def test_real_probe_audio_streams_reports_malformed_streams_payload(monkeypatch)
         module.probe_audio_streams("C:/media/movie.mkv")
 
 
+def test_subtitle_maker_keeps_legacy_public_exports():
+    module = _load_real_module(
+        "real_subtitle_maker_exports_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    assert module.SubtitleSegment.__name__ == "SubtitleSegment"
+    assert module.AudioStreamInfo.__name__ == "AudioStreamInfo"
+    assert module.SubtitleGenerationCanceledError.__name__ == "SubtitleGenerationCanceledError"
+    assert module.SubtitleGenerationEmptyResultError.__name__ == "SubtitleGenerationEmptyResultError"
+    assert callable(module.probe_audio_streams)
+    assert callable(module.get_missing_windows_cuda_runtime_packages)
+
+
 def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_tracks():
     dialog_module = _load_real_module(
         "real_subtitle_generation_dialog_test",

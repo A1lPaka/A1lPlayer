@@ -10,15 +10,13 @@ from PySide6.QtWidgets import QWidget
 from models import SubtitleGenerationDialogResult
 from services.MediaSettingsStore import MediaSettingsStore
 from services.MediaLibraryService import SubtitleAttachResult
+from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
 from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
 from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
-from services.subtitles.SubtitleMaker import (
-    get_missing_windows_cuda_runtime_packages,
-)
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import (
     prompt_cuda_runtime_choice,
