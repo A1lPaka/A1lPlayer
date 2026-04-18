@@ -389,9 +389,31 @@ def _install_subtitle_service_stubs():
             READY = auto()
             FAILED = auto()
 
-        class _ValidationResult:
-            def __init__(self, is_valid=True):
+        class SubtitleGenerationValidationFailure(Enum):
+            EMPTY_OUTPUT_PATH = auto()
+            OUTPUT_PATH_UNAVAILABLE = auto()
+            OVERWRITE_CONFIRMATION_REQUIRED = auto()
+            AUDIO_STREAMS_STILL_LOADING = auto()
+            AUDIO_STREAM_INSPECTION_FAILED = auto()
+            NO_AUDIO_STREAMS_FOUND = auto()
+            AUDIO_STREAM_NO_LONGER_AVAILABLE = auto()
+
+        class SubtitleGenerationValidationResult:
+            def __init__(
+                self,
+                is_valid=True,
+                reason=None,
+                output_path=None,
+                preflight_error=None,
+                probe_error=None,
+                formatted_reason=None,
+            ):
                 self.is_valid = is_valid
+                self.reason = reason
+                self.output_path = output_path
+                self.preflight_error = preflight_error
+                self.probe_error = probe_error
+                self.formatted_reason = formatted_reason
 
         class SubtitleGenerationPreflight:
             def __init__(self, parent):
@@ -405,30 +427,33 @@ def _install_subtitle_service_stubs():
                 return str(reason)
 
             def validate_generation_request(self, media_path, _options, *, probe_state, audio_streams=None, probe_error=None):
-                from ui.MessageBoxService import (
-                    show_audio_stream_inspection_failed,
-                    show_audio_streams_still_loading,
-                )
-
                 override = self._validation_results.get(media_path)
                 if override is not None:
-                    return _ValidationResult(override)
+                    return SubtitleGenerationValidationResult(override)
 
                 if probe_state in (AudioStreamProbeState.IDLE, AudioStreamProbeState.LOADING):
-                    show_audio_streams_still_loading(self.parent)
-                    return _ValidationResult(False)
+                    return SubtitleGenerationValidationResult(
+                        False,
+                        reason=SubtitleGenerationValidationFailure.AUDIO_STREAMS_STILL_LOADING,
+                    )
                 if probe_state == AudioStreamProbeState.FAILED:
                     if _options.audio_stream_index is None:
-                        return _ValidationResult(True)
-                    show_audio_stream_inspection_failed(
-                        self.parent,
-                        self.format_audio_stream_probe_error(probe_error or "Audio stream inspection failed."),
+                        return SubtitleGenerationValidationResult(True)
+                    formatted_reason = self.format_audio_stream_probe_error(
+                        probe_error or "Audio stream inspection failed."
                     )
-                    return _ValidationResult(False)
-                return _ValidationResult(True)
+                    return SubtitleGenerationValidationResult(
+                        False,
+                        reason=SubtitleGenerationValidationFailure.AUDIO_STREAM_INSPECTION_FAILED,
+                        probe_error=probe_error,
+                        formatted_reason=formatted_reason,
+                    )
+                return SubtitleGenerationValidationResult(True)
 
         preflight_module.SubtitleGenerationPreflight = SubtitleGenerationPreflight
         preflight_module.AudioStreamProbeState = AudioStreamProbeState
+        preflight_module.SubtitleGenerationValidationFailure = SubtitleGenerationValidationFailure
+        preflight_module.SubtitleGenerationValidationResult = SubtitleGenerationValidationResult
         sys.modules["services.subtitles.SubtitleGenerationPreflight"] = preflight_module
 
     if "services.subtitles.SubtitleGenerationWorkers" not in sys.modules:

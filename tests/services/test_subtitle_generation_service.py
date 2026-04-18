@@ -19,7 +19,11 @@ from services.subtitles.SubtitleGenerationService import (
     SubtitlePipelinePhase,
     SubtitlePipelineResult,
 )
-from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState
+from services.subtitles.SubtitleGenerationPreflight import (
+    AudioStreamProbeState,
+    SubtitleGenerationValidationFailure,
+    SubtitleGenerationValidationResult,
+)
 from models import SubtitleGenerationDialogResult
 
 from tests.fakes import FakePlayerWindow, FakeSubtitleWorker, FakeMediaStore
@@ -98,8 +102,8 @@ def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
     assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._ui.dialog_requests[-1]["media_path"] == "C:/media/movie.mkv"
 
-    probe_request_id = service._current_audio_stream_probe_request_id
-    service._on_audio_stream_probe_finished(
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(
         probe_request_id,
         "C:/media/movie.mkv",
         [_AudioStream(1, "Audio 1")],
@@ -624,9 +628,10 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
 
     loading_messages = []
     launch_calls = []
-    message_box = sys.modules["ui.MessageBoxService"]
-
-    monkeypatch.setattr(message_box, "show_audio_streams_still_loading", lambda _parent: loading_messages.append(True))
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationValidationPresenter.show_audio_streams_still_loading",
+        lambda _parent: loading_messages.append(True),
+    )
     monkeypatch.setattr(
         service,
         "_launch_subtitle_generation",
@@ -634,9 +639,9 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
     )
 
     assert service.generate_subtitle() is True
-    assert service._audio_stream_probe_state == AudioStreamProbeState.LOADING
+    assert service._audio_probe_flow.probe_state == AudioStreamProbeState.LOADING
     assert service._ui.audio_tracks_loading_calls == 1
-    assert len(service._audio_stream_probe_workers) == 1
+    assert len(service._audio_probe_flow.workers) == 1
 
     service._ui.dialog_requests[-1]["on_generate"](_options())
 
@@ -644,6 +649,26 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
     assert launch_calls == []
     assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._active_run is None
+
+
+def test_generation_validation_overwrite_confirmation_is_handled_by_service(monkeypatch):
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    confirmation_calls = []
+
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationValidationPresenter.confirm_overwrite_subtitle",
+        lambda _parent, output_path: confirmation_calls.append(output_path) or False,
+    )
+
+    result = SubtitleGenerationValidationResult(
+        is_valid=False,
+        reason=SubtitleGenerationValidationFailure.OVERWRITE_CONFIRMATION_REQUIRED,
+        output_path="C:/tmp/existing.srt",
+    )
+
+    assert service._validation_presenter.confirm_or_show_failure(result) is False
+    assert confirmation_calls == ["C:/tmp/existing.srt"]
 
 
 def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
@@ -655,8 +680,8 @@ def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
     launches = []
     service.generate_subtitle()
 
-    probe_request_id = service._current_audio_stream_probe_request_id
-    service._on_audio_stream_probe_finished(
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(
         probe_request_id,
         player.playback._media_path,
         [_AudioStream(1, "Audio 1"), _AudioStream(2, "Audio 2")],
@@ -695,9 +720,9 @@ def test_generation_dialog_uses_default_only_when_player_reports_single_audio_tr
 
     assert service.generate_subtitle() is True
 
-    assert service._audio_stream_probe_state == AudioStreamProbeState.READY
-    assert service._cached_audio_streams == []
-    assert service._audio_stream_probe_workers == {}
+    assert service._audio_probe_flow.probe_state == AudioStreamProbeState.READY
+    assert service._audio_probe_flow.cached_audio_streams == []
+    assert service._audio_probe_flow.workers == {}
     assert service._ui.audio_tracks_loading_calls == 0
     assert service._ui.applied_audio_tracks == [
         {
@@ -724,7 +749,7 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
     launch_calls = []
 
     monkeypatch.setattr(
-        "services.subtitles.SubtitleGenerationService.show_audio_stream_inspection_warning",
+        "services.subtitles.SubtitleGenerationAudioProbeFlow.show_audio_stream_inspection_warning",
         lambda _parent, reason: warning_messages.append(reason),
     )
     monkeypatch.setattr(
@@ -734,8 +759,8 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
     )
 
     service.generate_subtitle()
-    probe_request_id = service._current_audio_stream_probe_request_id
-    service._on_audio_stream_probe_failed(probe_request_id, player.playback._media_path, "probe failed")
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_failed(probe_request_id, player.playback._media_path, "probe failed")
 
     service._ui.dialog_requests[-1]["on_generate"](_options())
 
@@ -750,17 +775,17 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_close():
     service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
-    probe_request_id = service._current_audio_stream_probe_request_id
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
     service._ui.dialog_requests[-1]["on_cancel"]()
 
-    service._on_audio_stream_probe_finished(
+    service._audio_probe_flow._on_probe_finished(
         probe_request_id,
         player.playback._media_path,
         [_AudioStream(3, "Late track")],
     )
 
     assert service._ui.applied_audio_tracks == []
-    assert service._audio_stream_probe_state == AudioStreamProbeState.IDLE
+    assert service._audio_probe_flow.probe_state == AudioStreamProbeState.IDLE
     assert service._service_state == SubtitleServiceState.IDLE
 
 
@@ -770,18 +795,18 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_reopen():
     service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
-    first_probe_request_id = service._current_audio_stream_probe_request_id
+    first_probe_request_id = service._audio_probe_flow.current_probe_request_id
     service._ui.dialog_requests[-1]["on_cancel"]()
 
     service.generate_subtitle()
-    second_probe_request_id = service._current_audio_stream_probe_request_id
+    second_probe_request_id = service._audio_probe_flow.current_probe_request_id
 
-    service._on_audio_stream_probe_finished(
+    service._audio_probe_flow._on_probe_finished(
         first_probe_request_id,
         player.playback._media_path,
         [_AudioStream(1, "Old track")],
     )
-    service._on_audio_stream_probe_finished(
+    service._audio_probe_flow._on_probe_finished(
         second_probe_request_id,
         player.playback._media_path,
         [_AudioStream(2, "Fresh track")],
@@ -805,14 +830,12 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
 
     preflight = module.SubtitleGenerationPreflight(QWidget())
     options = _options()
-    loading_messages = []
-    failed_messages = []
-    warning_messages = []
 
-    monkeypatch.setattr(module, "show_audio_streams_still_loading", lambda _parent: loading_messages.append(True))
-    monkeypatch.setattr(module, "show_audio_stream_inspection_failed", lambda _parent, reason: failed_messages.append(reason))
-    monkeypatch.setattr(module, "show_no_audio_streams_found", lambda _parent: None)
-    monkeypatch.setattr(preflight, "_validate_output_path", lambda _options: True)
+    monkeypatch.setattr(
+        preflight,
+        "_validate_output_path",
+        lambda _options: module.SubtitleGenerationValidationResult(is_valid=True),
+    )
 
     result = preflight.validate_generation_request(
         "C:/media/movie.mkv",
@@ -820,7 +843,7 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
         probe_state=module.AudioStreamProbeState.IDLE,
     )
     assert result.is_valid is False
-    assert loading_messages == [True]
+    assert result.reason == module.SubtitleGenerationValidationFailure.AUDIO_STREAMS_STILL_LOADING
 
     result = preflight.validate_generation_request(
         "C:/media/movie.mkv",
@@ -828,7 +851,7 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
         probe_state=module.AudioStreamProbeState.LOADING,
     )
     assert result.is_valid is False
-    assert loading_messages == [True, True]
+    assert result.reason == module.SubtitleGenerationValidationFailure.AUDIO_STREAMS_STILL_LOADING
 
     result = preflight.validate_generation_request(
         "C:/media/movie.mkv",
@@ -837,8 +860,6 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
         probe_error="cached failure",
     )
     assert result.is_valid is True
-    assert failed_messages == []
-    assert warning_messages == []
 
     selected_track_options = _options()
     selected_track_options.audio_stream_index = 1
@@ -849,7 +870,80 @@ def test_real_preflight_validation_never_falls_back_to_sync_probe(monkeypatch):
         probe_error="cached failure",
     )
     assert result.is_valid is False
-    assert failed_messages == ["cached failure"]
+    assert result.reason == module.SubtitleGenerationValidationFailure.AUDIO_STREAM_INSPECTION_FAILED
+    assert result.formatted_reason == "cached failure"
+
+
+def test_real_preflight_returns_output_path_failure_reasons(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_generation_preflight_output_test",
+        "services/subtitles/SubtitleGenerationPreflight.py",
+    )
+    preflight = module.SubtitleGenerationPreflight(QWidget())
+
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        _options(output_path=" "),
+        probe_state=module.AudioStreamProbeState.READY,
+    )
+    assert result.is_valid is False
+    assert result.reason == module.SubtitleGenerationValidationFailure.EMPTY_OUTPUT_PATH
+
+    monkeypatch.setattr(preflight, "_preflight_subtitle_output_path", lambda _path: "not writable")
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        _options(output_path=str(workspace_tmp_path / "blocked.srt")),
+        probe_state=module.AudioStreamProbeState.READY,
+    )
+    assert result.is_valid is False
+    assert result.reason == module.SubtitleGenerationValidationFailure.OUTPUT_PATH_UNAVAILABLE
+    assert result.preflight_error == "not writable"
+
+    monkeypatch.setattr(preflight, "_preflight_subtitle_output_path", lambda _path: None)
+    existing_output = workspace_tmp_path / "existing.srt"
+    existing_output.write_text("old")
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        _options(output_path=str(existing_output)),
+        probe_state=module.AudioStreamProbeState.READY,
+    )
+    assert result.is_valid is False
+    assert result.reason == module.SubtitleGenerationValidationFailure.OVERWRITE_CONFIRMATION_REQUIRED
+    assert result.output_path == str(existing_output)
+
+
+def test_real_preflight_returns_audio_selection_failure_reasons(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_preflight_audio_selection_test",
+        "services/subtitles/SubtitleGenerationPreflight.py",
+    )
+    preflight = module.SubtitleGenerationPreflight(QWidget())
+    selected_track_options = _options()
+    selected_track_options.audio_stream_index = 2
+
+    monkeypatch.setattr(
+        preflight,
+        "_validate_output_path",
+        lambda _options: module.SubtitleGenerationValidationResult(is_valid=True),
+    )
+
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        selected_track_options,
+        probe_state=module.AudioStreamProbeState.READY,
+        audio_streams=[],
+    )
+    assert result.is_valid is False
+    assert result.reason == module.SubtitleGenerationValidationFailure.NO_AUDIO_STREAMS_FOUND
+
+    result = preflight.validate_generation_request(
+        "C:/media/movie.mkv",
+        selected_track_options,
+        probe_state=module.AudioStreamProbeState.READY,
+        audio_streams=[_AudioStream(1, "Audio 1")],
+    )
+    assert result.is_valid is False
+    assert result.reason == module.SubtitleGenerationValidationFailure.AUDIO_STREAM_NO_LONGER_AVAILABLE
 
 
 def test_real_audio_stream_probe_worker_emits_finished_with_list_result(monkeypatch):
@@ -1076,7 +1170,7 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
         "real_subtitle_generation_workers_reopen_test",
         "services/subtitles/SubtitleGenerationWorkers.py",
     )
-    service_module = sys.modules["services.subtitles.SubtitleGenerationService"]
+    audio_flow_module = sys.modules["services.subtitles.SubtitleGenerationAudioProbeFlow"]
 
     scheduled_targets = []
 
@@ -1097,7 +1191,7 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
         "probe_audio_streams",
         lambda media_path: [_AudioStream(1, f"{media_path}-track-{len(scheduled_targets)}")],
     )
-    monkeypatch.setattr(service_module, "AudioStreamProbeWorker", workers_module.AudioStreamProbeWorker)
+    monkeypatch.setattr(audio_flow_module, "AudioStreamProbeWorker", workers_module.AudioStreamProbeWorker)
 
     app = QApplication.instance() or QApplication([])
     player = FakePlayerWindow()
@@ -1106,19 +1200,19 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
     service, _store = _make_service(QWidget(), player)
 
     assert service.generate_subtitle() is True
-    first_probe_request_id = service._current_audio_stream_probe_request_id
+    first_probe_request_id = service._audio_probe_flow.current_probe_request_id
     assert len(scheduled_targets) == 1
 
     service._ui.dialog_requests[-1]["on_cancel"]()
     assert service.generate_subtitle() is True
-    second_probe_request_id = service._current_audio_stream_probe_request_id
+    second_probe_request_id = service._audio_probe_flow.current_probe_request_id
     assert second_probe_request_id != first_probe_request_id
     assert len(scheduled_targets) == 2
 
     scheduled_targets[0]()
     app.processEvents()
     assert service._ui.applied_audio_tracks == []
-    assert service._current_audio_stream_probe_request_id == second_probe_request_id
+    assert service._audio_probe_flow.current_probe_request_id == second_probe_request_id
 
     scheduled_targets[1]()
     app.processEvents()

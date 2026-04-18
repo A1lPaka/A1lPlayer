@@ -87,8 +87,19 @@ class _MediaSettingsStoreStub:
 
 
 class _MediaLibraryServiceStub:
-    def __init__(self, _main_window, _player_window, _media_store):
+    def __init__(
+        self,
+        _main_window,
+        _player_window,
+        _media_store,
+        confirm_resume_playback=None,
+        show_media_access_failed=None,
+        show_open_subtitle_failed=None,
+    ):
         self.shutdown_calls = 0
+        self.confirm_resume_playback = confirm_resume_playback
+        self.show_media_access_failed = show_media_access_failed
+        self.show_open_subtitle_failed = show_open_subtitle_failed
 
     def open_file(self):
         return None

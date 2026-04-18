@@ -15,7 +15,12 @@ from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
 from controllers.ViewModeController import ViewModeController
 from ui.ColorThemeDialog import ColorThemeDialog
-from ui.MessageBoxService import show_playback_error
+from ui.MessageBoxService import (
+    confirm_resume_playback,
+    show_media_access_failed,
+    show_open_subtitle_failed,
+    show_playback_error,
+)
 from utils import res_path, get_metrics, build_window_title
 from utils.LoggingSetup import configure_logging
 from models.ThemeColor import ThemeState
@@ -61,7 +66,14 @@ class MainWindow(QMainWindow):
         self.player_window = PlayerWindow(self.metrics, theme_color=self.theme_state)
         self.setCentralWidget(self.player_window)
 
-        self.media_library = MediaLibraryService(self, self.player_window, self.media_store)
+        self.media_library = MediaLibraryService(
+            self,
+            self.player_window,
+            self.media_store,
+            confirm_resume_playback=confirm_resume_playback,
+            show_media_access_failed=show_media_access_failed,
+            show_open_subtitle_failed=show_open_subtitle_failed,
+        )
         self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store, self.media_library)
         self.view_mode_controller = ViewModeController(
             self,

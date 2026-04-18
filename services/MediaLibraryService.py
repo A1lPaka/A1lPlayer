@@ -1,5 +1,6 @@
 import logging
 from enum import Enum, auto
+from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -7,11 +8,6 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from services.MediaDialogs import MediaDialogs
 from services.MediaPathService import MediaPathService
 from services.MediaSettingsStore import MediaSettingsStore
-from ui.MessageBoxService import (
-    confirm_resume_playback,
-    show_media_access_failed,
-    show_open_subtitle_failed,
-)
 from ui.PlayerWindow import PlayerWindow
 
 
@@ -24,6 +20,23 @@ class SubtitleAttachResult(Enum):
     LOAD_FAILED = auto()
 
 
+ConfirmResumePlayback = Callable[[object, str, int], bool]
+ShowMediaAccessFailed = Callable[[object, str | None], None]
+ShowOpenSubtitleFailed = Callable[[object], None]
+
+
+def _decline_resume_playback(_parent, _path: str, _position_ms: int) -> bool:
+    return False
+
+
+def _ignore_media_access_failed(_parent, _path: str | None) -> None:
+    return None
+
+
+def _ignore_open_subtitle_failed(_parent) -> None:
+    return None
+
+
 class MediaLibraryService(QObject):
     _SESSION_AUTOSAVE_INTERVAL_MS = 60_000
 
@@ -32,12 +45,18 @@ class MediaLibraryService(QObject):
         parent,
         player_window: PlayerWindow,
         store: MediaSettingsStore,
+        confirm_resume_playback: ConfirmResumePlayback | None = None,
+        show_media_access_failed: ShowMediaAccessFailed | None = None,
+        show_open_subtitle_failed: ShowOpenSubtitleFailed | None = None,
     ):
         super().__init__(parent)
         self._player = player_window
         self._dialogs = MediaDialogs(parent)
         self._paths = MediaPathService()
         self._store = store
+        self._confirm_resume_playback = confirm_resume_playback or _decline_resume_playback
+        self._show_media_access_failed = show_media_access_failed or _ignore_media_access_failed
+        self._show_open_subtitle_failed = show_open_subtitle_failed or _ignore_open_subtitle_failed
         self._pending_recent_request_id: int | None = None
         self._pending_recent_paths: list[str] = []
         self._last_saved_snapshot_key: tuple[str, int, int] | None = None
@@ -94,7 +113,7 @@ class MediaLibraryService(QObject):
             media_paths = self._paths.collect_media_files(folder_path)
         except OSError:
             logger.exception("Failed to open media folder | folder=%s", folder_path)
-            show_media_access_failed(self._player, folder_path)
+            self._show_media_access_failed(self._player, folder_path)
             return
         self.open_media_paths(media_paths)
 
@@ -185,7 +204,7 @@ class MediaLibraryService(QObject):
             drop_data = self._paths.classify_drop_paths(dropped_paths)
         except OSError:
             logger.exception("Failed to open dropped paths")
-            show_media_access_failed(self._player, dropped_paths[0] if dropped_paths else None)
+            self._show_media_access_failed(self._player, dropped_paths[0] if dropped_paths else None)
             return False
         media_paths = drop_data["media_paths"]
         subtitle_paths = drop_data["subtitle_paths"]
@@ -248,7 +267,7 @@ class MediaLibraryService(QObject):
 
         logger.warning("Subtitle attach failed; current subtitles were preserved | source=%s | subtitle=%s", source, subtitle_path)
         if show_failure_ui:
-            show_open_subtitle_failed(self._player)
+            self._show_open_subtitle_failed(self._player)
         return SubtitleAttachResult.LOAD_FAILED
 
     def get_recent_media(self) -> list[str]:
@@ -262,7 +281,7 @@ class MediaLibraryService(QObject):
         if position_ms <= 0:
             return 0
 
-        if confirm_resume_playback(self._player, path, position_ms):
+        if self._confirm_resume_playback(self._player, path, position_ms):
             logger.info("Resuming saved playback position | media=%s | position_ms=%s", path, position_ms)
             return position_ms
         logger.info("User declined saved playback position | media=%s | position_ms=%s", path, position_ms)

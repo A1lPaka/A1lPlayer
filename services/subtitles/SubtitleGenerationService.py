@@ -11,9 +11,11 @@ from models import SubtitleGenerationDialogResult
 from services.MediaSettingsStore import MediaSettingsStore
 from services.MediaLibraryService import SubtitleAttachResult
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
+from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
+from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
-from services.subtitles.SubtitleGenerationWorkers import AudioStreamProbeWorker, SubtitleGenerationWorker
+from services.subtitles.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
+from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
 from services.subtitles.SubtitleMaker import (
     get_missing_windows_cuda_runtime_packages,
 )
@@ -22,7 +24,6 @@ from ui.MessageBoxService import (
     prompt_cuda_runtime_choice,
     show_cuda_runtime_install_canceled,
     show_cuda_runtime_install_failed,
-    show_audio_stream_inspection_warning,
     show_subtitle_auto_load_failed,
     show_subtitle_created,
     show_subtitle_created_with_fallback_name,
@@ -133,6 +134,7 @@ class SubtitleGenerationService(QObject):
             theme_color_getter=lambda: self._player.theme_color,
         )
         self._preflight = SubtitleGenerationPreflight(parent)
+        self._validation_presenter = SubtitleGenerationValidationPresenter(parent)
         self._service_state = SubtitleServiceState.IDLE
         self._last_result: SubtitlePipelineResult | None = None
         self._active_run: SubtitlePipelineRun | None = None
@@ -144,15 +146,17 @@ class SubtitleGenerationService(QObject):
             self._PLAYBACK_INTERRUPTION_OWNER,
         )
         self._player_ui_suspend_lease = None
-        self._audio_stream_probe_media_path: str | None = None
-        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error: str | None = None
-        self._audio_stream_probe_request_id = 0
-        self._current_audio_stream_probe_request_id: int | None = None
-        self._audio_stream_probe_workers: dict[int, AudioStreamProbeWorker] = {}
         self._dialog_request_started_at: float | None = None
         self._dialog_request_media_path: str | None = None
+        self._audio_probe_flow = SubtitleGenerationAudioProbeFlow(
+            parent,
+            self._player,
+            self._ui,
+            self._preflight,
+            is_generation_dialog_open=lambda: self._service_state == SubtitleServiceState.DIALOG_OPEN,
+            dialog_media_path=lambda: self._dialog_request_media_path,
+            service_state_name=lambda: self._service_state.name,
+        )
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
         self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
         self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
@@ -197,7 +201,7 @@ class SubtitleGenerationService(QObject):
             on_generate=self._start_subtitle_generation,
             on_cancel=self._on_generation_dialog_canceled,
         )
-        self._load_generation_audio_tracks_async(current_media_path)
+        self._audio_probe_flow.load_generation_audio_tracks_async(current_media_path)
         return True
 
     def _start_subtitle_generation(self, options: SubtitleGenerationDialogResult):
@@ -226,9 +230,9 @@ class SubtitleGenerationService(QObject):
         validation_result = self._preflight.validate_generation_request(
             current_media_path,
             options,
-            probe_state=self._get_audio_stream_probe_state(current_media_path),
-            audio_streams=self._get_cached_audio_streams_for_media(current_media_path),
-            probe_error=self._get_cached_audio_stream_error_for_media(current_media_path),
+            probe_state=self._audio_probe_flow.probe_state_for_media(current_media_path),
+            audio_streams=self._audio_probe_flow.get_cached_audio_streams_for_media(current_media_path),
+            probe_error=self._audio_probe_flow.get_cached_audio_stream_error_for_media(current_media_path),
         )
         log_timing(
             logger,
@@ -239,7 +243,7 @@ class SubtitleGenerationService(QObject):
             media=run.context.media_path,
             output=options.output_path,
         )
-        if not validation_result.is_valid:
+        if not self._validation_presenter.confirm_or_show_failure(validation_result):
             self._discard_starting_run("subtitle generation preflight failed")
             return
 
@@ -543,7 +547,7 @@ class SubtitleGenerationService(QObject):
         self._force_shutdown_requested = False
         self._ui.close_generation_dialog()
         self._request_active_task_stop(force=False)
-        self._invalidate_active_audio_stream_probe_request("shutdown")
+        self._audio_probe_flow.invalidate_active_request("shutdown")
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
@@ -569,14 +573,14 @@ class SubtitleGenerationService(QObject):
         self._force_shutdown_requested = True
         self._ui.close_progress_dialog()
         self._request_active_task_stop(force=True)
-        self._invalidate_active_audio_stream_probe_request("shutdown")
+        self._audio_probe_flow.invalidate_active_request("shutdown")
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
     def _finalize_shutdown_service_state(self):
         self._ui.close_progress_dialog()
         self._active_run = None
-        self._invalidate_active_audio_stream_probe_request("finalize-shutdown")
+        self._audio_probe_flow.invalidate_active_request("finalize-shutdown")
         self._release_playback_takeover(resume_playback=False)
         self._shutdown_completed = True
         self._force_shutdown_requested = False
@@ -605,7 +609,7 @@ class SubtitleGenerationService(QObject):
         if self._service_state != SubtitleServiceState.DIALOG_OPEN:
             return
 
-        self._invalidate_active_audio_stream_probe_request("dialog closed")
+        self._audio_probe_flow.invalidate_active_request("dialog closed")
         self._clear_dialog_request_timing()
         logger.info("Subtitle generation dialog closed without launching a job")
         self._transition_service_state(
@@ -1123,223 +1127,3 @@ class SubtitleGenerationService(QObject):
     def _clear_dialog_request_timing(self):
         self._dialog_request_started_at = None
         self._dialog_request_media_path = None
-
-    def _load_generation_audio_tracks_async(self, media_path: str):
-        cached_audio_streams = self._get_cached_audio_streams_for_media(media_path)
-        if cached_audio_streams is not None:
-            logger.debug(
-                "Using cached audio stream probe result for generation dialog | media=%s | stream_count=%s",
-                media_path,
-                len(cached_audio_streams),
-            )
-            self._apply_loaded_audio_tracks(media_path, cached_audio_streams)
-            return
-
-        cached_error = self._get_cached_audio_stream_error_for_media(media_path)
-        if cached_error is not None:
-            logger.debug(
-                "Using cached audio stream probe failure for generation dialog | media=%s | reason=%s",
-                media_path,
-                cached_error,
-            )
-            self._apply_audio_track_probe_failure(media_path, cached_error, show_warning=True)
-            return
-
-        player_audio_track_count = self._get_player_audio_track_count()
-        if player_audio_track_count == 1:
-            logger.debug(
-                "Skipping audio stream probe for generation dialog because player reports a single audio track | media=%s | player_audio_track_count=%s",
-                media_path,
-                player_audio_track_count,
-            )
-            self._cache_audio_stream_probe_success(media_path, [])
-            self._apply_default_audio_track_only(media_path)
-            return
-
-        self._ui.set_generation_dialog_audio_tracks_loading()
-        self._begin_audio_stream_probe(media_path)
-        self._audio_stream_probe_request_id += 1
-        probe_request_id = self._audio_stream_probe_request_id
-        self._current_audio_stream_probe_request_id = probe_request_id
-
-        worker = AudioStreamProbeWorker(probe_request_id, media_path)
-        worker.finished.connect(self._on_audio_stream_probe_finished, Qt.QueuedConnection)
-        worker.failed.connect(self._on_audio_stream_probe_failed, Qt.QueuedConnection)
-        worker.destroyed.connect(lambda *_args, probe_request_id=probe_request_id: self._audio_stream_probe_workers.pop(probe_request_id, None))
-        self._audio_stream_probe_workers[probe_request_id] = worker
-        worker.start()
-
-    def _invalidate_active_audio_stream_probe_request(self, reason: str):
-        if self._current_audio_stream_probe_request_id is None:
-            return
-        self._abandon_loading_audio_stream_probe()
-        logger.debug(
-            "Invalidating active audio stream probe request | probe_request_id=%s | reason=%s",
-            self._current_audio_stream_probe_request_id,
-            reason,
-        )
-        self._current_audio_stream_probe_request_id = None
-
-    def _get_audio_stream_probe_state(self, media_path: str | None) -> AudioStreamProbeState:
-        normalized_media_path = str(media_path or "")
-        if not normalized_media_path or self._audio_stream_probe_media_path != normalized_media_path:
-            return AudioStreamProbeState.IDLE
-        return self._audio_stream_probe_state
-
-    def _get_cached_audio_streams_for_media(self, media_path: str | None):
-        if self._get_audio_stream_probe_state(media_path) != AudioStreamProbeState.READY:
-            return None
-        return self._cached_audio_streams
-
-    def _get_cached_audio_stream_error_for_media(self, media_path: str | None) -> str | None:
-        if self._get_audio_stream_probe_state(media_path) != AudioStreamProbeState.FAILED:
-            return None
-        return self._cached_audio_stream_error
-
-    def _begin_audio_stream_probe(self, media_path: str):
-        self._audio_stream_probe_media_path = str(media_path)
-        self._audio_stream_probe_state = AudioStreamProbeState.LOADING
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = None
-
-    def _abandon_loading_audio_stream_probe(self):
-        if self._audio_stream_probe_state != AudioStreamProbeState.LOADING:
-            return
-        self._audio_stream_probe_media_path = None
-        self._audio_stream_probe_state = AudioStreamProbeState.IDLE
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = None
-
-    def _cache_audio_stream_probe_success(self, media_path: str, audio_streams):
-        self._audio_stream_probe_media_path = str(media_path)
-        self._audio_stream_probe_state = AudioStreamProbeState.READY
-        self._cached_audio_streams = list(audio_streams)
-        self._cached_audio_stream_error = None
-
-    def _cache_audio_stream_probe_failure(self, media_path: str, reason: str):
-        self._audio_stream_probe_media_path = str(media_path)
-        self._audio_stream_probe_state = AudioStreamProbeState.FAILED
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
-
-    def _get_player_audio_track_count(self) -> int | None:
-        try:
-            tracks = self._player.get_audio_tracks()
-        except (AttributeError, TypeError, ValueError):
-            logger.debug("Player audio track list is unavailable for subtitle generation preflight", exc_info=True)
-            return None
-
-        try:
-            return sum(1 for track_id, _title in tracks if int(track_id) >= 0)
-        except (TypeError, ValueError):
-            logger.debug("Player audio track list was malformed for subtitle generation preflight", exc_info=True)
-            return None
-
-    def _is_current_audio_stream_probe_result(self, probe_request_id: int, media_path: str) -> bool:
-        if self._current_audio_stream_probe_request_id != probe_request_id:
-            logger.debug(
-                "Ignoring stale audio stream probe result because request ownership changed | probe_request_id=%s | active_probe_request_id=%s | media=%s",
-                probe_request_id,
-                self._current_audio_stream_probe_request_id,
-                media_path,
-            )
-            return False
-
-        if self._service_state != SubtitleServiceState.DIALOG_OPEN:
-            logger.debug(
-                "Ignoring audio stream probe result because generation dialog is no longer open | probe_request_id=%s | state=%s | media=%s",
-                probe_request_id,
-                self._service_state.name,
-                media_path,
-            )
-            return False
-
-        if not self._ui.has_generation_dialog():
-            logger.debug(
-                "Ignoring audio stream probe result because the generation dialog no longer exists | probe_request_id=%s | media=%s",
-                probe_request_id,
-                media_path,
-            )
-            return False
-
-        active_media_path = self._dialog_request_media_path or self._player.playback.current_media_path()
-        if active_media_path != media_path:
-            logger.debug(
-                "Ignoring stale audio stream probe result because dialog media changed | probe_request_id=%s | result_media=%s | active_media=%s",
-                probe_request_id,
-                media_path,
-                active_media_path,
-            )
-            return False
-
-        return True
-
-    def _apply_loaded_audio_tracks(self, media_path: str, audio_streams):
-        audio_tracks = self._preflight.build_audio_track_choices(audio_streams)
-        selector_enabled = bool(audio_streams)
-        self._ui.apply_generation_dialog_audio_tracks(
-            audio_tracks,
-            selected_track_id=None,
-            selector_enabled=selector_enabled,
-            generate_enabled=True,
-        )
-        logger.info(
-            "Audio stream probe applied to generation dialog | media=%s | stream_count=%s | selector_enabled=%s",
-            media_path,
-            len(audio_streams),
-            selector_enabled,
-        )
-
-    def _apply_default_audio_track_only(self, media_path: str):
-        self._ui.apply_generation_dialog_audio_tracks(
-            self._preflight.build_audio_track_choices([]),
-            selected_track_id=None,
-            selector_enabled=False,
-            generate_enabled=True,
-        )
-        logger.debug(
-            "Generation dialog using default audio track only | media=%s",
-            media_path,
-        )
-
-    def _apply_audio_track_probe_failure(self, media_path: str, reason: str, *, show_warning: bool):
-        formatted_reason = self._preflight.format_audio_stream_probe_error(reason)
-        self._ui.apply_generation_dialog_audio_tracks(
-            self._preflight.build_audio_track_choices([]),
-            selected_track_id=None,
-            selector_enabled=False,
-            generate_enabled=True,
-        )
-        if show_warning:
-            show_audio_stream_inspection_warning(self._parent, formatted_reason)
-        logger.warning(
-            "Audio stream probe left generation dialog in fallback state | media=%s | reason=%s",
-            media_path,
-            formatted_reason,
-        )
-
-    @Slot(int, str, object)
-    def _on_audio_stream_probe_finished(self, probe_request_id: int, media_path: str, audio_streams):
-        worker = self._audio_stream_probe_workers.pop(probe_request_id, None)
-        if worker is not None:
-            worker.deleteLater()
-
-        if not self._is_current_audio_stream_probe_result(probe_request_id, media_path):
-            return
-
-        self._current_audio_stream_probe_request_id = None
-        self._cache_audio_stream_probe_success(media_path, audio_streams)
-        self._apply_loaded_audio_tracks(media_path, audio_streams)
-
-    @Slot(int, str, str)
-    def _on_audio_stream_probe_failed(self, probe_request_id: int, media_path: str, reason: str):
-        worker = self._audio_stream_probe_workers.pop(probe_request_id, None)
-        if worker is not None:
-            worker.deleteLater()
-
-        if not self._is_current_audio_stream_probe_result(probe_request_id, media_path):
-            return
-
-        self._current_audio_stream_probe_request_id = None
-        self._cache_audio_stream_probe_failure(media_path, reason)
-        self._apply_audio_track_probe_failure(media_path, reason, show_warning=True)

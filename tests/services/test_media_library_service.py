@@ -6,6 +6,40 @@ from services.MediaLibraryService import MediaLibraryService, SubtitleAttachResu
 from tests.fakes import FakeMediaStore, FakePlayerWindow
 
 
+class _PromptCalls:
+    def __init__(self, resume_result: bool = False):
+        self.resume_result = resume_result
+        self.resume_calls = []
+        self.media_access_failed_calls = []
+        self.open_subtitle_failed_calls = []
+
+    def confirm_resume_playback(self, parent, path: str, position_ms: int) -> bool:
+        self.resume_calls.append((parent, path, position_ms))
+        return self.resume_result
+
+    def show_media_access_failed(self, parent, path: str | None) -> None:
+        self.media_access_failed_calls.append((parent, path))
+
+    def show_open_subtitle_failed(self, parent) -> None:
+        self.open_subtitle_failed_calls.append(parent)
+
+
+def _make_service_with_prompt_calls(
+    parent,
+    player: FakePlayerWindow,
+    store: FakeMediaStore,
+    calls: _PromptCalls,
+) -> MediaLibraryService:
+    return MediaLibraryService(
+        parent,
+        player,
+        store,
+        confirm_resume_playback=calls.confirm_resume_playback,
+        show_media_access_failed=calls.show_media_access_failed,
+        show_open_subtitle_failed=calls.show_open_subtitle_failed,
+    )
+
+
 class _FakeDragEnterEvent:
     def __init__(self, mime_data: QMimeData):
         self._mime_data = mime_data
@@ -69,7 +103,8 @@ def test_open_recent_media_uses_normal_open_flow_without_prevalidation(monkeypat
 def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     player = FakePlayerWindow()
     store = FakeMediaStore()
-    service = MediaLibraryService(QWidget(), player, store)
+    prompt_calls = _PromptCalls(resume_result=True)
+    service = _make_service_with_prompt_calls(QWidget(), player, store, prompt_calls)
     media_path = str(workspace_tmp_path / "resume.mp4")
     (workspace_tmp_path / "resume.mp4").write_text("media")
 
@@ -80,7 +115,6 @@ def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     }
     player.playback._has_media_loaded = True
     monkeypatch.setattr(service._paths, "deduplicate_paths", lambda paths: list(paths))
-    monkeypatch.setattr("services.MediaLibraryService.confirm_resume_playback", lambda *_args: True)
 
     service.save_time_session()
 
@@ -92,6 +126,7 @@ def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
 
     assert service.open_media_paths([media_path]) is True
     assert player.playback.last_open_paths["start_position_ms"] == 3210
+    assert prompt_calls.resume_calls == [(player, media_path, 3210)]
 
 
 def test_media_finished_clears_saved_position_and_stops_autosave(workspace_tmp_path):
@@ -200,15 +235,13 @@ def test_drop_still_scans_directory_and_opens_media(workspace_tmp_path):
     assert player.playback.last_open_paths["file_paths"] == [str(first_media), str(second_media)]
 
 
-def test_attach_subtitle_unifies_manual_failure_ui(monkeypatch):
+def test_attach_subtitle_unifies_manual_failure_ui():
     player = FakePlayerWindow()
     store = FakeMediaStore()
-    service = MediaLibraryService(QWidget(), player, store)
+    prompt_calls = _PromptCalls()
+    service = _make_service_with_prompt_calls(QWidget(), player, store, prompt_calls)
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback.open_subtitle_result = False
-    failure_calls = []
-
-    monkeypatch.setattr("services.MediaLibraryService.show_open_subtitle_failed", lambda _parent: failure_calls.append(True))
 
     result = service.attach_subtitle(
         "C:/subs/manual.srt",
@@ -220,7 +253,33 @@ def test_attach_subtitle_unifies_manual_failure_ui(monkeypatch):
     assert result == SubtitleAttachResult.LOAD_FAILED
     assert player.playback.opened_subtitles == ["C:/subs/manual.srt"]
     assert store.saved_last_open_dir == ["C:/subs/manual.srt"]
-    assert failure_calls == [True]
+    assert prompt_calls.open_subtitle_failed_calls == [player]
+
+
+def test_open_folder_os_error_calls_injected_prompt(monkeypatch):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    prompt_calls = _PromptCalls()
+    service = _make_service_with_prompt_calls(QWidget(), player, store, prompt_calls)
+
+    monkeypatch.setattr(service._dialogs, "choose_media_folder", lambda _last_dir: "C:/media")
+    monkeypatch.setattr(service._paths, "collect_media_files", lambda _folder: (_ for _ in ()).throw(OSError("boom")))
+
+    service.open_folder()
+
+    assert prompt_calls.media_access_failed_calls == [(player, "C:/media")]
+
+
+def test_open_dropped_paths_os_error_calls_injected_prompt(monkeypatch):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    prompt_calls = _PromptCalls()
+    service = _make_service_with_prompt_calls(QWidget(), player, store, prompt_calls)
+
+    monkeypatch.setattr(service._paths, "classify_drop_paths", lambda _paths: (_ for _ in ()).throw(OSError("boom")))
+
+    assert service.open_dropped_paths(["C:/media"]) is False
+    assert prompt_calls.media_access_failed_calls == [(player, "C:/media")]
 
 
 def test_attach_subtitle_unifies_drop_flow(workspace_tmp_path):
