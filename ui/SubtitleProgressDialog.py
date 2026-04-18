@@ -1,20 +1,11 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-if __package__ in (None, ""):
-    project_root = Path(__file__).resolve().parent.parent
-    project_root_str = str(project_root)
-    if project_root_str not in sys.path:
-        sys.path.insert(0, project_root_str)
-
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QProgressBar, QWidget
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QLabel, QPushButton, QProgressBar, QWidget
 
 from models.ThemeColor import ThemeState
-from utils import Metrics, get_metrics, res_path
+from utils import Metrics
 
 
 class SubtitleProgressDialog(QWidget):
@@ -178,20 +169,3 @@ class SubtitleProgressDialog(QWidget):
             self.details_label,
             self.cancel_button,
         )
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(res_path("assets/logo.ico")))
-
-    preview_host = QWidget()
-    dialog = SubtitleProgressDialog(
-        theme_color=ThemeState(),
-        metrics=get_metrics(preview_host),
-    )
-    dialog.set_status("Transcribing audio track 2...")
-    dialog.set_details("Model: small. Language: Auto detect. Output: C:\\Media\\Example Movie.srt")
-    dialog.set_progress(42)
-    dialog.show()
-
-    sys.exit(app.exec())

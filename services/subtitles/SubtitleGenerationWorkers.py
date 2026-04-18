@@ -8,6 +8,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from models import SubtitleGenerationDialogResult
 from services.runtime.RuntimeExecution import build_runtime_helper_launch
 from services.runtime.RuntimeHelperProtocol import (
     EVENT_CANCELED,
@@ -27,7 +28,6 @@ from services.runtime.SubprocessWorkerSupport import (
     build_exception_diagnostics,
     build_process_diagnostics,
 )
-from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 
 logger = logging.getLogger(__name__)

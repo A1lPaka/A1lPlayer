@@ -1,4 +1,4 @@
-from utils import _color_from_state
+from utils import color_from_state
 
 
 class ThemeState:
@@ -62,4 +62,4 @@ class ThemeState:
 
         for source in sources:
             for derived_name, state in self.DERIVED_COLOR_BUILDERS.get(source, ()):
-                self.colors[derived_name] = _color_from_state(state, self.colors[source])
+                self.colors[derived_name] = color_from_state(state, self.colors[source])

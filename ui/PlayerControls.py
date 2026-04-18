@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
-
 import os
 
 from PySide6.QtWidgets import QWidget, QAbstractButton, QLabel, QSlider
@@ -9,7 +7,7 @@ from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QP
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QEvent
 
-from utils import Metrics, res_path, _format_ms, _format_speed
+from utils import Metrics, res_path, format_ms, format_speed
 from models.ThemeColor import ThemeState
 
 class ClickableLabel(QLabel):
@@ -46,7 +44,7 @@ class PlayerControls(QWidget):
 
         self.volume_controls = VolumeControls(self, theme_color=self.theme_color, scale_factor=sf)
 
-        self.buttons: List[BaseButton] = [
+        self.buttons: list[BaseButton] = [
             self.play_pause_button,
             self.rewind_lbutton,
             self.stop_button,
@@ -184,14 +182,14 @@ class PlayerControls(QWidget):
         return int(round(self.volume_controls.volume_bar.volume * 100))
 
     def set_speed_value(self, speed: float):
-        self.speed_label.setText(_format_speed(speed))
+        self.speed_label.setText(format_speed(speed))
 
     def update_timing(self, current_ms: int, total_ms: int):
         current_ms = current_ms if current_ms and current_ms > 0 else 0
         total_ms = total_ms if total_ms and total_ms > 0 else 0
 
-        self.current_time.setText(_format_ms(current_ms))
-        self.total_time.setText(_format_ms(total_ms))
+        self.current_time.setText(format_ms(current_ms))
+        self.total_time.setText(format_ms(total_ms))
 
         if total_ms > 0:
             self.progress_bar.set_value(current_ms / total_ms)
@@ -237,7 +235,7 @@ class TimePopup(QWidget):
         return w, h
 
     def set_time(self, ms: int):
-        self.time_label.setText(_format_ms(ms))
+        self.time_label.setText(format_ms(ms))
 
     def apply_metrics(self, metrics: Metrics):
         self.metrics = metrics
@@ -282,7 +280,7 @@ class SpeedPopup(QWidget):
         self.metrics = metrics
         self.theme_color = theme_color
 
-        self.speed_label = QLabel(_format_speed(self._step_to_speed(self.DEFAULT_STEP)), self, alignment=Qt.AlignCenter)
+        self.speed_label = QLabel(format_speed(self._step_to_speed(self.DEFAULT_STEP)), self, alignment=Qt.AlignCenter)
         self.speed_slider = QSlider(Qt.Horizontal, self)
         self.speed_slider.setRange(self.MIN_STEP, self.MAX_STEP)
         self.speed_slider.setSingleStep(1)
@@ -314,7 +312,7 @@ class SpeedPopup(QWidget):
 
     def set_speed(self, speed: float):
         self.speed_slider.setValue(self._speed_to_step(speed))
-        self.speed_label.setText(_format_speed(self.current_speed()))
+        self.speed_label.setText(format_speed(self.current_speed()))
 
     def current_speed(self) -> float:
         return self.speed_slider.value() * self.STEP_SIZE
@@ -375,7 +373,7 @@ class SpeedPopup(QWidget):
 
     def _on_slider_value_changed(self, step: int):
         speed = step * self.STEP_SIZE
-        self.speed_label.setText(_format_speed(speed))
+        self.speed_label.setText(format_speed(speed))
         self.speed_changed.emit(speed)
 
     def _step_to_speed(self, step: int) -> float:
@@ -386,7 +384,7 @@ class SpeedPopup(QWidget):
         return int(round(clamped / self.STEP_SIZE))
 
 class BaseButton(QAbstractButton):
-    _pixmap_cache: Dict[Tuple[str, int, int, int, int], QPixmap] = {}
+    _pixmap_cache: dict[tuple[str, int, int, int, int], QPixmap] = {}
     _MAX_PIXMAP_CACHE_ITEMS = 256
 
     def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0, var: str | None = None):
@@ -406,7 +404,7 @@ class BaseButton(QAbstractButton):
         height = self.height()
         return QRectF(0, 0, max(1, width), max(1, height))
 
-    def _get_bg_color(self) -> List[int]:
+    def _get_bg_color(self) -> list[int]:
         r, g, b = self.bg_color
         if self.isDown():
             return self.bg_color_pressed
@@ -414,7 +412,7 @@ class BaseButton(QAbstractButton):
             return self.bg_color_hovered
         return self.bg_color 
 
-    def _render_tinted_svg(self, svg_filename: str, width: int, height: int, color_rgb: List[int], dpr: float = 1.0) -> QPixmap:
+    def _render_tinted_svg(self, svg_filename: str, width: int, height: int, color_rgb: list[int], dpr: float = 1.0) -> QPixmap:
         cache_key = (svg_filename, width, height, color_rgb[0], color_rgb[1], color_rgb[2], dpr)
         cached = self._pixmap_cache.get(cache_key)
         if cached is not None:

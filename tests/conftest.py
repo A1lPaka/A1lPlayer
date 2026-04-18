@@ -398,9 +398,6 @@ def _install_subtitle_service_stubs():
                 self.parent = parent
                 self._validation_results = {}
 
-            def build_generation_audio_tracks(self, _media_path):
-                return []
-
             def build_audio_track_choices(self, audio_streams):
                 return [(None, "Current / default"), *[(stream.stream_index, stream.label) for stream in audio_streams]]
 

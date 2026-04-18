@@ -30,32 +30,8 @@ def res_path(relative_path: str) -> str:
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base_path, relative_path)
 
-def get_metrics(widget: QWidget) -> Metrics:
-    handle = widget.window().windowHandle() if widget.window() else None
-    screen = handle.screen() if handle else QGuiApplication.primaryScreen() 
 
-    if screen is None:
-        min_window_side = min(BASE_WIDTH, BASE_HEIGHT)
-        scale_factor = 1.0
-        window_width = int(min_window_side * 0.8)
-        window_height = int(min_window_side * 0.5)
-        icon_size = int(min_window_side / 70 * scale_factor)
-        font_size = int(icon_size * 0.7)
-        menu_width = int(min_window_side * 0.1)
-        theme_dialog_height = int(min_window_side / 1.75) 
-        theme_dialog_width = min_window_side // 2
-        pip_min_width = int(min_window_side / 5.2)
-        subtitle_dialog_width = min_window_side // 2
-        subtitle_dialog_height = int(min_window_side * 0.3)
-        subtitle_progress_dialog_width = int(min_window_side * 0.4)
-        subtitle_progress_dialog_height = int(min_window_side * 0.3)
-
-        return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width, subtitle_dialog_width, subtitle_dialog_height, subtitle_progress_dialog_width, subtitle_progress_dialog_height)
-    
-    geo = screen.geometry()
-
-    min_window_side = min(geo.width(), geo.height())
-    scale_factor = screen.devicePixelRatio()
+def _build_metrics(min_window_side: int, scale_factor: float) -> Metrics:
     window_width = int(min_window_side * 0.8)
     window_height = int(min_window_side * 0.5)
     icon_size = int(min_window_side / 70 * scale_factor)
@@ -69,9 +45,38 @@ def get_metrics(widget: QWidget) -> Metrics:
     subtitle_progress_dialog_width = int(min_window_side * 0.42)
     subtitle_progress_dialog_height = int(min_window_side * 0.2)
 
-    return Metrics(min_window_side, scale_factor, window_width, window_height, icon_size, font_size, menu_width, theme_dialog_width, theme_dialog_height, pip_min_width, subtitle_dialog_width, subtitle_dialog_height, subtitle_progress_dialog_width, subtitle_progress_dialog_height)
+    return Metrics(
+        min_window_side,
+        scale_factor,
+        window_width,
+        window_height,
+        icon_size,
+        font_size,
+        menu_width,
+        theme_dialog_width,
+        theme_dialog_height,
+        pip_min_width,
+        subtitle_dialog_width,
+        subtitle_dialog_height,
+        subtitle_progress_dialog_width,
+        subtitle_progress_dialog_height,
+    )
 
-def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
+
+def get_metrics(widget: QWidget) -> Metrics:
+    handle = widget.window().windowHandle() if widget.window() else None
+    screen = handle.screen() if handle else QGuiApplication.primaryScreen() 
+
+    if screen is None:
+        return _build_metrics(min(BASE_WIDTH, BASE_HEIGHT), 1.0)
+    
+    geo = screen.geometry()
+    return _build_metrics(
+        min(geo.width(), geo.height()),
+        screen.devicePixelRatio(),
+    )
+
+def color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (37, 37, 37)) -> tuple[int, int, int]:
     r, g, b = bg_color
     factor = (-1.0) if r < 145 or g < 145 or b < 145 else (1.0)
     if state == "pressed":
@@ -100,7 +105,7 @@ def _color_from_state(state: str = "normal", bg_color: tuple[int, int, int] = (3
         )
     return bg_color
 
-def _format_ms(ms: int) -> str:
+def format_ms(ms: int) -> str:
     total_seconds = max(0, ms // 1000)
     hours, rem = divmod(total_seconds, 3600)
     minutes, seconds = divmod(rem, 60)
@@ -108,10 +113,10 @@ def _format_ms(ms: int) -> str:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
 
-def _format_speed(speed: float) -> str:
+def format_speed(speed: float) -> str:
     return f"x{float(speed):.2f}"
 
-def _normalize_path(path: str) -> str:
+def normalize_path(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 
 def build_window_title(

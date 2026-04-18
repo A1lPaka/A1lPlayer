@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
+from models import SubtitleGenerationDialogResult
 from services.MediaSettingsStore import MediaSettingsStore
 from services.MediaLibraryService import SubtitleAttachResult
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
@@ -31,7 +32,6 @@ from ui.MessageBoxService import (
     show_subtitle_generation_failed,
 )
 from ui.PlayerWindow import PlayerWindow
-from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
 
 
 logger = logging.getLogger(__name__)

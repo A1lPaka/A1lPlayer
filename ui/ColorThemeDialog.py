@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import sys
-
 from PySide6.QtCore import QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPalette, QPen
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QWidget
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPalette, QPen
+from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QWidget
 
 from models.ThemeColor import ThemeState
-from utils import Metrics, get_metrics, res_path
+from utils import Metrics
 from ui.PlayerControls import PlayPauseButton, StopButton, VolumeControls, ProgressBar, TimePopupFrame
 
 
@@ -586,13 +584,3 @@ class InterfacePreview(QWidget):
         palette = widget.palette()
         palette.setColor(QPalette.Window, color)
         widget.setPalette(palette)
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(res_path("assets/logo.ico")))
-
-    preview_host = QWidget()
-    dialog = ColorThemeDialog(ThemeState(), get_metrics(preview_host))
-    dialog.show()
-
-    sys.exit(app.exec())

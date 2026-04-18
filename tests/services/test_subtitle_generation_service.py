@@ -19,7 +19,7 @@ from services.subtitles.SubtitleGenerationService import (
     SubtitlePipelineResult,
 )
 from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState
-from ui.SubtitleGenerationDialog import SubtitleGenerationDialogResult
+from models import SubtitleGenerationDialogResult
 
 from tests.fakes import FakePlayerWindow, FakeSubtitleWorker, FakeMediaStore
 

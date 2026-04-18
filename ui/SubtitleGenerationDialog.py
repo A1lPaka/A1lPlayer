@@ -1,20 +1,10 @@
 from __future__ import annotations
 
 import os
-import sys
-from dataclasses import dataclass
-from pathlib import Path
-
-if __package__ in (None, ""):
-    project_root = Path(__file__).resolve().parent.parent
-    project_root_str = str(project_root)
-    if project_root_str not in sys.path:
-        sys.path.insert(0, project_root_str)
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -25,19 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from models.ThemeColor import ThemeState
+from models import SubtitleGenerationDialogResult
 from services.MediaPathService import build_file_dialog_filter
-from utils import Metrics, get_metrics, res_path
-
-
-@dataclass
-class SubtitleGenerationDialogResult:
-    audio_stream_index: int | None
-    audio_language: str | None
-    device: str | None
-    model_size: str
-    output_format: str
-    output_path: str
-    auto_open_after_generation: bool
+from utils import Metrics, res_path
 
 
 class ArrowComboBox(QComboBox):
@@ -468,25 +448,3 @@ class SubtitleGenerationDialog(QWidget):
     def _handle_close_clicked(self):
         self.canceled.emit()
         self.close()
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(res_path("assets/logo.ico")))
-
-    preview_host = QWidget()
-    dialog = SubtitleGenerationDialog(
-        theme_color=ThemeState(),
-        metrics=get_metrics(preview_host),
-        media_path=r"C:\Media\Example Movie.mkv",
-    )
-    dialog.set_audio_tracks(
-        [
-            (1, "Audio 1 - English 5.1"),
-            (2, "Audio 2 - German Stereo"),
-            (3, "Audio 3 - Commentary"),
-        ]
-    )
-    dialog.show()
-
-    sys.exit(app.exec())

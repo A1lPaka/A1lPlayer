@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import QSettings
 
 from models.ThemeColor import ThemeState
-from utils import _normalize_path
+from utils import normalize_path
 
 
 class MediaSettingsStore:
@@ -68,9 +68,9 @@ class MediaSettingsStore:
         self._settings.setValue(self._LAST_OPEN_DIR_KEY, os.path.dirname(file_path))
 
     def get_saved_position(self, path: str) -> int:
-        normalized_path = _normalize_path(path)
+        normalized_path = normalize_path(path)
         for saved_path, saved_ms in self._load_session_positions().items():
-            if _normalize_path(saved_path) == normalized_path:
+            if normalize_path(saved_path) == normalized_path:
                 return saved_ms
         return 0
 
@@ -83,8 +83,8 @@ class MediaSettingsStore:
             return
 
         data = self._load_session_positions()
-        normalized_current = _normalize_path(path)
-        data = {k: v for k, v in data.items() if _normalize_path(k) != normalized_current}
+        normalized_current = normalize_path(path)
+        data = {k: v for k, v in data.items() if normalize_path(k) != normalized_current}
         data[path] = int(position_ms)
         if len(data) > self._MAX_SESSION_ITEMS:
             data = dict(list(data.items())[-self._MAX_SESSION_ITEMS:])
@@ -96,11 +96,11 @@ class MediaSettingsStore:
             return
 
         data = self._load_session_positions()
-        normalized_path = _normalize_path(path)
+        normalized_path = normalize_path(path)
         filtered = {
             saved_path: saved_ms
             for saved_path, saved_ms in data.items()
-            if _normalize_path(saved_path) != normalized_path
+            if normalize_path(saved_path) != normalized_path
         }
         if filtered != data:
             self._save_session_positions(filtered)
@@ -112,10 +112,10 @@ class MediaSettingsStore:
         if not path:
             return
 
-        normalized = _normalize_path(path)
+        normalized = normalize_path(path)
         paths = [
             item for item in self._get_recent_media_paths()
-            if _normalize_path(item) != normalized
+            if normalize_path(item) != normalized
         ]
         paths.insert(0, path)
         self._set_recent_media_paths(paths[:self._MAX_RECENT_ITEMS])

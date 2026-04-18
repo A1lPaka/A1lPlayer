@@ -1,7 +1,7 @@
 import os
 import logging
 
-from utils import _normalize_path
+from utils import normalize_path
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class MediaPathService:
         unique_paths: list[str] = []
         seen: set[str] = set()
         for path in paths:
-            normalized = _normalize_path(path)
+            normalized = normalize_path(path)
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)

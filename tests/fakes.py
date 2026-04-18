@@ -279,6 +279,14 @@ class FakeMediaStore:
         self.shutdown_calls += 1
 
 
+class FakeMediaLibrary:
+    def __init__(self):
+        self.shutdown_calls = 0
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+
+
 class FakePlaybackShutdown:
     def __init__(self):
         self.shutdown_calls = 0

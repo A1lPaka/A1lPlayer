@@ -5,7 +5,7 @@ from typing import Literal
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from utils import _format_ms
+from utils import format_ms
 
 
 def prompt_force_close_background_tasks(
@@ -272,7 +272,7 @@ def confirm_resume_playback(parent: QWidget, path: str, position_ms: int) -> boo
     message_box.setWindowTitle("Resume playback")
     message_box.setText(
         f"Resume playback for:\n{path}\n\n"
-        f"Last position: {_format_ms(position_ms)}\n\n"
+        f"Last position: {format_ms(position_ms)}\n\n"
         "Continue from where you left off?"
     )
     message_box.setIcon(QMessageBox.Icon.NoIcon)
