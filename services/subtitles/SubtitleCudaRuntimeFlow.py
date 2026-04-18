@@ -125,45 +125,32 @@ class SubtitleCudaRuntimeFlow(QObject):
             return False
         return True
 
-    @Slot(str)
-    def _on_worker_status_changed(self, text: str):
-        if not self._is_active_worker_sender("CUDA runtime status update"):
+    def _emit_active_worker_event(self, event_name: str, signal, *args):
+        if not self._is_active_worker_sender(event_name):
             return
         run_id = self._current_run_id()
         if run_id is not None:
-            self.status_changed.emit(run_id, text)
+            signal.emit(run_id, *args)
+
+    @Slot(str)
+    def _on_worker_status_changed(self, text: str):
+        self._emit_active_worker_event("CUDA runtime status update", self.status_changed, text)
 
     @Slot(str)
     def _on_worker_details_changed(self, text: str):
-        if not self._is_active_worker_sender("CUDA runtime details update"):
-            return
-        run_id = self._current_run_id()
-        if run_id is not None:
-            self.details_changed.emit(run_id, text)
+        self._emit_active_worker_event("CUDA runtime details update", self.details_changed, text)
 
     @Slot()
     def _on_worker_finished(self):
-        if not self._is_active_worker_sender("CUDA runtime finished"):
-            return
-        run_id = self._current_run_id()
-        if run_id is not None:
-            self.finished.emit(run_id)
+        self._emit_active_worker_event("CUDA runtime finished", self.finished)
 
     @Slot(str)
     def _on_worker_failed(self, error_text: str):
-        if not self._is_active_worker_sender("CUDA runtime failed"):
-            return
-        run_id = self._current_run_id()
-        if run_id is not None:
-            self.failed.emit(run_id, error_text)
+        self._emit_active_worker_event("CUDA runtime failed", self.failed, error_text)
 
     @Slot()
     def _on_worker_canceled(self):
-        if not self._is_active_worker_sender("CUDA runtime canceled"):
-            return
-        run_id = self._current_run_id()
-        if run_id is not None:
-            self.canceled.emit(run_id)
+        self._emit_active_worker_event("CUDA runtime canceled", self.canceled)
 
     @Slot()
     def _on_thread_finished(self, run_id: int):

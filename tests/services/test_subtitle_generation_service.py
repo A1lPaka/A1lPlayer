@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QWidget
 
@@ -312,6 +313,68 @@ def test_stale_run_events_are_ignored():
     assert service._ui.progress_updates == []
     assert service._active_run is current_run
     assert player.resume_calls == 0
+
+
+def test_active_subtitle_worker_events_are_forwarded_to_ui(monkeypatch):
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    worker = FakeSubtitleWorker()
+
+    run = _seed_active_run(service)
+    run.subtitle_worker = worker
+    monkeypatch.setattr(service, "sender", lambda: worker)
+
+    service._on_worker_status_changed_from_worker("Working")
+    service._on_worker_progress_changed_from_worker(42)
+    service._on_worker_details_changed_from_worker("Details")
+
+    assert service._ui.status_updates == ["Working"]
+    assert service._ui.progress_updates == [42]
+    assert service._ui.detail_updates == ["Details"]
+
+
+def test_real_cuda_runtime_flow_forwards_only_active_worker_sender(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_cuda_runtime_flow_forwarding_test",
+        "services/subtitles/SubtitleCudaRuntimeFlow.py",
+    )
+    parent = QWidget()
+    flow = module.SubtitleCudaRuntimeFlow(parent)
+    active_worker = QObject()
+    stale_worker = QObject()
+    calls = {
+        "status": [],
+        "details": [],
+        "finished": [],
+        "failed": [],
+        "canceled": [],
+    }
+
+    flow.status_changed.connect(lambda run_id, text: calls["status"].append((run_id, text)))
+    flow.details_changed.connect(lambda run_id, text: calls["details"].append((run_id, text)))
+    flow.finished.connect(lambda run_id: calls["finished"].append(run_id))
+    flow.failed.connect(lambda run_id, error_text: calls["failed"].append((run_id, error_text)))
+    flow.canceled.connect(lambda run_id: calls["canceled"].append(run_id))
+
+    flow._worker = active_worker
+    flow._run_id = 21
+    monkeypatch.setattr(flow, "sender", lambda: stale_worker)
+    flow._on_worker_status_changed("Ignored")
+
+    monkeypatch.setattr(flow, "sender", lambda: active_worker)
+    flow._on_worker_status_changed("Installing")
+    flow._on_worker_details_changed("Details")
+    flow._on_worker_finished()
+    flow._on_worker_failed("Failure")
+    flow._on_worker_canceled()
+
+    assert calls == {
+        "status": [(21, "Installing")],
+        "details": [(21, "Details")],
+        "finished": [21],
+        "failed": [(21, "Failure")],
+        "canceled": [21],
+    }
 
 
 def test_terminal_completion_clears_active_run_and_resumes_player_ui():

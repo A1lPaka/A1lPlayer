@@ -662,47 +662,49 @@ class SubtitleGenerationService(QObject):
 
         return run.run_id
 
-    @Slot(str)
-    def _on_worker_status_changed_from_worker(self, text: str):
-        run_id = self._current_run_id_for_active_subtitle_worker("status update")
+    def _forward_active_subtitle_worker_event(self, event_name: str, handler, *args):
+        run_id = self._current_run_id_for_active_subtitle_worker(event_name)
         if run_id is None:
             return
-        self._on_worker_status_changed(run_id, text)
+        handler(run_id, *args)
+
+    @Slot(str)
+    def _on_worker_status_changed_from_worker(self, text: str):
+        self._forward_active_subtitle_worker_event("status update", self._on_worker_status_changed, text)
 
     @Slot(int)
     def _on_worker_progress_changed_from_worker(self, value: int):
-        run_id = self._current_run_id_for_active_subtitle_worker("progress update")
-        if run_id is None:
-            return
-        self._on_worker_progress_changed(run_id, value)
+        self._forward_active_subtitle_worker_event("progress update", self._on_worker_progress_changed, value)
 
     @Slot(str)
     def _on_worker_details_changed_from_worker(self, text: str):
-        run_id = self._current_run_id_for_active_subtitle_worker("details update")
-        if run_id is None:
-            return
-        self._on_worker_details_changed(run_id, text)
+        self._forward_active_subtitle_worker_event("details update", self._on_worker_details_changed, text)
 
     @Slot(str, bool, bool)
     def _on_subtitle_generation_finished_from_worker(self, output_path: str, auto_open: bool, used_fallback_output_path: bool):
-        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation finished")
-        if run_id is None:
-            return
-        self._on_subtitle_generation_finished(run_id, output_path, auto_open, used_fallback_output_path)
+        self._forward_active_subtitle_worker_event(
+            "subtitle generation finished",
+            self._on_subtitle_generation_finished,
+            output_path,
+            auto_open,
+            used_fallback_output_path,
+        )
 
     @Slot(str, str)
     def _on_subtitle_generation_failed_from_worker(self, error_text: str, diagnostics: str):
-        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation failed")
-        if run_id is None:
-            return
-        self._on_subtitle_generation_failed(run_id, error_text, diagnostics)
+        self._forward_active_subtitle_worker_event(
+            "subtitle generation failed",
+            self._on_subtitle_generation_failed,
+            error_text,
+            diagnostics,
+        )
 
     @Slot()
     def _on_subtitle_generation_canceled_from_worker(self):
-        run_id = self._current_run_id_for_active_subtitle_worker("subtitle generation canceled")
-        if run_id is None:
-            return
-        self._on_subtitle_generation_canceled(run_id)
+        self._forward_active_subtitle_worker_event(
+            "subtitle generation canceled",
+            self._on_subtitle_generation_canceled,
+        )
 
     def _on_worker_status_changed(self, run_id: int, text: str):
         if not self._is_current_run_event(run_id, "status update"):
