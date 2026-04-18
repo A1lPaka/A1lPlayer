@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import signal
@@ -18,13 +17,11 @@ from services.runtime.RuntimeHelperProtocol import (
     HELPER_SUBTITLE_GENERATION,
     SubtitleGenerationRequest,
 )
+from services.runtime.JsonSubprocessWorker import JsonSubprocessWorkerBase
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from services.subtitles.SubtitleMaker import probe_audio_streams
-from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
-    CancelAwareWorkerMixin,
-    TerminalEventMixin,
     build_exception_diagnostics,
     build_process_diagnostics,
 )
@@ -80,7 +77,7 @@ class AudioStreamProbeWorker(QObject):
         self.finished.emit(self._probe_request_id, self._media_path, list(audio_streams))
 
 
-class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWorkerMixin, TerminalEventMixin):
+class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
     progress_changed = Signal(int)
     status_changed = Signal(str)
     details_changed = Signal(str)
@@ -103,19 +100,16 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             output_path=options.output_path,
             auto_open_after_generation=options.auto_open_after_generation,
         )
-        self._init_subprocess_lifecycle()
-        self._init_cancel_state()
-        self._init_terminal_event_state()
+        self._init_json_subprocess_worker()
         self._stderr_buffer = BoundedLineBuffer(max_lines=200)
         self._worker_started_at: float | None = None
+        self._spawn_started_at: float | None = None
         self._first_event_logged = False
 
     @Slot()
     def run(self):
         self._worker_started_at = time.perf_counter()
         launch_spec = build_runtime_helper_launch(HELPER_SUBTITLE_GENERATION)
-        process: subprocess.Popen[str] | None = None
-        stderr_thread = None
 
         self.status_changed.emit("Preparing...")
         self.progress_changed.emit(0)
@@ -137,58 +131,12 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
                 self._request.audio_language or "auto",
                 launch_spec.execution_mode,
             )
-            spawn_started_at = time.perf_counter()
-            process = subprocess.Popen(
-                launch_spec.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                cwd=launch_spec.cwd,
-                **self._subprocess_spawn_options(),
+            result = self._run_json_subprocess(
+                launch_spec=launch_spec,
+                request_json=self._request.to_json(),
+                stderr_buffer=self._stderr_buffer,
             )
-            log_timing(
-                logger,
-                "Subtitle timing",
-                "helper_subprocess_spawn",
-                elapsed_ms_since(spawn_started_at),
-                run_id=self._run_id,
-                media=self._request.media_path,
-                output=self._request.output_path,
-                pid=process.pid,
-                execution_mode=launch_spec.execution_mode,
-            )
-            self._process = process
-            if self._is_cancel_requested():
-                logger.info(
-                    "Subtitle generation subprocess received deferred cancel immediately after launch | media=%s | pid=%s",
-                    self._request.media_path,
-                    process.pid,
-                )
-                self._begin_termination()
-
-            stderr_thread = threading.Thread(
-                target=self._collect_stderr,
-                args=(process,),
-                daemon=True,
-            )
-            stderr_thread.start()
-
-            request_json = self._request.to_json()
-            if process.stdin is None:
-                raise RuntimeError("Subtitle generation process stdin is unavailable.")
-            process.stdin.write(request_json)
-            process.stdin.flush()
-            process.stdin.close()
-
-            self._read_stdout_events(process)
-            return_code = process.wait()
-
-            if stderr_thread is not None:
-                stderr_thread.join(timeout=1.0)
+            return_code = result.return_code
 
             if self._terminal_event_already_emitted():
                 logger.info(
@@ -226,14 +174,6 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
                 self._request.output_path,
             )
             self._emit_failed("Subtitle generation failed to start.", diagnostics)
-        finally:
-            self._process = None
-            if process is not None:
-                self._close_stream(process.stdin)
-                self._close_stream(process.stdout)
-                self._close_stream(process.stderr)
-            if stderr_thread is not None and stderr_thread.is_alive():
-                stderr_thread.join(timeout=0.5)
 
     def cancel(self):
         if not self._request_cancel():
@@ -272,29 +212,15 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
 
         self._begin_termination()
 
-    def _read_stdout_events(self, process: subprocess.Popen[str]):
-        if process.stdout is None:
-            raise RuntimeError("Subtitle generation process stdout is unavailable.")
+    def _handle_invalid_json_stdout(self, line: str):
+        logger.warning(
+            "Subtitle generation subprocess emitted invalid JSON event | media=%s | line=%s",
+            self._request.media_path,
+            line,
+        )
+        self._stderr_buffer.append(f"Invalid stdout event: {line}")
 
-        for raw_line in process.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            self._handle_event_line(line)
-
-    def _handle_event_line(self, line: str):
-        try:
-            event = json.loads(line)
-        except Exception:
-            logger.warning(
-                "Subtitle generation subprocess emitted invalid JSON event | media=%s | line=%s",
-                self._request.media_path,
-                line,
-            )
-            self._stderr_buffer.append(f"Invalid stdout event: {line}")
-            return
-
-        event_type = str(event.get("event") or "").strip().lower()
+    def _handle_json_event(self, event_type: str, event: dict, line: str):
         self._log_first_helper_event(event_type)
         if event_type == EVENT_PROGRESS:
             self.status_changed.emit(str(event.get("status") or "Working..."))
@@ -324,6 +250,30 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             event_type or "<missing>",
         )
         self._stderr_buffer.append(f"Unknown stdout event: {line}")
+
+    def _after_json_subprocess_spawned(self, process: subprocess.Popen[str], launch_spec):
+        log_timing(
+            logger,
+            "Subtitle timing",
+            "helper_subprocess_spawn",
+            elapsed_ms_since(self._spawn_started_at or time.perf_counter()),
+            run_id=self._run_id,
+            media=self._request.media_path,
+            output=self._request.output_path,
+            pid=process.pid,
+            execution_mode=launch_spec.execution_mode,
+        )
+
+    def _spawn_json_subprocess(self, launch_spec):
+        self._spawn_started_at = time.perf_counter()
+        return super()._spawn_json_subprocess(launch_spec)
+
+    def _on_json_subprocess_deferred_cancel(self, process: subprocess.Popen[str]):
+        logger.info(
+            "Subtitle generation subprocess received deferred cancel immediately after launch | media=%s | pid=%s",
+            self._request.media_path,
+            process.pid,
+        )
 
     def _log_first_helper_event(self, event_type: str):
         if self._first_event_logged or self._worker_started_at is None:
@@ -384,18 +334,6 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             ]
         )
 
-    def _collect_stderr(self, process: subprocess.Popen[str]):
-        if process.stderr is None:
-            return
-        try:
-            for line in process.stderr:
-                text = line.rstrip()
-                if text:
-                    self._stderr_buffer.append(text)
-        except OSError:
-            if not self._is_cancel_requested():
-                logger.debug("Subtitle generation stderr stream closed unexpectedly")
-
     def _build_process_diagnostics(self, return_code: int | None) -> str:
         return build_process_diagnostics(
             return_code,
@@ -424,3 +362,6 @@ class SubtitleGenerationWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
 
     def _subprocess_log_name(self) -> str:
         return "subtitle generation subprocess"
+
+    def _json_subprocess_display_name(self) -> str:
+        return "Subtitle generation process"

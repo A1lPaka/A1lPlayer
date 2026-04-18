@@ -1,0 +1,300 @@
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+from PySide6.QtWidgets import QApplication
+
+from models import SubtitleGenerationDialogResult
+from services.runtime.RuntimeExecution import RuntimeLaunchSpec
+from services.runtime.RuntimeInstallerProtocol import (
+    EVENT_CANCELED as CUDA_EVENT_CANCELED,
+    EVENT_FINISHED as CUDA_EVENT_FINISHED,
+    EVENT_STATUS,
+)
+
+
+def _load_real_module(module_name: str, relative_path: str):
+    project_root = Path(__file__).resolve().parents[2]
+    module_path = project_root / relative_path
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _subtitle_options() -> SubtitleGenerationDialogResult:
+    return SubtitleGenerationDialogResult(
+        audio_stream_index=None,
+        audio_language=None,
+        device=None,
+        model_size="small",
+        output_format="srt",
+        output_path="C:/tmp/out.srt",
+        auto_open_after_generation=True,
+    )
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.text = ""
+        self.closed = False
+
+    def write(self, text):
+        self.text += str(text)
+
+    def flush(self):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeStream:
+    def __init__(self, lines):
+        self._lines = list(lines)
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProcess:
+    def __init__(self, *, stdout=(), stderr=(), returncode=0, pid=4321, on_wait=None):
+        self.stdin = _FakeStdin()
+        self.stdout = _FakeStream(stdout)
+        self.stderr = _FakeStream(stderr)
+        self.returncode = None
+        self._final_returncode = returncode
+        self.pid = pid
+        self.wait_calls = 0
+        self._on_wait = on_wait
+
+    def wait(self, timeout=None):
+        self.wait_calls += 1
+        if self._on_wait is not None:
+            self._on_wait()
+        self.returncode = self._final_returncode
+        return self.returncode
+
+    def poll(self):
+        return self.returncode
+
+
+class _AliveProcess:
+    pid = 9876
+
+    def poll(self):
+        return None
+
+
+def _launch_spec():
+    return RuntimeLaunchSpec(
+        runtime_kind="test",
+        runtime_name="test-runtime",
+        command=["python", "-m", "fake"],
+        cwd=None,
+        execution_mode="test",
+    )
+
+
+def _install_fake_popen(monkeypatch, process):
+    import services.runtime.JsonSubprocessWorker as base_module
+
+    calls = []
+
+    def fake_popen(*args, **kwargs):
+        calls.append((args, kwargs))
+        return process
+
+    monkeypatch.setattr(base_module.subprocess, "Popen", fake_popen)
+    return calls
+
+
+def test_subtitle_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_json_lifecycle_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+    process = _FakeProcess(
+        stdout=[
+            "not-json\n",
+            json.dumps({"event": module.EVENT_FINISHED, "output_path": "C:/tmp/out.srt", "auto_open": True}) + "\n",
+        ],
+        returncode=0,
+    )
+    _install_fake_popen(monkeypatch, process)
+    monkeypatch.setattr(module, "build_runtime_helper_launch", lambda _helper: _launch_spec())
+
+    worker = module.SubtitleGenerationWorker(3, "C:/media/movie.mkv", _subtitle_options())
+    finished = []
+    failed = []
+    worker.finished.connect(lambda path, auto_open, fallback: finished.append((path, auto_open, fallback)))
+    worker.failed.connect(lambda message, diagnostics: failed.append((message, diagnostics)))
+
+    worker.run()
+
+    assert finished == [("C:/tmp/out.srt", True, False)]
+    assert failed == []
+    assert "Invalid stdout event: not-json" in worker._stderr_buffer.consume_text()
+    assert process.stdin.closed is True
+
+
+def test_cuda_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as module
+
+    monkeypatch.setattr(module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    process = _FakeProcess(
+        stdout=[
+            "bad-status\n",
+            json.dumps({"event": CUDA_EVENT_FINISHED}) + "\n",
+        ],
+        returncode=0,
+    )
+    _install_fake_popen(monkeypatch, process)
+    monkeypatch.setattr(module, "build_runtime_installer_launch", lambda _installer: _launch_spec())
+
+    worker = module.CudaRuntimeInstallWorker(["nvidia-cuda-runtime-cu12"])
+    finished = []
+    failed = []
+    worker.finished.connect(lambda: finished.append(True))
+    worker.failed.connect(lambda message: failed.append(message))
+
+    worker.run()
+    QApplication.processEvents()
+
+    assert finished == [True]
+    assert failed == []
+    assert "Invalid stdout event: bad-status" in worker._stdout_buffer.consume_text()
+    assert process.stdin.closed is True
+
+
+def test_known_terminal_events_emit_worker_signals(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as cuda_module
+
+    subtitle_module = _load_real_module(
+        "real_subtitle_generation_workers_terminal_event_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+
+    subtitle_worker = subtitle_module.SubtitleGenerationWorker(4, "C:/media/movie.mkv", _subtitle_options())
+    subtitle_finished = []
+    subtitle_worker.finished.connect(lambda path, auto_open, fallback: subtitle_finished.append((path, auto_open, fallback)))
+    subtitle_worker._handle_event_line(
+        json.dumps(
+            {
+                "event": subtitle_module.EVENT_FINISHED,
+                "output_path": "C:/tmp/sub.srt",
+                "auto_open": False,
+                "used_fallback_output_path": True,
+            }
+        )
+    )
+
+    monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    cuda_worker = cuda_module.CudaRuntimeInstallWorker(["pkg"])
+    statuses = []
+    canceled = []
+    cuda_worker.status_changed.connect(lambda text: statuses.append(text))
+    cuda_worker.canceled.connect(lambda: canceled.append(True))
+    cuda_worker._handle_event_line(json.dumps({"event": EVENT_STATUS, "status": "Installing", "details": "Step 1"}))
+    cuda_worker._handle_event_line(json.dumps({"event": CUDA_EVENT_CANCELED}))
+
+    assert subtitle_finished == [("C:/tmp/sub.srt", False, True)]
+    assert statuses == ["Installing"]
+    assert canceled == [True]
+
+
+def test_subtitle_exit_without_terminal_event_fails_or_cancels(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_missing_terminal_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+    process = _FakeProcess(stdout=[], stderr=["helper stderr\n"], returncode=2)
+    _install_fake_popen(monkeypatch, process)
+    monkeypatch.setattr(module, "build_runtime_helper_launch", lambda _helper: _launch_spec())
+
+    worker = module.SubtitleGenerationWorker(5, "C:/media/movie.mkv", _subtitle_options())
+    failed = []
+    worker.failed.connect(lambda message, diagnostics: failed.append((message, diagnostics)))
+
+    worker.run()
+
+    assert failed == [("Subtitle generation stopped unexpectedly.", "returncode=2\n\nhelper stderr")]
+
+    canceled_worker = module.SubtitleGenerationWorker(6, "C:/media/movie.mkv", _subtitle_options())
+    canceled = []
+    canceled_worker.canceled.connect(lambda: canceled.append(True))
+    canceling_process = _FakeProcess(
+        stdout=[],
+        stderr=[],
+        returncode=1,
+        on_wait=canceled_worker._request_cancel,
+    )
+    _install_fake_popen(monkeypatch, canceling_process)
+    canceled_worker.run()
+
+    assert canceled == [True]
+
+
+def test_cuda_exit_without_terminal_event_uses_user_error_tail(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as module
+
+    monkeypatch.setattr(module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    process = _FakeProcess(stdout=["stdout tail\n"], stderr=["stderr tail\n"], returncode=9)
+    _install_fake_popen(monkeypatch, process)
+    monkeypatch.setattr(module, "build_runtime_installer_launch", lambda _installer: _launch_spec())
+
+    worker = module.CudaRuntimeInstallWorker(["pkg"])
+    failed = []
+    worker.failed.connect(lambda message: failed.append(message))
+
+    worker.run()
+
+    assert failed == ["Failed to install GPU runtime:\nstderr tail"]
+
+    canceled_worker = module.CudaRuntimeInstallWorker(["pkg"])
+    canceled = []
+    canceled_worker.canceled.connect(lambda: canceled.append(True))
+    canceling_process = _FakeProcess(stdout=[], stderr=[], returncode=1, on_wait=canceled_worker._request_cancel)
+    _install_fake_popen(monkeypatch, canceling_process)
+
+    canceled_worker.run()
+    QApplication.processEvents()
+
+    assert canceled == [True]
+
+
+def test_repeated_cancel_is_idempotent_and_force_stop_hard_kills_alive_process(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as cuda_module
+
+    monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    subtitle_module = _load_real_module(
+        "real_subtitle_generation_workers_stop_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+
+    subtitle_worker = subtitle_module.SubtitleGenerationWorker(7, "C:/media/movie.mkv", _subtitle_options())
+    subtitle_begin_calls = []
+    monkeypatch.setattr(subtitle_worker, "_begin_termination", lambda: subtitle_begin_calls.append(True))
+    subtitle_worker.cancel()
+    subtitle_worker.cancel()
+    assert subtitle_begin_calls == [True]
+
+    cuda_worker = cuda_module.CudaRuntimeInstallWorker(["pkg"])
+    cuda_begin_calls = []
+    kill_calls = []
+    cuda_worker._process = _AliveProcess()
+    monkeypatch.setattr(cuda_worker, "_begin_termination", lambda: cuda_begin_calls.append(True))
+    monkeypatch.setattr(cuda_worker, "_kill_process_tree", lambda process: kill_calls.append(process.pid))
+
+    cuda_worker.force_stop()
+    cuda_worker.force_stop()
+
+    assert kill_calls == [9876, 9876]
+    assert cuda_begin_calls == [True, True]

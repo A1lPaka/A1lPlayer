@@ -1,12 +1,10 @@
-import json
 import logging
-import subprocess
-import threading
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from services.runtime.CudaRuntimeInstaller import resolve_cuda_runtime_install_target
 from services.runtime.RuntimeExecution import build_runtime_installer_launch
+from services.runtime.JsonSubprocessWorker import JsonSubprocessWorkerBase
 from services.runtime.RuntimeInstallerProtocol import CudaRuntimeInstallRequest
 from services.runtime.RuntimeInstallerProtocol import (
     EVENT_CANCELED,
@@ -15,11 +13,8 @@ from services.runtime.RuntimeInstallerProtocol import (
     EVENT_STATUS,
     INSTALLER_CUDA_RUNTIME,
 )
-from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
-    CancelAwareWorkerMixin,
-    TerminalEventMixin,
     build_exception_diagnostics,
     build_process_diagnostics,
 )
@@ -28,7 +23,7 @@ from services.runtime.SubprocessWorkerSupport import (
 logger = logging.getLogger(__name__)
 
 
-class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWorkerMixin, TerminalEventMixin):
+class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
     status_changed = Signal(str)
     details_changed = Signal(str)
     finished = Signal()
@@ -45,9 +40,7 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             packages=tuple(str(package).strip() for package in packages if str(package).strip()),
             install_target=str(resolve_cuda_runtime_install_target()),
         )
-        self._init_subprocess_lifecycle()
-        self._init_cancel_state()
-        self._init_terminal_event_state()
+        self._init_json_subprocess_worker()
         self._stderr_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
         self._stdout_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
 
@@ -71,52 +64,13 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             self._emit_canceled()
             return
 
-        process: subprocess.Popen[str] | None = None
-        stdout_thread: threading.Thread | None = None
-        stderr_thread: threading.Thread | None = None
-
         try:
-            process = subprocess.Popen(
-                launch_spec.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                cwd=launch_spec.cwd,
-                **self._subprocess_spawn_options(),
+            result = self._run_json_subprocess(
+                launch_spec=launch_spec,
+                request_json=self._request.to_json(),
+                stderr_buffer=self._stderr_buffer,
+                read_stdout_in_thread=True,
             )
-            self._process = process
-            if self._is_cancel_requested():
-                logger.info(
-                    "CUDA runtime installer worker received deferred cancel immediately after launch | pid=%s",
-                    process.pid,
-                )
-                self._begin_termination()
-
-            stdout_thread = threading.Thread(
-                target=self._read_stdout_events,
-                args=(process,),
-                daemon=True,
-            )
-            stderr_thread = threading.Thread(
-                target=self._collect_stream,
-                args=(process.stderr, self._stderr_buffer, "stderr"),
-                daemon=True,
-            )
-            stdout_thread.start()
-            stderr_thread.start()
-
-            request_json = self._request.to_json()
-            if process.stdin is None:
-                raise RuntimeError("CUDA runtime installer stdin is unavailable.")
-            process.stdin.write(request_json)
-            process.stdin.flush()
-            process.stdin.close()
-
-            return_code = process.wait()
         except Exception as exc:
             diagnostics = self._build_exception_diagnostics(exc)
             logger.exception(
@@ -128,16 +82,6 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
             else:
                 self._emit_failed("GPU runtime installation failed to start.", diagnostics)
             return
-        finally:
-            self._process = None
-            if process is not None:
-                self._close_stream(process.stdin)
-                self._close_stream(process.stdout)
-                self._close_stream(process.stderr)
-            if stdout_thread is not None and stdout_thread.is_alive():
-                stdout_thread.join(timeout=0.5)
-            if stderr_thread is not None and stderr_thread.is_alive():
-                stderr_thread.join(timeout=0.5)
 
         if self._terminal_event_already_emitted():
             logger.info("CUDA runtime installer worker finished after terminal event")
@@ -146,21 +90,21 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
         if self._is_cancel_requested():
             logger.info(
                 "CUDA runtime installer worker canceled after subsystem finished | returncode=%s",
-                return_code,
+                result.return_code,
             )
             self._emit_canceled()
             return
 
-        if process is None or process.returncode is None:
+        if result.process is None or result.process.returncode is None:
             logger.error("CUDA runtime installer worker finished without a valid process result")
             self._emit_failed("GPU runtime installation did not finish correctly.", "")
             return
 
-        diagnostics = self._build_process_diagnostics(process.returncode)
+        diagnostics = self._build_process_diagnostics(result.process.returncode)
         error_text = self._build_user_error_text() or "Unknown installer error."
         logger.error(
             "CUDA runtime installer worker failed without terminal event | returncode=%s | details=%s",
-            process.returncode,
+            result.process.returncode,
             diagnostics or error_text,
         )
         self._emit_failed("Failed to install GPU runtime:", error_text)
@@ -194,37 +138,11 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
 
         self._begin_termination()
 
-    def _collect_stream(self, stream, target: BoundedLineBuffer, stream_name: str):
-        if stream is None:
-            return
-        try:
-            for line in stream:
-                text = line.rstrip()
-                if text:
-                    target.append(text)
-        except OSError:
-            if not self._is_cancel_requested():
-                logger.debug("CUDA runtime installer %s stream closed unexpectedly", stream_name)
+    def _handle_invalid_json_stdout(self, line: str):
+        logger.warning("CUDA runtime installer emitted invalid JSON event | line=%s", line)
+        self._stdout_buffer.append(f"Invalid stdout event: {line}")
 
-    def _read_stdout_events(self, process: subprocess.Popen[str]):
-        if process.stdout is None:
-            raise RuntimeError("CUDA runtime installer stdout is unavailable.")
-
-        for raw_line in process.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            self._handle_event_line(line)
-
-    def _handle_event_line(self, line: str):
-        try:
-            event = json.loads(line)
-        except Exception:
-            logger.warning("CUDA runtime installer emitted invalid JSON event | line=%s", line)
-            self._stdout_buffer.append(f"Invalid stdout event: {line}")
-            return
-
-        event_type = str(event.get("event") or "").strip().lower()
+    def _handle_json_event(self, event_type: str, event: dict, line: str):
         if event_type == EVENT_STATUS:
             self.status_changed.emit(str(event.get("status") or "Installing GPU runtime..."))
             self.details_changed.emit(str(event.get("details") or ""))
@@ -244,6 +162,12 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
 
         logger.warning("CUDA runtime installer emitted unknown event type | event=%s", event_type or "<missing>")
         self._stdout_buffer.append(f"Unknown stdout event: {line}")
+
+    def _on_json_subprocess_deferred_cancel(self, process):
+        logger.info(
+            "CUDA runtime installer worker received deferred cancel immediately after launch | pid=%s",
+            process.pid,
+        )
 
     def _emit_finished(self):
         if not self._mark_terminal_event_emitted():
@@ -274,7 +198,7 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
         )
 
     def _build_exception_diagnostics(self, exc: BaseException) -> str:
-        process = self._process
+        process = self._process or getattr(self, "_last_json_subprocess_process", None)
         return_code = process.returncode if process is not None else None
         return build_exception_diagnostics(
             exc,
@@ -292,3 +216,6 @@ class CudaRuntimeInstallWorker(QObject, SubprocessLifecycleMixin, CancelAwareWor
 
     def _subprocess_log_name(self) -> str:
         return "CUDA runtime installer process"
+
+    def _json_subprocess_display_name(self) -> str:
+        return "CUDA runtime installer"
