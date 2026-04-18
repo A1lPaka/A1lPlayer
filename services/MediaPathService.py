@@ -20,9 +20,6 @@ def build_file_dialog_filter(label: str, extensions) -> str:
 
 
 class MediaPathService:
-    MEDIA_EXTENSIONS = frozenset(MEDIA_EXTENSIONS)
-    SUBTITLE_EXTENSIONS = frozenset(SUBTITLE_EXTENSIONS)
-
     def collect_media_files(self, folder_path: str) -> list[str]:
         file_paths: list[str] = []
         try:
@@ -30,7 +27,7 @@ class MediaPathService:
                 if not entry.is_file():
                     continue
                 _, ext = os.path.splitext(entry.name)
-                if ext.lower() in self.MEDIA_EXTENSIONS:
+                if ext.lower() in MEDIA_EXTENSIONS:
                     file_paths.append(entry.path)
         except OSError:
             logger.exception("Failed to scan media folder | folder=%s", folder_path)
@@ -119,8 +116,8 @@ class MediaPathService:
     def _classify_file_path(self, path: str) -> str | None:
         _, ext = os.path.splitext(path)
         ext = ext.lower()
-        if ext in self.MEDIA_EXTENSIONS:
+        if ext in MEDIA_EXTENSIONS:
             return "media"
-        if ext in self.SUBTITLE_EXTENSIONS:
+        if ext in SUBTITLE_EXTENSIONS:
             return "subtitle"
         return None
