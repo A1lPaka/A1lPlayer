@@ -3,13 +3,18 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 
+from services.runtime.RuntimeExecution import (
+    EVENT_CANCELED,
+    EVENT_FAILED,
+    EVENT_FINISHED,
+    build_canceled_event,
+    build_failed_event,
+)
+
 
 HELPER_SUBTITLE_GENERATION = "subtitle-generation"
 
 EVENT_PROGRESS = "progress"
-EVENT_FINISHED = "finished"
-EVENT_FAILED = "failed"
-EVENT_CANCELED = "canceled"
 
 
 @dataclass(frozen=True)
@@ -62,18 +67,6 @@ def build_finished_event(
         "auto_open": bool(auto_open),
         "used_fallback_output_path": bool(used_fallback_output_path),
     }
-
-
-def build_failed_event(user_message: str, diagnostics: str | None = None) -> dict:
-    return {
-        "event": EVENT_FAILED,
-        "user_message": str(user_message),
-        "diagnostics": str(diagnostics or ""),
-    }
-
-
-def build_canceled_event() -> dict:
-    return {"event": EVENT_CANCELED}
 
 
 def _coerce_optional_int(value) -> int | None:

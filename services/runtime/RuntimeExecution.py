@@ -9,6 +9,11 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+EVENT_FINISHED = "finished"
+EVENT_FAILED = "failed"
+EVENT_CANCELED = "canceled"
+
+
 @dataclass(frozen=True)
 class RuntimeLaunchSpec:
     runtime_kind: str
@@ -24,6 +29,18 @@ def is_frozen_runtime() -> bool:
 
 def get_runtime_mode_label() -> str:
     return "frozen" if is_frozen_runtime() else "source"
+
+
+def build_failed_event(user_message: str, diagnostics: str | None = None) -> dict:
+    return {
+        "event": EVENT_FAILED,
+        "user_message": str(user_message),
+        "diagnostics": str(diagnostics or ""),
+    }
+
+
+def build_canceled_event() -> dict:
+    return {"event": EVENT_CANCELED}
 
 
 def build_runtime_helper_launch(helper_name: str) -> RuntimeLaunchSpec:

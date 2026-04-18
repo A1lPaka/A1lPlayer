@@ -3,12 +3,17 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 
+from services.runtime.RuntimeExecution import (
+    EVENT_CANCELED,
+    EVENT_FAILED,
+    EVENT_FINISHED,
+    build_canceled_event,
+    build_failed_event,
+)
+
 
 INSTALLER_CUDA_RUNTIME = "cuda-runtime"
 
-EVENT_FINISHED = "finished"
-EVENT_FAILED = "failed"
-EVENT_CANCELED = "canceled"
 EVENT_STATUS = "status"
 
 
@@ -40,15 +45,3 @@ def build_status_event(status: str, details: str = "") -> dict:
 
 def build_finished_event() -> dict:
     return {"event": EVENT_FINISHED}
-
-
-def build_failed_event(user_message: str, diagnostics: str | None = None) -> dict:
-    return {
-        "event": EVENT_FAILED,
-        "user_message": str(user_message),
-        "diagnostics": str(diagnostics or ""),
-    }
-
-
-def build_canceled_event() -> dict:
-    return {"event": EVENT_CANCELED}
