@@ -9,7 +9,11 @@ from typing import IO
 
 from services.runtime.RuntimeExecution import RuntimeLaunchSpec
 from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
-from services.runtime.SubprocessWorkerSupport import CancelAwareWorkerMixin, TerminalEventMixin
+from services.runtime.SubprocessWorkerSupport import (
+    CancelAwareWorkerMixin,
+    SubprocessStopPolicyMixin,
+    TerminalEventMixin,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +25,12 @@ class JsonSubprocessRunResult:
     return_code: int | None
 
 
-class JsonSubprocessWorkerBase(SubprocessLifecycleMixin, CancelAwareWorkerMixin, TerminalEventMixin):
+class JsonSubprocessWorkerBase(
+    SubprocessLifecycleMixin,
+    CancelAwareWorkerMixin,
+    SubprocessStopPolicyMixin,
+    TerminalEventMixin,
+):
     def _init_json_subprocess_worker(self):
         self._init_subprocess_lifecycle()
         self._init_cancel_state()

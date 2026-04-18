@@ -17,6 +17,35 @@ class CancelAwareWorkerMixin:
         return True
 
 
+class SubprocessStopPolicyMixin:
+    def _request_graceful_subprocess_stop(self, on_cancel_requested) -> bool:
+        if not self._request_cancel():
+            return False
+
+        on_cancel_requested()
+        self._begin_termination()
+        return True
+
+    def _request_force_subprocess_stop(self, on_force_requested, on_repeated_force_stop, on_kill_failed) -> bool:
+        first_request = not self._force_stop_requested
+        if first_request:
+            self._force_stop_requested = True
+            self._request_cancel()
+            on_force_requested()
+        else:
+            on_repeated_force_stop()
+
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                self._kill_process_tree(process)
+            except Exception:
+                on_kill_failed(process)
+
+        self._begin_termination()
+        return first_request
+
+
 class TerminalEventMixin:
     def _init_terminal_event_state(self):
         self._terminal_event_lock = threading.Lock()

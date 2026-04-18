@@ -115,6 +115,32 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
     assert playback.shutdown_calls == 0
 
 
+def test_repeated_force_close_choice_does_not_repeat_force_shutdown():
+    subtitle_service = FakeSubtitleService()
+    subtitle_service.begin_shutdown_result = True
+    subtitle_service.begin_force_shutdown_result = True
+    media_library = FakeMediaLibrary()
+    playback = FakePlaybackShutdown()
+    target = FakeCloseTarget()
+    coordinator = AppCloseCoordinator(
+        target,
+        subtitle_service,
+        media_library,
+        shutdown_playback=playback.shutdown,
+        is_pip_active=lambda: False,
+        teardown_pip_for_shutdown=lambda: None,
+    )
+
+    coordinator.attempt_close()
+    coordinator._on_shutdown_timeout()
+    coordinator._on_force_close_after_timeout()
+    coordinator._on_force_close_after_timeout()
+
+    assert subtitle_service.begin_force_shutdown_calls == 1
+    assert media_library.shutdown_calls == 0
+    assert playback.shutdown_calls == 0
+
+
 def test_force_close_with_synchronous_shutdown_requests_final_close():
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True

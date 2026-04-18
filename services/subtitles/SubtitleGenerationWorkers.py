@@ -176,41 +176,40 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
             self._emit_failed("Subtitle generation failed to start.", diagnostics)
 
     def cancel(self):
-        if not self._request_cancel():
+        if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
             logger.info("Repeated cancel request ignored for subtitle generation subprocess | media=%s", self._request.media_path)
             return
 
+    def _on_cancel_requested(self):
         logger.info("Cancel requested for subtitle generation subprocess | media=%s", self._request.media_path)
         self.status_changed.emit("Cancellation requested...")
         self.details_changed.emit(self._build_cancel_details())
-        self._begin_termination()
 
     def force_stop(self):
-        if self._force_stop_requested:
-            logger.info(
-                "Repeated force-stop request ignored for subtitle generation subprocess | media=%s",
-                self._request.media_path,
-            )
-        else:
-            self._force_stop_requested = True
-            self._request_cancel()
-            logger.warning(
-                "Force-stop requested for subtitle generation subprocess | media=%s",
-                self._request.media_path,
-            )
+        self._request_force_subprocess_stop(
+            self._on_force_stop_requested,
+            self._on_repeated_force_stop_requested,
+            self._on_force_stop_kill_failed,
+        )
 
-        process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                self._kill_process_tree(process)
-            except Exception:
-                logger.exception(
-                    "Failed to hard-stop subtitle generation subprocess immediately | media=%s | pid=%s",
-                    self._request.media_path,
-                    process.pid,
-                )
+    def _on_force_stop_requested(self):
+        logger.warning(
+            "Force-stop requested for subtitle generation subprocess | media=%s",
+            self._request.media_path,
+        )
 
-        self._begin_termination()
+    def _on_repeated_force_stop_requested(self):
+        logger.info(
+            "Repeated force-stop request ignored for subtitle generation subprocess | media=%s",
+            self._request.media_path,
+        )
+
+    def _on_force_stop_kill_failed(self, process: subprocess.Popen[str]):
+        logger.exception(
+            "Failed to hard-stop subtitle generation subprocess immediately | media=%s | pid=%s",
+            self._request.media_path,
+            process.pid,
+        )
 
     def _handle_invalid_json_stdout(self, line: str):
         logger.warning(

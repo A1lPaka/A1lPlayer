@@ -110,33 +110,32 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
         self._emit_failed("Failed to install GPU runtime:", error_text)
 
     def cancel(self):
-        if not self._request_cancel():
+        if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
             logger.info("Repeated cancel request ignored for CUDA runtime installer worker")
             return
 
+    def _on_cancel_requested(self):
         logger.info("CUDA runtime installer worker cancel requested")
         self.status_changed.emit("Cancelling GPU runtime installation...")
-        self._begin_termination()
 
     def force_stop(self):
-        if self._force_stop_requested:
-            logger.info("Repeated force-stop request ignored for CUDA runtime installer worker")
-        else:
-            self._force_stop_requested = True
-            self._request_cancel()
-            logger.warning("Force-stop requested for CUDA runtime installer worker")
+        self._request_force_subprocess_stop(
+            self._on_force_stop_requested,
+            self._on_repeated_force_stop_requested,
+            self._on_force_stop_kill_failed,
+        )
 
-        process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                self._kill_process_tree(process)
-            except Exception:
-                logger.exception(
-                    "Failed to hard-stop CUDA runtime installer process immediately | pid=%s",
-                    process.pid,
-                )
+    def _on_force_stop_requested(self):
+        logger.warning("Force-stop requested for CUDA runtime installer worker")
 
-        self._begin_termination()
+    def _on_repeated_force_stop_requested(self):
+        logger.info("Repeated force-stop request ignored for CUDA runtime installer worker")
+
+    def _on_force_stop_kill_failed(self, process):
+        logger.exception(
+            "Failed to hard-stop CUDA runtime installer process immediately | pid=%s",
+            process.pid,
+        )
 
     def _handle_invalid_json_stdout(self, line: str):
         logger.warning("CUDA runtime installer emitted invalid JSON event | line=%s", line)

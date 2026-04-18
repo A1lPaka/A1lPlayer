@@ -283,6 +283,25 @@ def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     assert service._ui.closed_progress_dialogs == 1
 
 
+def test_begin_force_shutdown_after_graceful_cancel_escalates_active_worker():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    worker = FakeSubtitleWorker()
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_worker = worker
+    run.subtitle_thread = _RunningThread()
+
+    assert service.begin_shutdown() is True
+    assert service.begin_force_shutdown() is True
+    assert service.begin_force_shutdown() is True
+
+    assert worker.cancel_calls == 1
+    assert worker.force_stop_calls == 1
+    assert run.phase == SubtitlePipelinePhase.CANCELING
+
+
 def test_begin_force_shutdown_requests_force_stop_for_active_cuda_flow():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
@@ -297,6 +316,22 @@ def test_begin_force_shutdown_requests_force_stop_for_active_cuda_flow():
     assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
     assert service._cuda_runtime_flow.request_stop_calls == [True]
     assert service._ui.closed_progress_dialogs == 1
+
+
+def test_begin_force_shutdown_after_graceful_cancel_escalates_cuda_flow():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+
+    run = _seed_active_run(service)
+    run.task = SubtitlePipelineTask.CUDA_INSTALL
+    service._cuda_runtime_flow._active = True
+
+    assert service.begin_shutdown() is True
+    assert service.begin_force_shutdown() is True
+    assert service.begin_force_shutdown() is True
+
+    assert service._cuda_runtime_flow.request_stop_calls == [False, True]
+    assert run.phase == SubtitlePipelinePhase.CANCELING
 
 
 def test_stale_run_events_are_ignored():
