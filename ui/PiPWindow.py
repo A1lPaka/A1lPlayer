@@ -7,6 +7,7 @@ from shiboken6 import isValid
 
 from models.ThemeColor import ThemeState
 from utils import Metrics
+from ui.ThemeApplication import rgb_css, theme_qcolor, theme_rgb
 
 
 class PiPWindow(QWidget):
@@ -410,20 +411,20 @@ class PiPWindow(QWidget):
             self.unsetCursor()
 
     def _apply_style(self):
-        panel_bg = self._theme_tuple("panel_bg_color", (35, 35, 35))
-        panel_bg_hovered = self._theme_tuple("panel_bg_color_hovered", panel_bg)
+        panel_bg = theme_rgb(self.theme_color, "panel_bg_color", (35, 35, 35))
+        panel_bg_hovered = theme_rgb(self.theme_color, "panel_bg_color_hovered", panel_bg)
         self.setStyleSheet(
             f"""
             QWidget#pipWindow {{ background-color: rgb(14, 14, 14); border: none; }}
             QWidget#pipContentHost {{ background-color: rgb(0, 0, 0); }}
             QPushButton#pipCloseButton {{
-                background-color: rgb({panel_bg[0]}, {panel_bg[1]}, {panel_bg[2]});
+                background-color: {rgb_css(panel_bg)};
                 border: none;
                 border-radius: 0;
                 padding: 0;
             }}
             QPushButton#pipCloseButton:hover {{
-                background-color: rgb({panel_bg_hovered[0]}, {panel_bg_hovered[1]}, {panel_bg_hovered[2]});
+                background-color: {rgb_css(panel_bg_hovered)};
             }}
             """
         )
@@ -460,12 +461,6 @@ class PiPWindow(QWidget):
         self._title_animation.setEndValue(target_pos)
         self._title_animation.start()
 
-    def _theme_tuple(self, name: str, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
-        color = self.theme_color.get(name)
-        if isinstance(color, (tuple, list)) and len(color) >= 3:
-            return int(color[0]), int(color[1]), int(color[2])
-        return fallback
-
     def _minimum_content_width(self) -> int:
         return max(self._MIN_CONTENT_WIDTH, int(self.metrics.pip_min_width))
 
@@ -484,7 +479,7 @@ class PiPWindow(QWidget):
         if base_pixmap.isNull():
             return
 
-        text_color = QColor(*self._theme_tuple("text_color", (255, 255, 255)))
+        text_color = theme_qcolor(self.theme_color, "text_color", (255, 255, 255))
         tinted_pixmap = QPixmap(base_pixmap.size())
         tinted_pixmap.fill(Qt.transparent)
 

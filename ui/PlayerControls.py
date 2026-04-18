@@ -3,12 +3,24 @@ from __future__ import annotations
 import os
 
 from PySide6.QtWidgets import QWidget, QAbstractButton, QLabel, QSlider
-from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QPixmap, QPalette
+from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QEvent
 
 from utils import Metrics, res_path, format_ms, format_speed
 from models.ThemeColor import ThemeState
+from ui.ThemeApplication import (
+    apply_bar_theme,
+    apply_button_theme,
+    apply_window_palette,
+    bar_theme,
+    button_theme,
+    popup_button_theme,
+    rgb_css,
+    set_label_text_color,
+    theme_qcolor,
+    theme_rgb,
+)
 
 class ClickableLabel(QLabel):
     clicked = Signal()
@@ -89,15 +101,10 @@ class PlayerControls(QWidget):
         self._setup_font()
         self.setup_style()
 
+        colors = button_theme(self.theme_color)
         for button in self.buttons:
-            button.bg_color = self.theme_color.get("control_button_color")
-            button.bg_color_hovered = self.theme_color.get("control_button_color_hovered")
-            button.bg_color_pressed = self.theme_color.get("control_button_color_pressed")
-            button.update()
-        self.speed_button.bg_color = self.theme_color.get("control_button_color")
-        self.speed_button.bg_color_hovered = self.theme_color.get("control_button_color_hovered")
-        self.speed_button.bg_color_pressed = self.theme_color.get("control_button_color_pressed")
-        self.speed_button.update()
+            apply_button_theme(button, colors)
+        apply_button_theme(self.speed_button, colors)
 
         self.volume_controls.apply_theme(theme_color)
         self.progress_bar.apply_theme(theme_color)
@@ -146,21 +153,15 @@ class PlayerControls(QWidget):
 
     def setup_style(self):
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setAutoFillBackground(True)
-        palette = self.palette()
-        color = self.theme_color.get("panel_bg_color")
-        palette.setColor(QPalette.Window, QColor(*color))
-        self.setPalette(palette)
+        apply_window_palette(self, theme_qcolor(self.theme_color, "panel_bg_color"))
 
     def _setup_font(self):
         font = self.current_time.font()
-        color = self.theme_color.get("text_color")
         font.setPixelSize(self.metrics.font_size if not self._is_pip else int(self.metrics.font_size * 0.8))
-        palette = self.current_time.palette()
-        palette.setColor(QPalette.WindowText, QColor(*color))
-        self.current_time.setPalette(palette)
-        self.total_time.setPalette(palette)
-        self.speed_label.setPalette(palette)
+        text_color = theme_qcolor(self.theme_color, "text_color")
+        set_label_text_color(self.current_time, text_color)
+        set_label_text_color(self.total_time, text_color)
+        set_label_text_color(self.speed_label, text_color)
 
         self.current_time.setFont(font)
         self.total_time.setFont(font)
@@ -209,10 +210,7 @@ class TimePopup(QWidget):
         self.frame = TimePopupFrame(self, theme_color, scale_factor=self.metrics.scale_factor)
 
         self.time_label = QLabel("00:00", self, alignment=Qt.AlignCenter)
-        font_color = theme_color.get("time_popup_text_color")
-        palette = self.time_label.palette()
-        palette.setColor(QPalette.WindowText, QColor(*font_color))
-        self.time_label.setPalette(palette)
+        set_label_text_color(self.time_label, theme_qcolor(theme_color, "time_popup_text_color"))
 
         font = self.time_label.font()
         font.setPixelSize(self.metrics.font_size)
@@ -250,15 +248,8 @@ class TimePopup(QWidget):
         self.update()
 
     def apply_theme(self, theme_color: ThemeState):
-        font_color = theme_color.get("time_popup_text_color")
-        palette = self.time_label.palette()
-        palette.setColor(QPalette.WindowText, QColor(*font_color))
-        self.time_label.setPalette(palette)
-
-        self.frame.bg_color = theme_color.get("time_popup_color")
-        self.frame.bg_color_hovered = self.frame.bg_color
-        self.frame.bg_color_pressed = self.frame.bg_color
-        self.frame.update()
+        set_label_text_color(self.time_label, theme_qcolor(theme_color, "time_popup_text_color"))
+        apply_button_theme(self.frame, popup_button_theme(theme_color))
         self.update()
 
 class SpeedPopup(QWidget):
@@ -326,29 +317,22 @@ class SpeedPopup(QWidget):
     def apply_theme(self, theme_color: ThemeState):
         self.theme_color = theme_color
 
-        panel_bg = QColor(*theme_color.get("panel_bg_color"))
-        text_color = QColor(*theme_color.get("text_color"))
-        active_color = QColor(*theme_color.get("progress_bar_color_active"))
-        inactive_color = QColor(*theme_color.get("control_button_color"))
+        text_color = theme_qcolor(theme_color, "text_color")
+        active_color = theme_rgb(theme_color, "progress_bar_color_active")
+        inactive_color = theme_rgb(theme_color, "control_button_color")
 
-        palette = self.palette()
-        palette.setColor(QPalette.Window, panel_bg)
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
-
-        label_palette = self.speed_label.palette()
-        label_palette.setColor(QPalette.WindowText, text_color)
-        self.speed_label.setPalette(label_palette)
+        apply_window_palette(self, theme_qcolor(theme_color, "panel_bg_color"))
+        set_label_text_color(self.speed_label, text_color)
 
         self.speed_slider.setStyleSheet(
             f"""
             QSlider::groove:horizontal {{
-                background: rgb({inactive_color.red()}, {inactive_color.green()}, {inactive_color.blue()});
+                background: {rgb_css(inactive_color)};
                 height: 6px;
                 border-radius: 3px;
             }}
             QSlider::sub-page:horizontal {{
-                background: rgb({active_color.red()}, {active_color.green()}, {active_color.blue()});
+                background: {rgb_css(active_color)};
                 height: 6px;
                 border-radius: 3px;
             }}
@@ -359,7 +343,7 @@ class SpeedPopup(QWidget):
                 border-radius: 0px;
             }}
             QSlider::tick-mark:horizontal {{
-                background: rgb({text_color.red()}, {text_color.green()}, {text_color.blue()});
+                background: {rgb_css((text_color.red(), text_color.green(), text_color.blue()))};
                 width: 1px;
                 height: 6px;
             }}
@@ -390,9 +374,10 @@ class BaseButton(QAbstractButton):
     def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0, var: str | None = None):
         super().__init__(parent)
         self.setMouseTracking(True)
-        self.bg_color = theme_color.get("time_popup_color") if var == "time_popup" else theme_color.get("control_button_color")
-        self.bg_color_hovered = theme_color.get("control_button_color_hovered")
-        self.bg_color_pressed = theme_color.get("control_button_color_pressed")
+        colors = button_theme(theme_color)
+        self.bg_color = theme_rgb(theme_color, "time_popup_color") if var == "time_popup" else colors.normal
+        self.bg_color_hovered = colors.hovered
+        self.bg_color_pressed = colors.pressed
         self.scale_factor = scale_factor
         self.is_hovered = False
 
@@ -593,10 +578,7 @@ class VolumeControls(QWidget):
         self.update()
 
     def apply_theme(self, theme_color: ThemeState):
-        self.volume_button.bg_color = theme_color.get("control_button_color")
-        self.volume_button.bg_color_hovered = theme_color.get("control_button_color_hovered")
-        self.volume_button.bg_color_pressed = theme_color.get("control_button_color_pressed")
-        self.volume_button.update()
+        apply_button_theme(self.volume_button, button_theme(theme_color))
 
         self.volume_bar.apply_theme(theme_color)
         self.update()
@@ -627,8 +609,9 @@ class VolumeBar(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
 
-        self.active_bg_color = theme_color.get("volume_bar_color_active")
-        self.inactive_bg_color = theme_color.get("volume_bar_color_inactive")
+        colors = bar_theme(theme_color, "volume_bar_color_active", "volume_bar_color_inactive")
+        self.active_bg_color = colors.active
+        self.inactive_bg_color = colors.inactive
 
         self.volume = 1.0
 
@@ -637,9 +620,7 @@ class VolumeBar(QWidget):
         self.update()
 
     def apply_theme(self, theme_color: ThemeState):
-        self.active_bg_color = theme_color.get("volume_bar_color_active")
-        self.inactive_bg_color = theme_color.get("volume_bar_color_inactive")
-        self.update()
+        apply_bar_theme(self, bar_theme(theme_color, "volume_bar_color_active", "volume_bar_color_inactive"))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -728,8 +709,9 @@ class ProgressBar(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
 
-        self.active_bg_color = theme_color.get("progress_bar_color_active")
-        self.inactive_bg_color = theme_color.get("control_button_color")
+        colors = bar_theme(theme_color, "progress_bar_color_active", "control_button_color")
+        self.active_bg_color = colors.active
+        self.inactive_bg_color = colors.inactive
 
         self.value = 0.0
         self._dragging = False
@@ -754,9 +736,7 @@ class ProgressBar(QWidget):
             self.hover_left.emit()
 
     def apply_theme(self, theme_color: ThemeState):
-        self.active_bg_color = theme_color.get("progress_bar_color_active")
-        self.inactive_bg_color = theme_color.get("control_button_color")
-        self.update()
+        apply_bar_theme(self, bar_theme(theme_color, "progress_bar_color_active", "control_button_color"))
 
     def paintEvent(self, event):
         painter = QPainter(self)

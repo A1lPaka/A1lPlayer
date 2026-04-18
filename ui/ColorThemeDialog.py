@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPalette, QPen
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QWidget
 
 from models.ThemeColor import ThemeState
 from utils import Metrics
 from ui.PlayerControls import PlayPauseButton, StopButton, VolumeControls, ProgressBar, TimePopupFrame
+from ui.ThemeApplication import (
+    apply_bar_theme,
+    apply_button_theme,
+    apply_window_palette,
+    bar_theme,
+    button_theme,
+    popup_button_theme,
+    set_label_text_color,
+    theme_qcolor,
+)
 
 
 class ColorThemeDialog(QWidget):
@@ -164,8 +174,7 @@ class ColorThemeDialog(QWidget):
         return current_item.data(Qt.UserRole) if current_item is not None else None
 
     def _theme_qcolor(self, key: str) -> QColor:
-        red, green, blue = self._theme_color.get(key)
-        return QColor(red, green, blue)
+        return theme_qcolor(self._theme_color, key)
 
     def _store_current_color(self, color: QColor):
         key = self._current_theme_key()
@@ -536,51 +545,28 @@ class InterfacePreview(QWidget):
         self.update()
 
     def _apply_palette(self):
-        panel_color = QColor(*self._theme_color.get("panel_bg_color"))
-        self._set_background(self, panel_color)
-        self._set_background(self.player_frame, QColor(0, 0, 0))
-
-        text_color = QColor(*self._theme_color.get("text_color"))
-        popup_text_color = QColor(*self._theme_color.get("time_popup_text_color"))
+        apply_window_palette(self, theme_qcolor(self._theme_color, "panel_bg_color"))
+        apply_window_palette(self.player_frame, QColor(0, 0, 0))
 
         for label in self._text_labels[:-1]:
-            palette = label.palette()
-            palette.setColor(QPalette.WindowText, text_color)
-            label.setPalette(palette)
-
-        popup_palette = self.time_popup_label.palette()
-        popup_palette.setColor(QPalette.WindowText, popup_text_color)
-        self.time_popup_label.setPalette(popup_palette)
+            set_label_text_color(label, theme_qcolor(self._theme_color, "text_color"))
+        set_label_text_color(self.time_popup_label, theme_qcolor(self._theme_color, "time_popup_text_color"))
 
     def _apply_controls(self):
-        normal = self._theme_color.get("control_button_color")
-        hovered = self._theme_color.get("control_button_color_hovered")
-        pressed = self._theme_color.get("control_button_color_pressed")
-
+        colors = button_theme(self._theme_color)
         for button in self._control_buttons:
-            button.bg_color = normal
-            button.bg_color_hovered = hovered
-            button.bg_color_pressed = pressed
-            button.update()
+            apply_button_theme(button, colors)
 
-        self.time_popup.bg_color = self._theme_color.get("time_popup_color")
-        self.time_popup.bg_color_hovered = self.time_popup.bg_color
-        self.time_popup.bg_color_pressed = self.time_popup.bg_color
-        self.time_popup.update()
+        apply_button_theme(self.time_popup, popup_button_theme(self._theme_color))
 
         self._apply_bar_colors()
 
     def _apply_bar_colors(self):
-        self.volume_controls.volume_bar.active_bg_color = self._theme_color.get("volume_bar_color_active")
-        self.volume_controls.volume_bar.inactive_bg_color = self._theme_color.get("volume_bar_color_inactive")
-        self.volume_controls.volume_bar.update()
-
-        self.progress_bar.active_bg_color = self._theme_color.get("progress_bar_color_active")
-        self.progress_bar.inactive_bg_color = self._theme_color.get("control_button_color")
-        self.progress_bar.update()
-
-    def _set_background(self, widget: QWidget, color: QColor):
-        widget.setAutoFillBackground(True)
-        palette = widget.palette()
-        palette.setColor(QPalette.Window, color)
-        widget.setPalette(palette)
+        apply_bar_theme(
+            self.volume_controls.volume_bar,
+            bar_theme(self._theme_color, "volume_bar_color_active", "volume_bar_color_inactive"),
+        )
+        apply_bar_theme(
+            self.progress_bar,
+            bar_theme(self._theme_color, "progress_bar_color_active", "control_button_color"),
+        )
