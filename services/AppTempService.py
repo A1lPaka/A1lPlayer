@@ -1,6 +1,7 @@
 import logging
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -15,6 +16,7 @@ class AppTempService:
     _SUBTITLE_GENERATION_DIR = "subtitle-generation"
     _STARTUP_CLEANUP_MAX_AGE_SECONDS = 24 * 60 * 60
     _startup_cleanup_ran = False
+    _startup_cleanup_lock = threading.Lock()
 
     @classmethod
     def get_app_temp_root(cls) -> Path:
@@ -48,9 +50,10 @@ class AppTempService:
 
     @classmethod
     def cleanup_startup_orphans(cls):
-        if cls._startup_cleanup_ran:
-            return
-        cls._startup_cleanup_ran = True
+        with cls._startup_cleanup_lock:
+            if cls._startup_cleanup_ran:
+                return
+            cls._startup_cleanup_ran = True
 
         app_root = cls.get_app_temp_root()
         if not app_root.exists():
