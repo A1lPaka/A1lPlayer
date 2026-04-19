@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import logging
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
@@ -348,3 +350,18 @@ def test_repeated_cancel_is_idempotent_and_force_stop_hard_kills_alive_process(m
 
     assert kill_calls == [9876, 9876]
     assert cuda_begin_calls == [True, True]
+
+
+def test_json_subprocess_reader_join_timeout_is_logged(caplog):
+    import services.runtime.CudaRuntimeInstallWorker as module
+
+    worker = module.CudaRuntimeInstallWorker(["pkg"])
+    stuck_thread = threading.Thread(target=lambda: None)
+    stuck_thread.name = "test stuck reader"
+    stuck_thread.is_alive = lambda: True
+    stuck_thread.join = lambda timeout=None: None
+
+    with caplog.at_level(logging.WARNING):
+        worker._join_json_subprocess_reader(stuck_thread, timeout=0.5, stream_name="stderr")
+
+    assert "Cuda runtime installer process stderr reader did not stop within 0.5s" in caplog.text

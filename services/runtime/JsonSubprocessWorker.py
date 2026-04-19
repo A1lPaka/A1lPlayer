@@ -64,6 +64,7 @@ class JsonSubprocessWorkerBase(
                 stdout_thread = threading.Thread(
                     target=self._read_stdout_events,
                     args=(process,),
+                    name=f"{self._subprocess_log_name()} stdout reader",
                     daemon=True,
                 )
                 stdout_thread.start()
@@ -71,6 +72,7 @@ class JsonSubprocessWorkerBase(
             stderr_thread = threading.Thread(
                 target=self._collect_stream,
                 args=(process.stderr, stderr_buffer, "stderr"),
+                name=f"{self._subprocess_log_name()} stderr reader",
                 daemon=True,
             )
             stderr_thread.start()
@@ -81,9 +83,9 @@ class JsonSubprocessWorkerBase(
                 self._read_stdout_events(process)
 
             return_code = process.wait()
-            self._join_json_subprocess_reader(stderr_thread, timeout=1.0)
+            self._join_json_subprocess_reader(stderr_thread, timeout=1.0, stream_name="stderr")
             if stdout_thread is not None:
-                self._join_json_subprocess_reader(stdout_thread, timeout=1.0)
+                self._join_json_subprocess_reader(stdout_thread, timeout=1.0, stream_name="stdout")
             return JsonSubprocessRunResult(process=process, return_code=return_code)
         finally:
             self._process = None
@@ -92,9 +94,9 @@ class JsonSubprocessWorkerBase(
                 self._close_stream(process.stdout)
                 self._close_stream(process.stderr)
             if stdout_thread is not None and stdout_thread.is_alive():
-                self._join_json_subprocess_reader(stdout_thread, timeout=0.5)
+                self._join_json_subprocess_reader(stdout_thread, timeout=0.5, stream_name="stdout")
             if stderr_thread is not None and stderr_thread.is_alive():
-                self._join_json_subprocess_reader(stderr_thread, timeout=0.5)
+                self._join_json_subprocess_reader(stderr_thread, timeout=0.5, stream_name="stderr")
 
     def _spawn_json_subprocess(self, launch_spec: RuntimeLaunchSpec) -> subprocess.Popen[str]:
         return subprocess.Popen(
@@ -166,8 +168,15 @@ class JsonSubprocessWorkerBase(
             if not self._is_cancel_requested():
                 logger.debug("%s %s stream closed unexpectedly", self._subprocess_log_name(), stream_name)
 
-    def _join_json_subprocess_reader(self, thread: threading.Thread, *, timeout: float):
+    def _join_json_subprocess_reader(self, thread: threading.Thread, *, timeout: float, stream_name: str):
         thread.join(timeout=timeout)
+        if thread.is_alive():
+            logger.warning(
+                "%s %s reader did not stop within %.1fs",
+                self._subprocess_log_name().capitalize(),
+                stream_name,
+                timeout,
+            )
 
     def _after_json_subprocess_spawned(self, process: subprocess.Popen[str], launch_spec: RuntimeLaunchSpec):
         return None
