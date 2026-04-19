@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QMainWindow
 
 from ui.PiPWindow import PiPWindow
@@ -14,7 +14,7 @@ from utils import Metrics
 logger = logging.getLogger(__name__)
 
 
-class ViewModeController:
+class ViewModeController(QObject):
     _REBIND_FALLBACK_TIMEOUT_MS = 700
     _PLAYBACK_INTERRUPTION_OWNER = "pip_rebind"
 
@@ -26,6 +26,7 @@ class ViewModeController:
         metrics: Metrics | None = None,
         theme_color: ThemeState,
     ):
+        super().__init__(host_window)
         self._host_window = host_window
         self._player_window = player_window
         self._metrics = metrics
@@ -37,13 +38,14 @@ class ViewModeController:
         self._pending_rebind_bound = False
         self._awaiting_rebind_geometry = False
         self._pending_geometry_slot = None
-        self._rebind_fallback_timer = QTimer(self._player_window)
+        self._rebind_fallback_timer = QTimer(self)
         self._rebind_fallback_timer.setSingleShot(True)
         self._rebind_fallback_timer.setInterval(self._REBIND_FALLBACK_TIMEOUT_MS)
         self._rebind_fallback_timer.timeout.connect(self._on_rebind_fallback_timeout)
 
         self._player_window.playback.media_finished.connect(self._on_media_finished)
         self._player_window.video_host_ready.connect(self._on_video_host_ready)
+        self.destroyed.connect(self._on_destroyed)
 
     def is_active(self) -> bool:
         return self._player_window.is_pip_active()
@@ -127,6 +129,7 @@ class ViewModeController:
 
     def teardown_for_shutdown(self):
         if not self.is_active():
+            self._cancel_pending_rebind_transition()
             return
 
         self._cancel_pending_rebind_transition()
@@ -307,3 +310,6 @@ class ViewModeController:
     def _on_media_finished(self, _path: str):
         if self.is_active():
             self.exit_pip()
+
+    def _on_destroyed(self):
+        self._cancel_pending_rebind_transition()
