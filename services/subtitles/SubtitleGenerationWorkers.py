@@ -2,7 +2,6 @@ import logging
 import os
 import signal
 import subprocess
-import threading
 import time
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -38,25 +37,9 @@ class AudioStreamProbeWorker(QObject):
         super().__init__()
         self._probe_request_id = int(probe_request_id)
         self._media_path = str(media_path)
-        self._thread: threading.Thread | None = None
 
-    def start(self):
-        if self._thread is not None:
-            logger.debug(
-                "Ignoring repeated audio stream probe worker start | probe_request_id=%s | media=%s",
-                self._probe_request_id,
-                self._media_path,
-            )
-            return
-
-        self._thread = threading.Thread(
-            target=self._run,
-            name=f"audio-stream-probe-{self._probe_request_id}",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def _run(self):
+    @Slot()
+    def run(self):
         try:
             logger.info(
                 "Starting background audio stream probe | probe_request_id=%s | media=%s",

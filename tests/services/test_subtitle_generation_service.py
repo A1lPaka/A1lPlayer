@@ -649,6 +649,7 @@ def test_generate_stays_non_blocking_while_audio_tracks_are_loading(monkeypatch)
     assert launch_calls == []
     assert service._service_state == SubtitleServiceState.DIALOG_OPEN
     assert service._active_run is None
+    service._audio_probe_flow.invalidate_active_request("test cleanup")
 
 
 def test_generation_validation_overwrite_confirmation_is_handled_by_service(monkeypatch):
@@ -960,7 +961,7 @@ def test_real_audio_stream_probe_worker_emits_finished_with_list_result(monkeypa
     worker.finished.connect(lambda request_id, media_path, audio_streams: finished_calls.append((request_id, media_path, audio_streams)))
     worker.failed.connect(lambda request_id, media_path, reason: failed_calls.append((request_id, media_path, reason)))
 
-    worker._run()
+    worker.run()
 
     assert finished_calls == [(11, "C:/media/movie.mkv", [_AudioStream(1, "C:/media/movie.mkv-track")])]
     assert failed_calls == []
@@ -980,41 +981,23 @@ def test_real_audio_stream_probe_worker_emits_failure_on_probe_error(monkeypatch
     worker.finished.connect(lambda request_id, media_path, audio_streams: finished_calls.append((request_id, media_path, audio_streams)))
     worker.failed.connect(lambda request_id, media_path, reason: failed_calls.append((request_id, media_path, reason)))
 
-    worker._run()
+    worker.run()
 
     assert finished_calls == []
     assert failed_calls == [(12, "C:/media/broken.mkv", "probe boom")]
 
 
-def test_real_audio_stream_probe_worker_start_is_idempotent(monkeypatch):
+def test_real_audio_stream_probe_worker_is_qthread_driven():
     module = _load_real_module(
         "real_subtitle_generation_workers_start_test",
         "services/subtitles/SubtitleGenerationWorkers.py",
     )
 
-    created_threads = []
-
-    class _FakeThread:
-        def __init__(self, *, target, name, daemon):
-            self.target = target
-            self.name = name
-            self.daemon = daemon
-            self.start_calls = 0
-            created_threads.append(self)
-
-        def start(self):
-            self.start_calls += 1
-
-    monkeypatch.setattr(module.threading, "Thread", _FakeThread)
-
     worker = module.AudioStreamProbeWorker(13, "C:/media/movie.mkv")
-    worker.start()
-    worker.start()
 
-    assert len(created_threads) == 1
-    assert created_threads[0].name == "audio-stream-probe-13"
-    assert created_threads[0].daemon is True
-    assert created_threads[0].start_calls == 1
+    assert hasattr(worker, "run")
+    assert not hasattr(worker, "start")
+    assert not hasattr(worker, "_thread")
 
 
 def test_real_probe_audio_streams_reports_timeout(monkeypatch):
@@ -1180,32 +1163,68 @@ def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_t
 
 
 def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monkeypatch):
-    workers_module = _load_real_module(
-        "real_subtitle_generation_workers_reopen_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
-    )
     audio_flow_module = sys.modules["services.subtitles.SubtitleGenerationAudioProbeFlow"]
 
-    scheduled_targets = []
+    class _Signal:
+        def __init__(self):
+            self._callbacks = []
+
+        def connect(self, callback, *_args):
+            self._callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in list(self._callbacks):
+                try:
+                    callback(*args)
+                except TypeError:
+                    callback()
+
+    scheduled_starts = []
 
     class _DeferredThread:
-        def __init__(self, *, target, name, daemon):
-            self._target = target
-            self.name = name
-            self.daemon = daemon
-            self.start_calls = 0
+        def __init__(self, _parent=None):
+            self.started = _Signal()
+            self.finished = _Signal()
+            self._running = False
 
         def start(self):
-            self.start_calls += 1
-            scheduled_targets.append(self._target)
+            self._running = True
+            scheduled_starts.append(self.started.emit)
 
-    monkeypatch.setattr(workers_module.threading, "Thread", _DeferredThread)
-    monkeypatch.setattr(
-        workers_module,
-        "probe_audio_streams",
-        lambda media_path: [_AudioStream(1, f"{media_path}-track-{len(scheduled_targets)}")],
-    )
-    monkeypatch.setattr(audio_flow_module, "AudioStreamProbeWorker", workers_module.AudioStreamProbeWorker)
+        def quit(self):
+            if not self._running:
+                return
+            self._running = False
+            self.finished.emit()
+
+        def isRunning(self):
+            return self._running
+
+        def deleteLater(self):
+            return None
+
+    class _DeferredProbeWorker:
+        def __init__(self, probe_request_id, media_path):
+            self._probe_request_id = probe_request_id
+            self._media_path = media_path
+            self.finished = _Signal()
+            self.failed = _Signal()
+
+        def moveToThread(self, _thread):
+            return None
+
+        def run(self):
+            self.finished.emit(
+                self._probe_request_id,
+                self._media_path,
+                [_AudioStream(1, f"{self._media_path}-track-{len(scheduled_starts)}")],
+            )
+
+        def deleteLater(self):
+            return None
+
+    monkeypatch.setattr(audio_flow_module, "QThread", _DeferredThread)
+    monkeypatch.setattr(audio_flow_module, "AudioStreamProbeWorker", _DeferredProbeWorker)
 
     app = QApplication.instance() or QApplication([])
     player = FakePlayerWindow()
@@ -1214,21 +1233,23 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
     service, _store = _make_service(QWidget(), player)
 
     assert service.generate_subtitle() is True
+    app.processEvents()
     first_probe_request_id = service._audio_probe_flow.current_probe_request_id
-    assert len(scheduled_targets) == 1
+    assert len(scheduled_starts) == 1
 
     service._ui.dialog_requests[-1]["on_cancel"]()
     assert service.generate_subtitle() is True
+    app.processEvents()
     second_probe_request_id = service._audio_probe_flow.current_probe_request_id
     assert second_probe_request_id != first_probe_request_id
-    assert len(scheduled_targets) == 2
+    assert len(scheduled_starts) == 2
 
-    scheduled_targets[0]()
+    scheduled_starts[0]()
     app.processEvents()
     assert service._ui.applied_audio_tracks == []
     assert service._audio_probe_flow.current_probe_request_id == second_probe_request_id
 
-    scheduled_targets[1]()
+    scheduled_starts[1]()
     app.processEvents()
     assert service._ui.applied_audio_tracks == [
         {

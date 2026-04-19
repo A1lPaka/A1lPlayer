@@ -472,6 +472,9 @@ def _install_subtitle_service_stubs():
             def start(self):
                 self.start_calls += 1
 
+            def run(self):
+                self.start_calls += 1
+
         class SubtitleGenerationWorker(QObject):
             status_changed = Signal(str)
             progress_changed = Signal(int)
