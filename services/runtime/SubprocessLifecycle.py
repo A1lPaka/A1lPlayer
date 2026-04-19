@@ -16,23 +16,25 @@ class SubprocessLifecycleMixin:
         self._process: subprocess.Popen[str] | None = None
         self._termination_lock = threading.Lock()
         self._termination_started = False
+        self._terminating_process: subprocess.Popen[str] | None = None
         self._force_stop_requested = False
 
     def _begin_termination(self):
         with self._termination_lock:
             if self._termination_started:
                 return
+            process = self._process
             self._termination_started = True
+            self._terminating_process = process
 
         threading.Thread(
             target=self._terminate_process_lifecycle,
+            args=(process,),
             daemon=True,
         ).start()
 
-    def _terminate_process_lifecycle(self):
-        process: subprocess.Popen[str] | None = None
+    def _terminate_process_lifecycle(self, process: subprocess.Popen[str] | None):
         try:
-            process = self._process
             if process is None or process.poll() is not None:
                 return
 
@@ -72,7 +74,9 @@ class SubprocessLifecycleMixin:
             )
         finally:
             with self._termination_lock:
-                self._termination_started = False
+                if self._terminating_process is process:
+                    self._termination_started = False
+                    self._terminating_process = None
 
     def _graceful_cancel_timeout_seconds(self) -> float:
         return float(self._GRACEFUL_CANCEL_TIMEOUT_SECONDS)

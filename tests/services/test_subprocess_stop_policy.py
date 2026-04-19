@@ -1,8 +1,10 @@
+from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.runtime.SubprocessWorkerSupport import CancelAwareWorkerMixin, SubprocessStopPolicyMixin
 
 
 class _AliveProcess:
-    pid = 1234
+    def __init__(self, pid=1234):
+        self.pid = pid
 
     def poll(self):
         return None
@@ -37,6 +39,19 @@ class _StopPolicyHarness(CancelAwareWorkerMixin, SubprocessStopPolicyMixin):
 
     def kill_failed_hook(self, _process):
         self.kill_failed_hooks += 1
+
+
+class _LifecycleHarness(SubprocessLifecycleMixin):
+    def __init__(self, process=None):
+        self._init_subprocess_lifecycle()
+        self._process = process
+        self.terminated_processes = []
+
+    def _request_graceful_stop(self, process):
+        self.terminated_processes.append(process)
+
+    def _kill_process_tree(self, process):
+        self.terminated_processes.append(process)
 
 
 def test_graceful_subprocess_stop_is_idempotent():
@@ -88,3 +103,36 @@ def test_repeated_force_subprocess_stop_only_runs_repeated_hook():
     assert worker.repeated_force_hooks == 1
     assert worker.kill_calls == 2
     assert worker.begin_calls == 2
+
+
+def test_subprocess_lifecycle_terminates_process_snapshot_only():
+    first_process = _AliveProcess(pid=1)
+    second_process = _AliveProcess(pid=2)
+    worker = _LifecycleHarness(first_process)
+    worker._force_stop_requested = True
+
+    worker._terminating_process = first_process
+    worker._termination_started = True
+    worker._process = second_process
+
+    worker._terminate_process_lifecycle(first_process)
+
+    assert worker.terminated_processes == [first_process]
+    assert second_process not in worker.terminated_processes
+    assert worker._termination_started is False
+    assert worker._terminating_process is None
+
+
+def test_subprocess_lifecycle_stale_completion_does_not_clear_active_termination():
+    old_process = _AliveProcess(pid=1)
+    active_process = _AliveProcess(pid=2)
+    worker = _LifecycleHarness(active_process)
+    worker._force_stop_requested = True
+    worker._terminating_process = active_process
+    worker._termination_started = True
+
+    worker._terminate_process_lifecycle(old_process)
+
+    assert worker.terminated_processes == [old_process]
+    assert worker._termination_started is True
+    assert worker._terminating_process is active_process
