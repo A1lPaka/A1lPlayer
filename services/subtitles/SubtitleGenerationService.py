@@ -253,14 +253,25 @@ class SubtitleGenerationService(QObject):
                 self._discard_starting_run("subtitle launch postponed or canceled during CUDA resolution")
             return
 
-        generation_context = self._capture_current_generation_context()
-        if generation_context is None:
+        latest_context = self._capture_current_generation_context()
+        if latest_context is None:
             logger.warning("Subtitle generation aborted because playback context is unavailable before launch")
             self._active_run = None
             self._transition_back_to_dialog("playback context unavailable before launch")
             return
+        if latest_context != run.context:
+            logger.warning(
+                "Subtitle generation aborted because playback context changed before launch | run_id=%s | original_media=%s | original_request_id=%s | active_media=%s | active_request_id=%s",
+                run.run_id,
+                run.context.media_path,
+                run.context.request_id,
+                latest_context.media_path,
+                latest_context.request_id,
+            )
+            self._active_run = None
+            self._transition_back_to_dialog("playback context changed before launch")
+            return
 
-        run.context = generation_context
         run.subtitle_options = resolved_options
         self._launch_subtitle_generation(run, resolved_options)
 

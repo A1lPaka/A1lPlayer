@@ -734,6 +734,44 @@ def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
     ]
 
 
+def test_generation_aborts_when_playback_context_changes_before_launch(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    service, _store = _make_service(QWidget(), player)
+
+    launches = []
+    service.generate_subtitle()
+
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(
+        probe_request_id,
+        player.playback._media_path,
+        [_AudioStream(1, "Audio 1")],
+    )
+    monkeypatch.setattr(
+        service,
+        "_launch_subtitle_generation",
+        lambda run, options: launches.append((run, options)),
+    )
+
+    original_validate = service._preflight.validate_generation_request
+
+    def validate_and_change_media(*args, **kwargs):
+        result = original_validate(*args, **kwargs)
+        player.playback._media_path = "C:/media/other.mkv"
+        player.playback._request_id = 8
+        return result
+
+    monkeypatch.setattr(service._preflight, "validate_generation_request", validate_and_change_media)
+
+    service._ui.dialog_requests[-1]["on_generate"](_options())
+
+    assert launches == []
+    assert service._active_run is None
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
+
+
 def test_generation_dialog_uses_default_only_when_player_reports_single_audio_track(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
