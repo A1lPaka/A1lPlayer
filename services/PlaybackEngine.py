@@ -474,10 +474,19 @@ class PlaybackService(QObject):
     def _flush_player_events_from_qt_thread(self):
         while True:
             with self._queued_player_events_lock:
+                if self._is_shutdown:
+                    self._queued_player_events.clear()
+                    self._player_events_flush_scheduled = False
+                    return
                 if not self._queued_player_events:
                     self._player_events_flush_scheduled = False
                     return
                 event_name, request_id, media_path = self._queued_player_events.popleft()
+            if self._is_shutdown:
+                with self._queued_player_events_lock:
+                    self._queued_player_events.clear()
+                    self._player_events_flush_scheduled = False
+                return
             if event_name == "playing":
                 self.playing.emit(request_id)
                 if request_id == self._current_request_id:

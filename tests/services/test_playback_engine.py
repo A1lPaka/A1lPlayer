@@ -110,3 +110,20 @@ def test_late_media_error_keeps_original_request_id(monkeypatch):
             "Failed to open or play this media file. The file may be corrupted or unsupported.",
         )
     ]
+
+
+def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    playing = SignalRecorder()
+    service.playing.connect(playing)
+
+    service._queued_player_events.append(("playing", 1, "A.mp4"))
+    service._player_events_flush_scheduled = True
+    service._is_shutdown = True
+
+    service._flush_player_events_from_qt_thread()
+
+    assert playing.calls == []
+    assert list(service._queued_player_events) == []
+    assert service._player_events_flush_scheduled is False
