@@ -546,7 +546,12 @@ class PlaybackService(QObject):
                 self.video_geometry_changed.emit(*geometry)
             return
 
-        QTimer.singleShot(delay_ms, lambda: self._schedule_video_geometry_probe(attempts - 1, delay_ms))
+        QTimer.singleShot(delay_ms, lambda: self._continue_video_geometry_probe(attempts - 1, delay_ms))
+
+    def _continue_video_geometry_probe(self, attempts: int, delay_ms: int):
+        if self._is_shutdown:
+            return
+        self._schedule_video_geometry_probe(attempts, delay_ms)
 
     def _prepare_runtime_subtitle_copy(self, subtitle_path: str) -> str | None:
         source_path = Path(subtitle_path)

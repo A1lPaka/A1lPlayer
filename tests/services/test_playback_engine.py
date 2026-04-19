@@ -127,3 +127,29 @@ def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
     assert playing.calls == []
     assert list(service._queued_player_events) == []
     assert service._player_events_flush_scheduled is False
+
+
+def test_video_geometry_probe_callback_stops_after_shutdown(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    scheduled_callbacks = []
+    probe_calls = []
+
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda _delay_ms, callback: scheduled_callbacks.append(callback))
+    monkeypatch.setattr(service, "get_video_dimensions", lambda: None)
+
+    original_schedule = service._schedule_video_geometry_probe
+
+    def tracking_schedule(attempts=12, delay_ms=120):
+        probe_calls.append((attempts, delay_ms))
+        return original_schedule(attempts, delay_ms)
+
+    monkeypatch.setattr(service, "_schedule_video_geometry_probe", tracking_schedule)
+
+    service._schedule_video_geometry_probe(attempts=2, delay_ms=1)
+    assert len(scheduled_callbacks) == 1
+
+    service._is_shutdown = True
+    scheduled_callbacks[0]()
+
+    assert probe_calls == [(2, 1)]
