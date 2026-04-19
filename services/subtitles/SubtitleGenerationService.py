@@ -377,6 +377,9 @@ class SubtitleGenerationService(QObject):
             ", ".join(missing_packages),
         )
         choice = prompt_cuda_runtime_choice(self._parent, missing_packages)
+        if not self._starting_run_matches_current_context(run, "CUDA runtime prompt"):
+            return None
+
         if choice == "cancel":
             logger.info("User canceled subtitle generation after CUDA runtime prompt | run_id=%s", run.run_id)
             return None
@@ -388,6 +391,34 @@ class SubtitleGenerationService(QObject):
         run.subtitle_options = options
         self._start_cuda_runtime_install(run, missing_packages)
         return None
+
+    def _starting_run_matches_current_context(self, run: SubtitlePipelineRun, event_name: str) -> bool:
+        self._assert_pipeline_thread()
+        if run is not self._active_run:
+            logger.debug("Ignoring %s result for stale subtitle pipeline run | run_id=%s", event_name, run.run_id)
+            return False
+        if run.phase != SubtitlePipelinePhase.STARTING:
+            logger.warning(
+                "Rejected %s result because run phase is not launchable | run_id=%s | phase=%s",
+                event_name,
+                run.run_id,
+                run.phase.name,
+            )
+            return False
+        latest_context = self._capture_current_generation_context()
+        if latest_context == run.context:
+            return True
+
+        logger.warning(
+            "Rejected %s result because playback context changed | run_id=%s | original_media=%s | original_request_id=%s | active_media=%s | active_request_id=%s",
+            event_name,
+            run.run_id,
+            run.context.media_path,
+            run.context.request_id,
+            latest_context.media_path if latest_context is not None else "<none>",
+            latest_context.request_id if latest_context is not None else "<none>",
+        )
+        return False
 
     def _start_cuda_runtime_install(
         self,

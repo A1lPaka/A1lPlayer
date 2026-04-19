@@ -261,6 +261,46 @@ def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatc
     assert service._service_state == SubtitleServiceState.IDLE
 
 
+def test_cuda_download_prompt_does_not_start_install_after_context_change(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    service, _store = _make_service(QWidget(), player)
+
+    service.generate_subtitle()
+
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(
+        probe_request_id,
+        player.playback._media_path,
+        [_AudioStream(1, "Audio 1")],
+    )
+    start_calls = []
+
+    def prompt_and_change_media(_parent, _packages):
+        player.playback._media_path = "C:/media/other.mkv"
+        player.playback._request_id = 8
+        return "download"
+
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationService.get_missing_windows_cuda_runtime_packages",
+        lambda: ["nvidia-cuda-runtime-cu12"],
+    )
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationService.prompt_cuda_runtime_choice",
+        prompt_and_change_media,
+    )
+    monkeypatch.setattr(service._cuda_runtime_flow, "start", lambda run_id, packages: start_calls.append((run_id, list(packages))) or True)
+
+    cuda_options = _options()
+    cuda_options.device = "cuda"
+    service._ui.dialog_requests[-1]["on_generate"](cuda_options)
+
+    assert start_calls == []
+    assert service._active_run is None
+    assert service._service_state == SubtitleServiceState.DIALOG_OPEN
+
+
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
