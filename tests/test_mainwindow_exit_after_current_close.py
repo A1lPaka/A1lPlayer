@@ -279,3 +279,43 @@ def test_view_modes_are_blocked_in_mainwindow_until_playback_allows_them(monkeyp
 
     assert window.view_mode_controller.toggle_fullscreen_calls == 1
     assert window.view_mode_controller.enter_calls == 2
+
+
+def test_pip_shortcuts_are_recreated_for_new_pip_window(monkeypatch):
+    installer_module = types.ModuleType("services.runtime.RuntimeInstallerMain")
+    helper_module = types.ModuleType("services.runtime.RuntimeHelperMain")
+    installer_module.try_run_runtime_installer = lambda argv=None: None
+    helper_module.try_run_runtime_helper = lambda argv=None: None
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeInstallerMain", installer_module)
+    monkeypatch.setitem(sys.modules, "services.runtime.RuntimeHelperMain", helper_module)
+    message_box_module = sys.modules.get("ui.MessageBoxService")
+    if message_box_module is not None and not hasattr(message_box_module, "show_playback_error"):
+        monkeypatch.setattr(message_box_module, "show_playback_error", lambda *_args, **_kwargs: None, raising=False)
+    sys.modules.pop("MainWindow", None)
+    module = importlib.import_module("MainWindow")
+
+    monkeypatch.setattr(module, "PlayerWindow", _PlayerWindowStub)
+    monkeypatch.setattr(module, "MediaSettingsStore", _MediaSettingsStoreStub)
+    monkeypatch.setattr(module, "MediaLibraryService", _MediaLibraryServiceStub)
+    monkeypatch.setattr(module, "SubtitleGenerationService", _SubtitleGenerationServiceStub)
+    monkeypatch.setattr(module, "MenuBarController", _MenuBarControllerStub)
+    monkeypatch.setattr(module, "ViewModeController", _ViewModeControllerStub)
+    monkeypatch.setattr(module, "get_metrics", lambda _window: type("Metrics", (), {"window_width": 1280, "window_height": 720})())
+    monkeypatch.setattr(module, "res_path", lambda relative_path: relative_path)
+
+    window = module.MainWindow(settings=QSettings())
+    first_pip_window = QWidget()
+    second_pip_window = QWidget()
+
+    window.init_pip_shortcuts(first_pip_window)
+    first_shortcuts = list(window._pip_shortcuts)
+
+    window.init_pip_shortcuts(first_pip_window)
+
+    assert window._pip_shortcuts == first_shortcuts
+
+    window.init_pip_shortcuts(second_pip_window)
+
+    assert window._pip_shortcuts != first_shortcuts
+    assert window._pip_shortcut_parent is second_pip_window
+    assert all(not shortcut.isEnabled() for shortcut in first_shortcuts)

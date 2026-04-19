@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self._chrome_hidden = False
         self._window_shortcuts: list[QShortcut] = []
         self._pip_shortcuts: list[QShortcut] = []
+        self._pip_shortcut_parent = None
         self._exit_after_current = False
 
         self.media_store = MediaSettingsStore(self.settings)
@@ -185,8 +186,10 @@ class MainWindow(QMainWindow):
         return tuple(bindings)
 
     def init_pip_shortcuts(self, pip_window):
-        if self._pip_shortcuts:
+        if self._pip_shortcuts and self._pip_shortcut_parent is pip_window:
             return
+        self._clear_shortcuts(self._pip_shortcuts)
+        self._pip_shortcut_parent = pip_window
         self._register_shortcuts(
             pip_window,
             self._pip_shortcuts,
@@ -202,6 +205,12 @@ class MainWindow(QMainWindow):
         shortcut.setContext(Qt.WindowShortcut)
         shortcut.activated.connect(handler)
         storage.append(shortcut)
+
+    def _clear_shortcuts(self, storage: list[QShortcut]):
+        for shortcut in storage:
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        storage.clear()
 
     def _take_player_window_for_view_mode(self) -> PlayerWindow | None:
         player_widget = self.takeCentralWidget()
