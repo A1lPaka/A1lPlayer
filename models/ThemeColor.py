@@ -38,7 +38,7 @@ class ThemeState:
         ),
     }
 
-    def __init__(self, colors: dict = None):
+    def __init__(self, colors: dict | None = None):
         self.colors = self.DEFAULTS.copy()
         if colors:
             self.colors.update(colors)
