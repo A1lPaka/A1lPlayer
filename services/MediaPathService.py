@@ -88,6 +88,8 @@ class MediaPathService:
         unique_paths: list[str] = []
         seen: set[str] = set()
         for path in paths:
+            if not isinstance(path, str) or not path.strip():
+                continue
             normalized = normalize_path(path)
             if not normalized or normalized in seen:
                 continue

@@ -258,6 +258,23 @@ def test_playlist_state_load_keeps_missing_paths_without_eager_validation():
     assert playlist.current_index == 0
 
 
+def test_playlist_state_load_rejects_empty_and_non_string_paths():
+    playlist = PlaylistState()
+
+    assert playlist.load(["", "   ", None], start_index=0) is False
+    assert playlist.paths == []
+    assert playlist.current_index == -1
+
+
+def test_playlist_state_load_filters_invalid_paths_without_eager_validation():
+    playlist = PlaylistState()
+    valid_path = "Z:/offline/movie.mp4"
+
+    assert playlist.load(["", None, valid_path], start_index=0) is True
+    assert playlist.paths == [valid_path]
+    assert playlist.current_index == 0
+
+
 def test_open_paths_single_missing_file_fails_strictly():
     controller = PlayerPlaybackController()
     missing_path = "Z:/missing/solo.mp4"

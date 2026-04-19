@@ -100,6 +100,17 @@ def test_open_recent_media_uses_normal_open_flow_without_prevalidation(monkeypat
     assert open_calls == [[missing_path]]
 
 
+def test_open_media_paths_filters_empty_and_non_string_paths(monkeypatch, workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_path = str(workspace_tmp_path / "movie.mp4")
+    (workspace_tmp_path / "movie.mp4").write_text("media")
+
+    assert service.open_media_paths(["", None, "   ", media_path]) is True
+    assert player.playback.last_open_paths["file_paths"] == [media_path]
+
+
 def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     player = FakePlayerWindow()
     store = FakeMediaStore()
