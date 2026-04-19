@@ -59,7 +59,9 @@ def _build_metrics(min_window_side: int, scale_factor: float) -> Metrics:
 
 def get_metrics(widget: QWidget) -> Metrics:
     handle = widget.window().windowHandle() if widget.window() else None
-    screen = handle.screen() if handle else QGuiApplication.primaryScreen()
+    screen = handle.screen() if handle else None
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
 
     if screen is None:
         return _build_metrics(min(BASE_WIDTH, BASE_HEIGHT), 1.0)
