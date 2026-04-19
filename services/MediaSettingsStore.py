@@ -19,6 +19,8 @@ class MediaSettingsStore:
 
     def __init__(self, settings: QSettings | None):
         self._settings = settings
+        self._session_positions_cache: dict[str, int] | None = None
+        self._normalized_session_positions_cache: dict[str, int] | None = None
 
     def load_theme(self) -> ThemeState:
         if self._settings is None:
@@ -69,10 +71,7 @@ class MediaSettingsStore:
 
     def get_saved_position(self, path: str) -> int:
         normalized_path = normalize_path(path)
-        for saved_path, saved_ms in self._load_session_positions().items():
-            if normalize_path(saved_path) == normalized_path:
-                return saved_ms
-        return 0
+        return self._get_normalized_session_positions().get(normalized_path, 0)
 
     def save_position(self, path: str, position_ms: int, total_ms: int):
         if self._settings is None or not path or position_ms <= 0:
@@ -134,6 +133,11 @@ class MediaSettingsStore:
         return position_ms >= threshold_ms
 
     def _load_session_positions(self) -> dict[str, int]:
+        if self._session_positions_cache is None:
+            self._set_session_positions_cache(self._read_session_positions())
+        return dict(self._session_positions_cache)
+
+    def _read_session_positions(self) -> dict[str, int]:
         if self._settings is None:
             return {}
 
@@ -158,6 +162,19 @@ class MediaSettingsStore:
             self._SESSION_POSITIONS_KEY,
             json.dumps(data, ensure_ascii=True),
         )
+        self._set_session_positions_cache(data)
+
+    def _set_session_positions_cache(self, data: dict[str, int]):
+        self._session_positions_cache = dict(data)
+        normalized: dict[str, int] = {}
+        for path, saved_ms in self._session_positions_cache.items():
+            normalized.setdefault(normalize_path(path), saved_ms)
+        self._normalized_session_positions_cache = normalized
+
+    def _get_normalized_session_positions(self) -> dict[str, int]:
+        if self._normalized_session_positions_cache is None:
+            self._load_session_positions()
+        return self._normalized_session_positions_cache or {}
 
     def _get_recent_media_paths(self) -> list[str]:
         if self._settings is None:
