@@ -31,6 +31,8 @@ class JsonSubprocessWorkerBase(
     SubprocessStopPolicyMixin,
     TerminalEventMixin,
 ):
+    _MAX_STDOUT_EVENT_LINE_CHARS = 1_000_000
+
     def _init_json_subprocess_worker(self):
         self._init_subprocess_lifecycle()
         self._init_cancel_state()
@@ -119,11 +121,28 @@ class JsonSubprocessWorkerBase(
         if process.stdout is None:
             raise RuntimeError(f"{self._json_subprocess_display_name()} stdout is unavailable.")
 
-        for raw_line in process.stdout:
+        while True:
+            raw_line = process.stdout.readline(self._MAX_STDOUT_EVENT_LINE_CHARS + 1)
+            if raw_line == "":
+                break
+            if len(raw_line) > self._MAX_STDOUT_EVENT_LINE_CHARS:
+                if not raw_line.endswith("\n"):
+                    self._discard_oversized_stdout_line(process.stdout)
+                self._handle_invalid_json_stdout(
+                    f"stdout event exceeded {self._MAX_STDOUT_EVENT_LINE_CHARS} characters"
+                )
+                continue
+
             line = raw_line.strip()
             if not line:
                 continue
             self._handle_event_line(line)
+
+    def _discard_oversized_stdout_line(self, stream: IO[str]):
+        while True:
+            chunk = stream.readline(self._MAX_STDOUT_EVENT_LINE_CHARS)
+            if chunk == "" or chunk.endswith("\n"):
+                return
 
     def _handle_event_line(self, line: str):
         try:

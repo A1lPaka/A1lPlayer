@@ -54,11 +54,33 @@ class _FakeStdin:
 
 class _FakeStream:
     def __init__(self, lines):
-        self._lines = list(lines)
+        self._buffer = "".join(lines)
+        self._offset = 0
         self.closed = False
 
     def __iter__(self):
-        return iter(self._lines)
+        while True:
+            line = self.readline()
+            if line == "":
+                return
+            yield line
+
+    def readline(self, size=-1):
+        if self._offset >= len(self._buffer):
+            return ""
+
+        newline_index = self._buffer.find("\n", self._offset)
+        if newline_index == -1:
+            end = len(self._buffer)
+        else:
+            end = newline_index + 1
+
+        if size is not None and size >= 0:
+            end = min(end, self._offset + size)
+
+        line = self._buffer[self._offset:end]
+        self._offset = end
+        return line
 
     def close(self):
         self.closed = True
@@ -143,6 +165,34 @@ def test_subtitle_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
     assert failed == []
     assert "Invalid stdout event: not-json" in worker._stderr_buffer.consume_text()
     assert process.stdin.closed is True
+
+
+def test_json_stdout_reader_bounds_oversized_event_lines(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_json_line_limit_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+    process = _FakeProcess(
+        stdout=[
+            "x" * (module.JsonSubprocessWorkerBase._MAX_STDOUT_EVENT_LINE_CHARS + 10),
+            "\n",
+            json.dumps({"event": module.EVENT_FINISHED, "output_path": "C:/tmp/out.srt", "auto_open": True}) + "\n",
+        ],
+        returncode=0,
+    )
+    _install_fake_popen(monkeypatch, process)
+    monkeypatch.setattr(module, "build_runtime_helper_launch", lambda _helper: _launch_spec())
+
+    worker = module.SubtitleGenerationWorker(3, "C:/media/movie.mkv", _subtitle_options())
+    finished = []
+    worker.finished.connect(lambda path, auto_open, fallback: finished.append((path, auto_open, fallback)))
+
+    worker.run()
+
+    diagnostics = worker._stderr_buffer.consume_text()
+    assert "stdout event exceeded" in diagnostics
+    assert "x" * 1000 not in diagnostics
+    assert finished == [("C:/tmp/out.srt", True, False)]
 
 
 def test_cuda_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
