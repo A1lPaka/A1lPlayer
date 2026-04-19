@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 
 from PySide6.QtWidgets import QWidget, QAbstractButton, QLabel, QSlider
 from PySide6.QtGui import QPainter, QColor, QMouseEvent, QWheelEvent, QImage, QPixmap
@@ -368,7 +369,7 @@ class SpeedPopup(QWidget):
         return int(round(clamped / self.STEP_SIZE))
 
 class BaseButton(QAbstractButton):
-    _pixmap_cache: dict[tuple[str, int, int, int, int], QPixmap] = {}
+    _pixmap_cache: OrderedDict[tuple[str, int, int, int, int, int, float], QPixmap] = OrderedDict()
     _MAX_PIXMAP_CACHE_ITEMS = 256
 
     def __init__(self, parent: QWidget | None, theme_color: ThemeState, scale_factor: float = 1.0, var: str | None = None):
@@ -401,6 +402,7 @@ class BaseButton(QAbstractButton):
         cache_key = (svg_filename, width, height, color_rgb[0], color_rgb[1], color_rgb[2], dpr)
         cached = self._pixmap_cache.get(cache_key)
         if cached is not None:
+            self._pixmap_cache.move_to_end(cache_key)
             return cached
 
         svg_path = res_path(os.path.join("assets", svg_filename))
@@ -424,7 +426,7 @@ class BaseButton(QAbstractButton):
         pixmap.setDevicePixelRatio(dpr)
         self._pixmap_cache[cache_key] = pixmap
         while len(self._pixmap_cache) > self._MAX_PIXMAP_CACHE_ITEMS:
-            self._pixmap_cache.pop(next(iter(self._pixmap_cache)))
+            self._pixmap_cache.popitem(last=False)
         return pixmap
 
     def paintEvent(self, event):

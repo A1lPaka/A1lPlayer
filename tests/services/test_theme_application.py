@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QWidget
 from models.ThemeColor import ThemeState
 from ui.ColorThemeDialog import InterfacePreview
 from ui.PiPWindow import PiPWindow
-from ui.PlayerControls import PlayerControls
+from ui.PlayerControls import BaseButton, PlayerControls
 from ui.ThemeApplication import bar_theme, button_theme, theme_qcolor, theme_rgb
 from utils import Metrics
 
@@ -124,3 +124,34 @@ def test_pip_window_apply_theme_keeps_close_icon_available():
     pip_window.apply_theme(pip_window.theme_color)
 
     assert not pip_window._close_button.icon().isNull()
+
+
+def test_base_button_pixmap_cache_keeps_recent_hits(monkeypatch):
+    class _FakeSvgRenderer:
+        def __init__(self, _path):
+            return None
+
+        def render(self, _painter, _rect):
+            return None
+
+    monkeypatch.setattr("ui.PlayerControls.QSvgRenderer", _FakeSvgRenderer)
+    BaseButton._pixmap_cache.clear()
+    previous_limit = BaseButton._MAX_PIXMAP_CACHE_ITEMS
+    BaseButton._MAX_PIXMAP_CACHE_ITEMS = 2
+
+    button = BaseButton(QWidget(), ThemeState())
+    first_key = ("play.svg", 10, 10, 1, 2, 3, 1.0)
+    second_key = ("pause.svg", 10, 10, 1, 2, 3, 1.0)
+    third_key = ("stop.svg", 10, 10, 1, 2, 3, 1.0)
+
+    try:
+        first_pixmap = button._render_tinted_svg("play.svg", 10, 10, (1, 2, 3), 1.0)
+        button._render_tinted_svg("pause.svg", 10, 10, (1, 2, 3), 1.0)
+        assert button._render_tinted_svg("play.svg", 10, 10, (1, 2, 3), 1.0) is first_pixmap
+
+        button._render_tinted_svg("stop.svg", 10, 10, (1, 2, 3), 1.0)
+
+        assert list(BaseButton._pixmap_cache) == [first_key, third_key]
+    finally:
+        BaseButton._pixmap_cache.clear()
+        BaseButton._MAX_PIXMAP_CACHE_ITEMS = previous_limit
