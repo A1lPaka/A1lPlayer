@@ -140,6 +140,35 @@ def test_generation_dialog_pause_respects_existing_playback_interruption():
     assert player.playback.is_playing() is False
 
 
+def test_pipeline_thread_guard_matches_owner_thread():
+    app_thread = object()
+
+    assert (
+        SubtitleGenerationService._is_pipeline_thread(
+            is_main_thread=True,
+            service_thread=app_thread,
+            app_thread=app_thread,
+        )
+        is True
+    )
+    assert (
+        SubtitleGenerationService._is_pipeline_thread(
+            is_main_thread=False,
+            service_thread=app_thread,
+            app_thread=app_thread,
+        )
+        is False
+    )
+    assert (
+        SubtitleGenerationService._is_pipeline_thread(
+            is_main_thread=True,
+            service_thread=object(),
+            app_thread=app_thread,
+        )
+        is False
+    )
+
+
 def test_cancel_transitions_to_canceling_and_is_idempotent():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
