@@ -32,18 +32,10 @@ class SubtitleShutdownCoordinator:
     def has_active_tasks(
         self,
         *,
-        has_pending_subtitle_thread: bool,
-        cuda_runtime_active: bool,
+        background_task_active: bool,
         audio_probe_active: bool,
     ) -> bool:
-        if has_pending_subtitle_thread or cuda_runtime_active or audio_probe_active:
-            return True
-
-        active_job = self._pipeline_state.active_job
-        if active_job is None:
-            return False
-
-        return active_job.keeps_shutdown_pending()
+        return background_task_active or audio_probe_active
 
     def is_shutdown_in_progress(self) -> bool:
         return self._pipeline_state.is_shutdown_in_progress() and not self.completed
@@ -97,15 +89,13 @@ class SubtitleShutdownCoordinator:
     def should_emit_shutdown_finished(
         self,
         *,
-        has_pending_subtitle_thread: bool,
-        cuda_runtime_active: bool,
+        background_task_active: bool,
         audio_probe_active: bool,
     ) -> bool:
         return (
             self.is_shutdown_in_progress()
             and not self.has_active_tasks(
-                has_pending_subtitle_thread=has_pending_subtitle_thread,
-                cuda_runtime_active=cuda_runtime_active,
+                background_task_active=background_task_active,
                 audio_probe_active=audio_probe_active,
             )
         )
