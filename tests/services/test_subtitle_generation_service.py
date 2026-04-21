@@ -12,13 +12,13 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QWidget
 
 from services.MediaLibraryService import MediaLibraryService
-from services.subtitles.SubtitleGenerationService import (
+from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
+from services.subtitles.SubtitlePipelineState import (
     SubtitleGenerationContext,
-    SubtitlePipelineTask,
-    SubtitleGenerationService,
-    SubtitleServiceState,
     SubtitlePipelinePhase,
     SubtitlePipelineResult,
+    SubtitlePipelineTask,
+    SubtitleServiceState,
 )
 from services.subtitles.SubtitleGenerationPreflight import (
     AudioStreamProbeState,
