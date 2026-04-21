@@ -21,6 +21,8 @@ class SubtitleProgressDialog(QWidget):
         self._theme_color = theme_color
         self._metrics = metrics
         self._status_text = "Preparing subtitle generation..."
+        self._close_allowed = False
+        self._cancel_requested = False
         self._init_constants()
         self._build_ui()
         self._apply_fonts()
@@ -51,7 +53,7 @@ class SubtitleProgressDialog(QWidget):
         self.details_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         self.cancel_button = QPushButton("Cancel", self)
-        self.cancel_button.clicked.connect(self.cancelRequested.emit)
+        self.cancel_button.clicked.connect(self._request_cancel_once)
 
     def apply_metrics(self, metrics: Metrics):
         self._metrics = metrics
@@ -110,6 +112,18 @@ class SubtitleProgressDialog(QWidget):
         self.details_label.setGeometry(self.gap, y, width - 2 * self.gap, details_height)
         self.cancel_button.setGeometry(width - self.gap - self.button_width, button_y, self.button_width, self.button_height)
 
+    def closeEvent(self, event):
+        if self._close_allowed:
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+        self._request_cancel_once()
+
+    def close_from_service(self):
+        self._close_allowed = True
+        self.close()
+
     def set_status(self, text: str):
         self._status_text = str(text)
         self._update_status_label()
@@ -137,6 +151,12 @@ class SubtitleProgressDialog(QWidget):
         if self.progress_bar.value() < 0:
             self.progress_bar.setValue(0)
         self._update_status_label()
+
+    def _request_cancel_once(self):
+        if self._cancel_requested:
+            return
+        self._cancel_requested = True
+        self.cancelRequested.emit()
 
     def _apply_fonts(self):
         normal_font = self.font()

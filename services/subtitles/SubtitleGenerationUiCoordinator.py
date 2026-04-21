@@ -137,7 +137,7 @@ class SubtitleGenerationUiCoordinator(QObject):
     def close_progress_dialog(self):
         if self._progress_dialog is None:
             return
-        self._progress_dialog.close()
+        self._progress_dialog.close_from_service()
         self._progress_dialog = None
 
     def update_progress_status(self, text: str):
