@@ -186,16 +186,17 @@ class SubtitleFileWriter:
                 allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
             )
             try:
-                os.replace(temp_path, write_target)
-                final_output_path = str(write_target)
+                if write_target == output_file:
+                    os.replace(temp_path, write_target)
+                    final_output_path = str(write_target)
+                else:
+                    final_output_path = str(self._write_temp_file_to_fallback(temp_path, output_file))
             except PermissionError:
-                fallback_output_file = self._build_fallback_subtitle_output_path(output_file)
                 logger.warning(
-                    "Atomic subtitle overwrite failed because destination is in use; saving with fallback name | requested_output=%s | fallback_output=%s",
+                    "Atomic subtitle overwrite failed because destination is in use; saving with fallback name | requested_output=%s",
                     output_file,
-                    fallback_output_file,
                 )
-                os.replace(temp_path, fallback_output_file)
+                fallback_output_file = self._write_temp_file_to_fallback(temp_path, output_file)
                 final_output_path = str(fallback_output_file)
             log_timing(
                 logger,
@@ -228,16 +229,31 @@ class SubtitleFileWriter:
             raise RuntimeError(f"Failed to write subtitle file: {exc}") from exc
 
     def _build_fallback_subtitle_output_path(self, requested_output_path: Path) -> Path:
+        for candidate in self._iter_fallback_subtitle_output_paths(requested_output_path):
+            if not candidate.exists():
+                return candidate
+
+        raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")
+
+    def _write_temp_file_to_fallback(self, temp_path: str, requested_output_path: Path) -> Path:
+        for candidate in self._iter_fallback_subtitle_output_paths(requested_output_path):
+            try:
+                os.link(temp_path, candidate)
+            except FileExistsError:
+                continue
+
+            self._remove_file_if_exists(temp_path)
+            return candidate
+
+        raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")
+
+    def _iter_fallback_subtitle_output_paths(self, requested_output_path: Path):
         parent_dir = requested_output_path.parent
         stem = requested_output_path.stem
         suffix = requested_output_path.suffix
 
         for index in range(1, 1000):
-            candidate = parent_dir / f"{stem} ({index}){suffix}"
-            if not candidate.exists():
-                return candidate
-
-        raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")
+            yield parent_dir / f"{stem} ({index}){suffix}"
 
     def _resolve_output_write_target(
         self,
