@@ -1360,6 +1360,81 @@ def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_t
     assert canceled == [True]
 
 
+def test_real_generation_dialog_system_close_emits_cancel_once():
+    coordinator_module = _load_real_module(
+        "real_subtitle_generation_ui_coordinator_system_close_test",
+        "services/subtitles/SubtitleGenerationUiCoordinator.py",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    coordinator = coordinator_module.SubtitleGenerationUiCoordinator(
+        parent,
+        theme_color_getter=lambda: __import__("models.ThemeColor", fromlist=["ThemeState"]).ThemeState(),
+    )
+
+    canceled = []
+    coordinator.open_generation_dialog(
+        "C:/media/movie.mkv",
+        on_generate=lambda _result: None,
+        on_cancel=lambda: canceled.append(True),
+    )
+    app.processEvents()
+
+    dialog = coordinator._generation_dialog
+    assert dialog is not None
+
+    dialog.close()
+    app.processEvents()
+
+    assert canceled == [True]
+    assert coordinator._generation_dialog is None
+
+
+def test_real_progress_dialog_system_close_requests_cancel_without_destroying():
+    coordinator_module = _load_real_module(
+        "real_subtitle_generation_ui_coordinator_progress_close_test",
+        "services/subtitles/SubtitleGenerationUiCoordinator.py",
+    )
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    coordinator = coordinator_module.SubtitleGenerationUiCoordinator(
+        parent,
+        theme_color_getter=lambda: __import__("models.ThemeColor", fromlist=["ThemeState"]).ThemeState(),
+    )
+
+    cancel_calls = []
+    coordinator.open_generation_dialog(
+        "C:/media/movie.mkv",
+        on_generate=lambda _result: None,
+    )
+    coordinator.open_generation_progress(_options(), on_cancel=lambda: cancel_calls.append(True))
+    app.processEvents()
+
+    progress_dialog = coordinator._progress_dialog
+    assert progress_dialog is not None
+    assert progress_dialog.isVisible() is True
+
+    progress_dialog.close()
+    app.processEvents()
+
+    assert cancel_calls == [True]
+    assert coordinator._progress_dialog is progress_dialog
+    assert progress_dialog.isVisible() is True
+
+    progress_dialog.close()
+    app.processEvents()
+
+    assert cancel_calls == [True]
+    assert coordinator._progress_dialog is progress_dialog
+
+    coordinator.close_progress_dialog()
+    app.processEvents()
+
+    assert coordinator._progress_dialog is None
+
+
 def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monkeypatch):
     audio_flow_module = sys.modules["services.subtitles.SubtitleGenerationAudioProbeFlow"]
 
