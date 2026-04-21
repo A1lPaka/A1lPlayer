@@ -39,6 +39,16 @@ def test_collect_media_files_sorts_by_basename_and_ignores_non_media(workspace_t
     assert service.collect_media_files(str(folder)) == [str(first), str(second)]
 
 
+def test_deduplicate_paths_treats_relative_and_absolute_paths_as_same(monkeypatch, workspace_tmp_path):
+    service = MediaPathService()
+    media_path = workspace_tmp_path / "movie.mp4"
+    media_path.write_text("media")
+
+    monkeypatch.chdir(workspace_tmp_path)
+
+    assert service.deduplicate_paths(["movie.mp4", str(media_path)]) == ["movie.mp4"]
+
+
 def test_file_dialog_filters_keep_expected_patterns():
     media_filter = build_file_dialog_filter("Media Files", MEDIA_EXTENSIONS)
     subtitle_filter = build_file_dialog_filter("Subtitle Files", SUBTITLE_EXTENSIONS)

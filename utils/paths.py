@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import sys
 
 
@@ -8,4 +9,7 @@ def res_path(relative_path: str) -> str:
 
 
 def normalize_path(path: str) -> str:
-    return os.path.normcase(os.path.normpath(path))
+    try:
+        return os.path.normcase(str(Path(path).expanduser().resolve(strict=False)))
+    except (OSError, RuntimeError, ValueError):
+        return os.path.normcase(os.path.abspath(os.path.normpath(os.path.expanduser(path))))

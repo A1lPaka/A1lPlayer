@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 
 def test_utils_facade_exports_existing_public_names():
@@ -42,5 +43,5 @@ def test_utils_path_and_theme_outputs_are_unchanged():
 
     raw_path = "C:/media/../media/movie.mkv"
 
-    assert normalize_path(raw_path) == os.path.normcase(os.path.normpath(raw_path))
+    assert normalize_path(raw_path) == os.path.normcase(str(Path(raw_path).expanduser().resolve(strict=False)))
     assert color_from_state("inactive", (100, 100, 100)) == (30, 30, 30)
