@@ -205,6 +205,18 @@ def test_pipeline_thread_guard_matches_owner_thread():
     )
 
 
+def test_pipeline_thread_guard_raises_runtime_error(monkeypatch):
+    service, _store = _make_service(QWidget(), FakePlayerWindow())
+
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationService.QThread.isMainThread",
+        lambda: False,
+    )
+
+    with pytest.raises(RuntimeError, match="pipeline state must be mutated"):
+        service._assert_pipeline_thread()
+
+
 def test_cancel_transitions_to_canceling_and_is_idempotent():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)

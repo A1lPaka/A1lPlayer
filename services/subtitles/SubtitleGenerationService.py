@@ -1164,13 +1164,16 @@ class SubtitleGenerationService(QObject):
         if app is None:
             return
 
-        assert self._is_pipeline_thread(
+        if self._is_pipeline_thread(
             is_main_thread=QThread.isMainThread(),
             service_thread=self.thread(),
             app_thread=app.thread(),
-        ), (
-            "SubtitleGenerationService pipeline state must be mutated from its Qt owner thread"
-        )
+        ):
+            return
+
+        message = "SubtitleGenerationService pipeline state must be mutated from its Qt owner thread"
+        logger.critical(message)
+        raise RuntimeError(message)
 
     @staticmethod
     def _is_pipeline_thread(*, is_main_thread: bool, service_thread, app_thread) -> bool:
