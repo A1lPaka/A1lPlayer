@@ -357,7 +357,7 @@ def test_cuda_install_progress_is_opened_by_service_before_flow_start(monkeypatc
 
     monkeypatch.setattr(service._cuda_runtime_flow, "start", fake_start)
 
-    service._start_cuda_runtime_install(run, missing_packages)
+    service._start_flow.start_cuda_runtime_install(run, missing_packages)
 
     assert service._ui.progress_requests == [
         {
@@ -393,11 +393,11 @@ def test_cuda_download_prompt_does_not_start_install_after_context_change(monkey
         return "download"
 
     monkeypatch.setattr(
-        "services.subtitles.SubtitleGenerationService.get_missing_windows_cuda_runtime_packages",
+        "services.subtitles.SubtitleGenerationStartFlow.get_missing_windows_cuda_runtime_packages",
         lambda: ["nvidia-cuda-runtime-cu12"],
     )
     monkeypatch.setattr(
-        "services.subtitles.SubtitleGenerationService.prompt_cuda_runtime_choice",
+        "services.subtitles.SubtitleGenerationStartFlow.prompt_cuda_runtime_choice",
         prompt_and_change_media,
     )
     monkeypatch.setattr(service._cuda_runtime_flow, "start", lambda run_id, packages: start_calls.append((run_id, list(packages))) or True)
@@ -557,7 +557,7 @@ def test_stale_run_events_are_ignored():
     current_run = _seed_active_job(service)
 
     service._on_worker_progress_changed(current_run.run_id + 1, 42)
-    service._on_subtitle_generation_finished(current_run.run_id + 1, "C:/tmp/out.srt", True, False)
+    service._completion_flow.handle_subtitle_generation_finished(current_run.run_id + 1, "C:/tmp/out.srt", True, False)
 
     assert service._ui.progress_updates == []
     assert player.resume_calls == 0
@@ -636,7 +636,7 @@ def test_terminal_completion_clears_active_job_and_resumes_player_ui():
     service._playback_takeover.acquire()
     service._suspend_player_ui_for_generation()
 
-    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
+    service._completion_flow.handle_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
     assert not service.has_active_tasks()
     assert player.resume_calls == 1
@@ -702,7 +702,7 @@ def test_shutdown_terminal_completion_releases_player_ui_suspend_lease_without_p
     service._suspend_player_ui_for_generation()
     _set_dialog_lifecycle(service, SubtitleServiceState.SHUTTING_DOWN)
 
-    service._on_subtitle_generation_canceled(run.run_id)
+    service._completion_flow.handle_subtitle_generation_canceled(run.run_id)
 
     assert not service.has_active_tasks()
     assert service._player_ui_suspend_lease is None
@@ -723,7 +723,7 @@ def test_shutdown_waits_for_subtitle_thread_cleanup_after_terminal_event():
     _set_dialog_lifecycle(service, SubtitleServiceState.SHUTTING_DOWN)
     service.shutdown_finished.connect(lambda: finished.append(True))
 
-    service._on_subtitle_generation_canceled(run.run_id)
+    service._completion_flow.handle_subtitle_generation_canceled(run.run_id)
 
     assert service.is_shutdown_in_progress() is True
     assert finished == []
@@ -745,7 +745,7 @@ def test_shutdown_waits_for_cuda_thread_cleanup_after_terminal_event():
     _set_dialog_lifecycle(service, SubtitleServiceState.SHUTTING_DOWN)
     service.shutdown_finished.connect(lambda: finished.append(True))
 
-    service._on_cuda_runtime_install_canceled(run.run_id)
+    service._completion_flow.handle_cuda_runtime_install_canceled(run.run_id)
 
     assert service.is_shutdown_in_progress() is True
     assert finished == []
@@ -799,7 +799,7 @@ def test_generated_auto_open_uses_unified_context_guard():
 
     run = _seed_active_job(service, media_path="C:/media/movie.mkv", request_id=7)
 
-    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
+    service._completion_flow.handle_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
     assert player.playback.opened_subtitles == []
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]
@@ -816,7 +816,7 @@ def test_generated_auto_open_uses_unified_failure_path():
 
     run = _seed_active_job(service)
 
-    service._on_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
+    service._completion_flow.handle_subtitle_generation_finished(run.run_id, "C:/tmp/generated.srt", True, False)
 
     assert player.playback.opened_subtitles == ["C:/tmp/generated.srt"]
     assert store.saved_last_open_dir == ["C:/tmp/generated.srt"]

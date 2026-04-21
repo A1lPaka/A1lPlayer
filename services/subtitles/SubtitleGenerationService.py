@@ -1,8 +1,5 @@
 import logging
-import os
 import time
-from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
@@ -10,25 +7,17 @@ from PySide6.QtWidgets import QWidget
 
 from models import SubtitleGenerationDialogResult
 from services.MediaSettingsStore import MediaSettingsStore
-from services.MediaLibraryService import SubtitleAttachResult
-from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
+from services.subtitles.SubtitleGenerationCompletionFlow import SubtitleGenerationCompletionFlow
 from services.subtitles.SubtitleGenerationJobRunner import (
     SubtitleGenerationJobRunner,
     can_launch_subtitle_worker_run,
 )
-from services.subtitles.SubtitleGenerationOutcomePresenter import (
-    SubtitleAutoOpenOutcome,
-    SubtitleGenerationOutcomePresenter,
-)
-from services.subtitles.SubtitleGenerationPreflight import (
-    SubtitleGenerationPreflight,
-    SubtitleGenerationValidationFailure,
-    SubtitleGenerationValidationResult,
-)
+from services.subtitles.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
+from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
+from services.subtitles.SubtitleGenerationStartFlow import SubtitleGenerationStartFlow
 from services.subtitles.SubtitlePipelineState import (
-    SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineStateMachine,
@@ -44,10 +33,7 @@ from services.subtitles.SubtitleTaskControl import (
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
-from ui.MessageBoxService import (
-    prompt_cuda_runtime_choice,
-    show_subtitle_generation_already_running,
-)
+from ui.MessageBoxService import show_subtitle_generation_already_running
 from ui.PlayerWindow import PlayerWindow
 
 
@@ -101,11 +87,24 @@ class SubtitleGenerationService(QObject):
         )
         self._audio_probe_flow.thread_finished.connect(self._complete_shutdown_if_possible)
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
+        self._completion_flow = SubtitleGenerationCompletionFlow(
+            store=self._store,
+            media_library=self._media_library,
+            ui=self._ui,
+            pipeline_state=self._pipeline_state,
+            outcome_presenter=self._outcome_presenter,
+            complete_run=lambda run_id, phase, close_progress: self._complete_run(
+                run_id,
+                phase,
+                close_progress=close_progress,
+            ),
+            launch_subtitle_generation=lambda run, options: self._launch_subtitle_generation(run, options),
+        )
         self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
         self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
-        self._cuda_runtime_flow.finished.connect(self._on_cuda_runtime_install_finished)
-        self._cuda_runtime_flow.failed.connect(self._on_cuda_runtime_install_failed)
-        self._cuda_runtime_flow.canceled.connect(self._on_cuda_runtime_install_canceled)
+        self._cuda_runtime_flow.finished.connect(self._completion_flow.handle_cuda_runtime_install_finished)
+        self._cuda_runtime_flow.failed.connect(self._completion_flow.handle_cuda_runtime_install_failed)
+        self._cuda_runtime_flow.canceled.connect(self._completion_flow.handle_cuda_runtime_install_canceled)
         self._cuda_runtime_flow.thread_finished.connect(self._on_cuda_runtime_flow_thread_finished)
         self._subtitle_job_runner = SubtitleGenerationJobRunner(
             parent,
@@ -132,6 +131,22 @@ class SubtitleGenerationService(QObject):
             SubtitlePipelineTask.SUBTITLE_GENERATION: self._ui.show_subtitle_cancel_pending,
             SubtitlePipelineTask.CUDA_INSTALL: self._ui.show_cuda_install_cancel_pending,
         }
+        self._start_flow = SubtitleGenerationStartFlow(
+            parent=parent,
+            player=self._player,
+            ui=self._ui,
+            preflight=self._preflight,
+            validation_presenter=self._validation_presenter,
+            audio_probe_flow=self._audio_probe_flow,
+            pipeline_state=self._pipeline_state,
+            cuda_runtime_flow=self._cuda_runtime_flow,
+            outcome_presenter=self._outcome_presenter,
+            assert_pipeline_thread=self._assert_pipeline_thread,
+            log_dialog_confirm_timing=self._log_dialog_confirm_timing,
+            launch_subtitle_generation=lambda run, options: self._launch_subtitle_generation(run, options),
+            complete_run=lambda run_id, phase: self._complete_run(run_id, phase, close_progress=True),
+            request_active_task_stop=self._request_active_task_stop,
+        )
 
     def generate_subtitle(self) -> bool:
         self._assert_pipeline_thread()
@@ -179,85 +194,11 @@ class SubtitleGenerationService(QObject):
         self._dialog_request_media_path = current_media_path
         self._ui.open_generation_dialog(
             current_media_path,
-            on_generate=self._start_subtitle_generation,
+            on_generate=self._start_flow.start,
             on_cancel=self._on_generation_dialog_canceled,
         )
         self._audio_probe_flow.load_generation_audio_tracks_async(current_media_path)
         return True
-
-    def _start_subtitle_generation(self, options: SubtitleGenerationDialogResult):
-        self._assert_pipeline_thread()
-        self._log_dialog_confirm_timing(options.output_path)
-        if not self._pipeline_state.can_accept_generation_start():
-            logger.warning(
-                "Rejected subtitle generation start because the generation dialog is not active | state=%s",
-                self._pipeline_state.dialog_lifecycle_state.name,
-            )
-            return
-
-        current_media_path = self._player.playback.current_media_path()
-        if not current_media_path:
-            logger.warning("Subtitle generation aborted because current media path disappeared before launch")
-            self._transition_back_to_dialog("media path disappeared before launch")
-            return
-
-        generation_context = self._capture_current_generation_context()
-        if generation_context is None:
-            logger.warning("Subtitle generation aborted because playback context is unavailable before launch")
-            self._transition_back_to_dialog("playback context unavailable before launch")
-            return
-
-        run = self._pipeline_state.begin_run(generation_context, options)
-        preflight_started_at = time.perf_counter()
-        validation_result = self._preflight.validate_generation_request(
-            current_media_path,
-            options,
-            probe_state=self._audio_probe_flow.probe_state_for_media(current_media_path),
-            audio_streams=self._audio_probe_flow.get_cached_audio_streams_for_media(current_media_path),
-            probe_error=self._audio_probe_flow.get_cached_audio_stream_error_for_media(current_media_path),
-        )
-        log_timing(
-            logger,
-            "Subtitle timing",
-            "preflight_validation",
-            elapsed_ms_since(preflight_started_at),
-            run_id=run.run_id,
-            media=run.context.media_path,
-            output=options.output_path,
-        )
-        if not self._validation_presenter.confirm_or_show_failure(validation_result):
-            self._discard_starting_run("subtitle generation preflight failed")
-            return
-        options = self._apply_overwrite_confirmation(options, validation_result)
-        run.requested_options = options
-
-        resolved_options = self._resolve_cuda_runtime_options(options, run)
-        if resolved_options is None:
-            if self._pipeline_state.active_job is run and run.phase == SubtitlePipelinePhase.STARTING:
-                self._discard_starting_run("subtitle launch postponed or canceled during CUDA resolution")
-            return
-
-        latest_context = self._capture_current_generation_context()
-        if latest_context is None:
-            logger.warning("Subtitle generation aborted because playback context is unavailable before launch")
-            self._pipeline_state.discard_active_job()
-            self._transition_back_to_dialog("playback context unavailable before launch")
-            return
-        if latest_context != run.context:
-            logger.warning(
-                "Subtitle generation aborted because playback context changed before launch | run_id=%s | original_media=%s | original_request_id=%s | active_media=%s | active_request_id=%s",
-                run.run_id,
-                run.context.media_path,
-                run.context.request_id,
-                latest_context.media_path,
-                latest_context.request_id,
-            )
-            self._pipeline_state.discard_active_job()
-            self._transition_back_to_dialog("playback context changed before launch")
-            return
-
-        run.subtitle_options = resolved_options
-        self._launch_subtitle_generation(run, resolved_options)
 
     def _launch_subtitle_generation(
         self,
@@ -299,118 +240,6 @@ class SubtitleGenerationService(QObject):
 
         self._pending_subtitle_thread_run_ids.add(run.run_id)
         self._subtitle_job_runner.start(run, options)
-
-    def _resolve_cuda_runtime_options(
-        self,
-        options: SubtitleGenerationDialogResult,
-        run: SubtitlePipelineRun,
-    ) -> SubtitleGenerationDialogResult | None:
-        self._assert_pipeline_thread()
-        if options.device != "cuda":
-            return options
-
-        missing_packages = get_missing_windows_cuda_runtime_packages()
-        if not missing_packages:
-            return options
-
-        logger.info(
-            "CUDA runtime missing for subtitle generation | run_id=%s | media=%s | request_id=%s | packages=%s",
-            run.run_id,
-            run.context.media_path,
-            run.context.request_id,
-            ", ".join(missing_packages),
-        )
-        choice = prompt_cuda_runtime_choice(self._parent, missing_packages)
-        if not self._starting_run_matches_current_context(run, "CUDA runtime prompt"):
-            return None
-
-        if choice == "cancel":
-            logger.info("User canceled subtitle generation after CUDA runtime prompt | run_id=%s", run.run_id)
-            return None
-
-        if choice == "cpu":
-            logger.info("User switched subtitle generation from CUDA to CPU | run_id=%s", run.run_id)
-            return replace(options, device="cpu")
-
-        run.subtitle_options = options
-        self._start_cuda_runtime_install(run, missing_packages)
-        return None
-
-    def _starting_run_matches_current_context(self, run: SubtitlePipelineRun, event_name: str) -> bool:
-        self._assert_pipeline_thread()
-        if run is not self._pipeline_state.active_job:
-            logger.debug("Ignoring %s result for stale subtitle pipeline run | run_id=%s", event_name, run.run_id)
-            return False
-        if run.phase != SubtitlePipelinePhase.STARTING:
-            logger.warning(
-                "Rejected %s result because run phase is not launchable | run_id=%s | phase=%s",
-                event_name,
-                run.run_id,
-                run.phase.name,
-            )
-            return False
-        latest_context = self._capture_current_generation_context()
-        if latest_context == run.context:
-            return True
-
-        logger.warning(
-            "Rejected %s result because playback context changed | run_id=%s | original_media=%s | original_request_id=%s | active_media=%s | active_request_id=%s",
-            event_name,
-            run.run_id,
-            run.context.media_path,
-            run.context.request_id,
-            latest_context.media_path if latest_context is not None else "<none>",
-            latest_context.request_id if latest_context is not None else "<none>",
-        )
-        return False
-
-    def _start_cuda_runtime_install(
-        self,
-        run: SubtitlePipelineRun,
-        missing_packages: list[str],
-    ):
-        self._assert_pipeline_thread()
-        if run is not self._pipeline_state.active_job:
-            logger.debug("Ignoring CUDA runtime install start for stale run | run_id=%s", run.run_id)
-            return
-        if run.phase != SubtitlePipelinePhase.STARTING:
-            logger.warning(
-                "Rejected CUDA runtime install start because run phase is not launchable | run_id=%s | phase=%s",
-                run.run_id,
-                run.phase.name,
-            )
-            return
-
-        self._pipeline_state.set_run_phase(run, SubtitlePipelinePhase.RUNNING, "start CUDA runtime install")
-        if not self._pipeline_state.is_shutdown_in_progress():
-            self._pipeline_state.transition_dialog_lifecycle_state(
-                SubtitleServiceState.IDLE,
-                "generation dialog replaced by CUDA runtime progress",
-                allowed=(SubtitleServiceState.DIALOG_OPEN, SubtitleServiceState.IDLE),
-            )
-
-        logger.info(
-            "Starting CUDA runtime install flow | run_id=%s | media=%s | request_id=%s | packages=%s",
-            run.run_id,
-            run.context.media_path,
-            run.context.request_id,
-            ", ".join(missing_packages),
-        )
-        run.task = SubtitlePipelineTask.CUDA_INSTALL
-        self._ui.open_cuda_install_progress(
-            missing_packages,
-            on_cancel=self._request_active_task_stop,
-        )
-        if not self._cuda_runtime_flow.start(run.run_id, missing_packages):
-            logger.error("CUDA runtime install flow could not be started | run_id=%s", run.run_id)
-            self._complete_run(
-                run.run_id,
-                SubtitlePipelinePhase.FAILED,
-                close_progress=True,
-            )
-            if not self._pipeline_state.is_shutdown_in_progress():
-                self._outcome_presenter.show_cuda_runtime_install_failed("GPU runtime installation could not be started.")
-            return
 
     def _can_start_subtitle_worker(self, run_id: int, thread: QThread, worker) -> bool:
         run = self._require_active_job(run_id, "deferred subtitle worker launch")
@@ -667,7 +496,7 @@ class SubtitleGenerationService(QObject):
     def _on_subtitle_generation_finished_from_worker(self, output_path: str, auto_open: bool, used_fallback_output_path: bool):
         self._forward_active_subtitle_worker_event(
             "subtitle generation finished",
-            self._on_subtitle_generation_finished,
+            self._completion_flow.handle_subtitle_generation_finished,
             output_path,
             auto_open,
             used_fallback_output_path,
@@ -677,7 +506,7 @@ class SubtitleGenerationService(QObject):
     def _on_subtitle_generation_failed_from_worker(self, error_text: str, diagnostics: str):
         self._forward_active_subtitle_worker_event(
             "subtitle generation failed",
-            self._on_subtitle_generation_failed,
+            self._completion_flow.handle_subtitle_generation_failed,
             error_text,
             diagnostics,
         )
@@ -686,7 +515,7 @@ class SubtitleGenerationService(QObject):
     def _on_subtitle_generation_canceled_from_worker(self):
         self._forward_active_subtitle_worker_event(
             "subtitle generation canceled",
-            self._on_subtitle_generation_canceled,
+            self._completion_flow.handle_subtitle_generation_canceled,
         )
 
     def _on_worker_status_changed(self, run_id: int, text: str):
@@ -704,208 +533,6 @@ class SubtitleGenerationService(QObject):
             return
         self._ui.update_progress_details(text)
 
-    def _on_subtitle_generation_finished(self, run_id: int, output_path: str, auto_open: bool, used_fallback_output_path: bool):
-        run = self._require_active_job(run_id, "subtitle generation finished")
-        if run is None:
-            return
-
-        logger.info(
-            "Subtitle generation finished | run_id=%s | media=%s | request_id=%s | output=%s | auto_open=%s",
-            run.run_id,
-            run.context.media_path,
-            run.context.request_id,
-            output_path,
-            auto_open,
-        )
-
-        self._complete_run(
-            run_id,
-            SubtitlePipelinePhase.SUCCEEDED,
-            close_progress=True,
-        )
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            return
-
-        auto_open_outcome = SubtitleAutoOpenOutcome.LOADED
-        if auto_open:
-            attach_result = self._media_library.attach_subtitle(
-                output_path,
-                source="generated",
-                save_last_dir=True,
-                guard_media_path=run.context.media_path,
-                guard_request_id=run.context.request_id,
-            )
-            if attach_result == SubtitleAttachResult.CONTEXT_CHANGED:
-                auto_open_outcome = SubtitleAutoOpenOutcome.CONTEXT_CHANGED
-            elif attach_result == SubtitleAttachResult.LOAD_FAILED:
-                logger.error("Generated subtitle could not be auto-loaded into playback | run_id=%s | output=%s", run.run_id, output_path)
-                auto_open_outcome = SubtitleAutoOpenOutcome.LOAD_FAILED
-        else:
-            self._store.save_last_open_dir(output_path)
-
-        self._outcome_presenter.show_generation_success(
-            output_path,
-            auto_open_outcome,
-            used_fallback_output_path=used_fallback_output_path,
-            requested_output_path=(run.subtitle_options or run.requested_options).output_path,
-        )
-
-    def _on_subtitle_generation_failed(self, run_id: int, error_text: str, diagnostics: str):
-        run = self._require_active_job(run_id, "subtitle generation failed")
-        if run is None:
-            return
-
-        if diagnostics:
-            logger.error(
-                "Subtitle generation failed | run_id=%s | message=%s | diagnostics=%s",
-                run.run_id,
-                error_text,
-                diagnostics,
-            )
-        else:
-            logger.error("Subtitle generation failed | run_id=%s | message=%s", run.run_id, error_text)
-
-        self._complete_run(
-            run_id,
-            SubtitlePipelinePhase.FAILED,
-            close_progress=True,
-        )
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            return
-
-        self._outcome_presenter.show_generation_failed(error_text)
-
-    def _on_subtitle_generation_canceled(self, run_id: int):
-        run = self._require_active_job(run_id, "subtitle generation canceled")
-        if run is None:
-            return
-
-        logger.info("Subtitle generation canceled | run_id=%s", run.run_id)
-        self._complete_run(
-            run_id,
-            SubtitlePipelinePhase.CANCELED,
-            close_progress=True,
-        )
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            return
-
-        self._outcome_presenter.show_generation_canceled()
-
-    def _on_cuda_runtime_install_finished(self, run_id: int):
-        run = self._require_active_job(run_id, "CUDA runtime install finished")
-        if run is None:
-            return
-
-        logger.info("CUDA runtime install flow finished | run_id=%s", run.run_id)
-        self._ui.close_progress_dialog()
-
-        if run.phase == SubtitlePipelinePhase.CANCELING:
-            logger.info("Ignoring CUDA runtime completion because pipeline cancellation is already in progress | run_id=%s", run.run_id)
-            self._complete_run(
-                run_id,
-                SubtitlePipelinePhase.CANCELED,
-                close_progress=False,
-            )
-            return
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            self._complete_run(
-                run_id,
-                SubtitlePipelinePhase.CANCELED,
-                close_progress=False,
-            )
-            return
-
-        if run.subtitle_options is None:
-            logger.warning("CUDA runtime install finished without pending subtitle generation options | run_id=%s", run.run_id)
-            self._complete_run(
-                run_id,
-                SubtitlePipelinePhase.FAILED,
-                close_progress=False,
-            )
-            self._outcome_presenter.show_cuda_runtime_install_failed(
-                "GPU runtime installation finished without subtitle options.",
-            )
-            return
-
-        self._launch_subtitle_generation(run, run.subtitle_options)
-
-    def _on_cuda_runtime_install_failed(self, run_id: int, error_text: str):
-        run = self._require_active_job(run_id, "CUDA runtime install failed")
-        if run is None:
-            return
-
-        logger.error("CUDA runtime install failed | run_id=%s | message=%s", run.run_id, error_text)
-        self._complete_run(
-            run_id,
-            SubtitlePipelinePhase.FAILED,
-            close_progress=True,
-        )
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            return
-
-        self._outcome_presenter.show_cuda_runtime_install_failed(error_text)
-
-    def _on_cuda_runtime_install_canceled(self, run_id: int):
-        run = self._require_active_job(run_id, "CUDA runtime install canceled")
-        if run is None:
-            return
-
-        logger.info("CUDA runtime install canceled | run_id=%s", run.run_id)
-        self._complete_run(
-            run_id,
-            SubtitlePipelinePhase.CANCELED,
-            close_progress=True,
-        )
-
-        if self._pipeline_state.is_shutdown_in_progress():
-            return
-
-        self._outcome_presenter.show_cuda_runtime_install_canceled()
-
-    def _capture_current_generation_context(self) -> SubtitleGenerationContext | None:
-        media_path = self._player.playback.current_media_path()
-        if not media_path:
-            return None
-
-        return SubtitleGenerationContext(
-            media_path=media_path,
-            request_id=self._player.playback.current_request_id(),
-        )
-
-    def _apply_overwrite_confirmation(
-        self,
-        options: SubtitleGenerationDialogResult,
-        validation_result: SubtitleGenerationValidationResult,
-    ) -> SubtitleGenerationDialogResult:
-        if validation_result.reason != SubtitleGenerationValidationFailure.OVERWRITE_CONFIRMATION_REQUIRED:
-            return options
-
-        output_path = validation_result.output_path or options.output_path
-        return replace(
-            options,
-            overwrite_confirmed_for_path=self._normalize_output_path_for_confirmation(output_path),
-        )
-
-    def _normalize_output_path_for_confirmation(self, output_path: str) -> str:
-        try:
-            return os.path.normcase(str(Path(output_path).expanduser().resolve(strict=False)))
-        except (OSError, RuntimeError, ValueError):
-            return str(output_path)
-
-    def _discard_starting_run(self, reason: str):
-        self._assert_pipeline_thread()
-        run = self._pipeline_state.active_job
-        if run is not None:
-            logger.debug("Discarding starting subtitle pipeline run | run_id=%s | reason=%s", run.run_id, reason)
-            self._clear_subtitle_runtime(run)
-        self._pipeline_state.discard_active_job()
-        self._transition_back_to_dialog(reason)
-
     def _clear_subtitle_runtime(self, run: SubtitlePipelineRun):
         self._assert_pipeline_thread()
         run.subtitle_thread = None
@@ -922,14 +549,6 @@ class SubtitleGenerationService(QObject):
     def _run_is_waiting_for_thread_cleanup(self, run: SubtitlePipelineRun) -> bool:
         task_control = self._task_control_for_run(run)
         return task_control is not None and task_control.is_active()
-
-    def _transition_back_to_dialog(self, reason: str):
-        self._assert_pipeline_thread()
-        self._pipeline_state.transition_dialog_lifecycle_state(
-            SubtitleServiceState.DIALOG_OPEN,
-            reason,
-            allowed=(SubtitleServiceState.DIALOG_OPEN,),
-        )
 
     def _complete_run(
         self,
