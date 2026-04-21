@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import QSettings
 
 from models.ThemeColor import ThemeState
-from utils import normalize_path
+from utils import canonical_path, normalize_path
 
 
 class MediaSettingsStore:
@@ -87,7 +87,8 @@ class MediaSettingsStore:
 
         data = self._load_session_positions()
         storage_path = self._storage_path(path)
-        data = {k: v for k, v in data.items() if normalize_path(k) != storage_path}
+        storage_key = normalize_path(storage_path)
+        data = {k: v for k, v in data.items() if normalize_path(k) != storage_key}
         data[storage_path] = int(position_ms)
         if len(data) > self._MAX_SESSION_ITEMS:
             data = dict(list(data.items())[-self._MAX_SESSION_ITEMS:])
@@ -199,9 +200,10 @@ class MediaSettingsStore:
             if not isinstance(entry, str) or not entry:
                 continue
             storage_path = self._storage_path(entry)
-            if storage_path in seen:
+            storage_key = normalize_path(storage_path)
+            if storage_key in seen:
                 continue
-            seen.add(storage_path)
+            seen.add(storage_key)
             paths.append(storage_path)
         return paths[:self._MAX_RECENT_ITEMS]
 
@@ -214,9 +216,10 @@ class MediaSettingsStore:
             if not isinstance(path, str) or not path:
                 continue
             storage_path = self._storage_path(path)
-            if storage_path in seen:
+            storage_key = normalize_path(storage_path)
+            if storage_key in seen:
                 continue
-            seen.add(storage_path)
+            seen.add(storage_key)
             storage_paths.append(storage_path)
         self._settings.setValue(
             self._RECENT_MEDIA_KEY,
@@ -224,4 +227,4 @@ class MediaSettingsStore:
         )
 
     def _storage_path(self, path: str) -> str:
-        return normalize_path(path)
+        return canonical_path(path)

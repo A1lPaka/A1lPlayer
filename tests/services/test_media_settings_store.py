@@ -71,6 +71,10 @@ def test_save_position_stores_normalized_session_path(monkeypatch):
         "services.MediaSettingsStore.normalize_path",
         lambda path: path.lower(),
     )
+    monkeypatch.setattr(
+        "services.MediaSettingsStore.canonical_path",
+        lambda path: path,
+    )
     settings = _FakeSettings({
         MediaSettingsStore._SESSION_POSITIONS_KEY: json.dumps({
             r"C:\Media\Movie.mkv": 1000,
@@ -81,7 +85,7 @@ def test_save_position_stores_normalized_session_path(monkeypatch):
     store.save_position(r"c:\media\MOVIE.mkv", 2000, 10000)
 
     assert json.loads(settings.values[MediaSettingsStore._SESSION_POSITIONS_KEY]) == {
-        r"c:\media\movie.mkv": 2000,
+        r"c:\media\MOVIE.mkv": 2000,
     }
 
 
@@ -105,6 +109,10 @@ def test_add_recent_path_stores_normalized_paths(monkeypatch):
         "services.MediaSettingsStore.normalize_path",
         lambda path: path.lower(),
     )
+    monkeypatch.setattr(
+        "services.MediaSettingsStore.canonical_path",
+        lambda path: path,
+    )
     settings = _FakeSettings({
         MediaSettingsStore._RECENT_MEDIA_KEY: json.dumps([
             r"C:\Media\Movie.mkv",
@@ -116,19 +124,16 @@ def test_add_recent_path_stores_normalized_paths(monkeypatch):
     store.add_recent_path(r"c:\media\MOVIE.mkv")
 
     assert json.loads(settings.values[MediaSettingsStore._RECENT_MEDIA_KEY]) == [
-        r"c:\media\movie.mkv",
-        r"d:\media\other.mkv",
+        r"c:\media\MOVIE.mkv",
+        r"D:\Media\Other.mkv",
     ]
 
 
 def test_save_last_open_dir_stores_normalized_directory(monkeypatch):
-    monkeypatch.setattr(
-        "services.MediaSettingsStore.normalize_path",
-        lambda path: path.lower(),
-    )
+    monkeypatch.setattr("services.MediaSettingsStore.canonical_path", lambda path: path)
     settings = _FakeSettings()
     store = MediaSettingsStore(settings=settings)
 
     store.save_last_open_dir("C:/Media/Movie.mkv")
 
-    assert settings.values[MediaSettingsStore._LAST_OPEN_DIR_KEY] == "c:/media"
+    assert settings.values[MediaSettingsStore._LAST_OPEN_DIR_KEY] == "C:/Media"

@@ -8,6 +8,7 @@ def test_utils_facade_exports_existing_public_names():
         BASE_WIDTH,
         Metrics,
         build_window_title,
+        canonical_path,
         color_from_state,
         format_ms,
         format_speed,
@@ -20,6 +21,7 @@ def test_utils_facade_exports_existing_public_names():
     assert BASE_HEIGHT == 1080
     assert Metrics.__name__ == "Metrics"
     assert callable(build_window_title)
+    assert callable(canonical_path)
     assert callable(color_from_state)
     assert callable(format_ms)
     assert callable(format_speed)
@@ -39,9 +41,10 @@ def test_utils_formatting_outputs_are_unchanged():
 
 
 def test_utils_path_and_theme_outputs_are_unchanged():
-    from utils import color_from_state, normalize_path
+    from utils import canonical_path, color_from_state, normalize_path
 
     raw_path = "C:/media/../media/movie.mkv"
 
+    assert canonical_path(raw_path) == str(Path(raw_path).expanduser().resolve(strict=False))
     assert normalize_path(raw_path) == os.path.normcase(str(Path(raw_path).expanduser().resolve(strict=False)))
     assert color_from_state("inactive", (100, 100, 100)) == (30, 30, 30)

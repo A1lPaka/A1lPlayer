@@ -26,18 +26,18 @@ class Metrics:
 
 
 def _build_metrics(min_window_side: int, scale_factor: float) -> Metrics:
-    window_width = int(min_window_side * 0.8)
-    window_height = int(min_window_side * 0.5)
+    window_width = int(min_window_side * 0.8 * scale_factor)
+    window_height = int(min_window_side * 0.5 * scale_factor)
     icon_size = int(min_window_side / 70 * scale_factor)
     font_size = int(icon_size * 0.7)
-    menu_width = int(min_window_side * 0.1)
-    theme_dialog_height = int(min_window_side / 1.75)
-    theme_dialog_width = min_window_side // 2
-    pip_min_width = int(min_window_side / 5.2)
-    subtitle_dialog_width = min_window_side // 2
-    subtitle_dialog_height = int(min_window_side * 0.3)
-    subtitle_progress_dialog_width = int(min_window_side * 0.42)
-    subtitle_progress_dialog_height = int(min_window_side * 0.2)
+    menu_width = int(min_window_side * 0.1 * scale_factor)
+    theme_dialog_height = int(min_window_side / 1.75 * scale_factor)
+    theme_dialog_width = int(min_window_side // 2 * scale_factor)
+    pip_min_width = int(min_window_side / 5.2 * scale_factor)
+    subtitle_dialog_width = int(min_window_side // 2 * scale_factor)
+    subtitle_dialog_height = int(min_window_side * 0.3 * scale_factor)
+    subtitle_progress_dialog_width = int(min_window_side * 0.42 * scale_factor)
+    subtitle_progress_dialog_height = int(min_window_side * 0.2 * scale_factor)
 
     return Metrics(
         min_window_side,

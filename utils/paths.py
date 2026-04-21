@@ -8,8 +8,12 @@ def res_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-def normalize_path(path: str) -> str:
+def canonical_path(path: str) -> str:
     try:
-        return os.path.normcase(str(Path(path).expanduser().resolve(strict=False)))
+        return str(Path(path).expanduser().resolve(strict=False))
     except (OSError, RuntimeError, ValueError):
-        return os.path.normcase(os.path.abspath(os.path.normpath(os.path.expanduser(path))))
+        return os.path.abspath(os.path.normpath(os.path.expanduser(path)))
+
+
+def normalize_path(path: str) -> str:
+    return os.path.normcase(canonical_path(path))

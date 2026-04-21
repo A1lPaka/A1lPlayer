@@ -28,9 +28,9 @@ def test_invoke_worker_method_falls_back_for_plain_test_doubles():
     assert worker.calls == 1
 
 
-def test_invoke_worker_method_does_not_direct_call_qobject_without_slot():
+def test_invoke_worker_method_calls_qobject_stop_method_directly():
     worker = _QObjectWithoutSlot()
 
-    assert invoke_worker_method(worker, "cancel") is False
+    assert invoke_worker_method(worker, "cancel") is True
 
-    assert worker.calls == 0
+    assert worker.calls == 1

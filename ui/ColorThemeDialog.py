@@ -46,15 +46,15 @@ class ColorThemeDialog(QWidget):
 
     def _init_constants(self):
         self.picker_frame_offset = SaturationValuePicker.CONTENT_MARGIN
-        self.icon_size = max(12, self._metrics.icon_size)
-        self.gap = max(6, self._metrics.icon_size // 2)
-        self.sv_picker_size = max(150, int(self.icon_size * 15))
+        self.icon_size = max(1, self._metrics.icon_size)
+        self.gap = max(1, self._metrics.icon_size // 2)
+        self.sv_picker_size = max(1, int(self.icon_size * 15))
         self.hue_slider_x = self.sv_picker_size + self.gap
-        self.hex_input_height = max(15, int(self.icon_size * 1.3))
+        self.hex_input_height = max(1, int(self.icon_size * 1.3))
         self.hex_input_x = self.hue_slider_x + 2 * self.icon_size + 5
-        self.color_swatch_height = max(36, int(self.icon_size * 3))
-        self.button_width = max(60, int(self.icon_size * 5))
-        self.button_height = max(18, int(self.icon_size * 1.5))
+        self.color_swatch_height = max(1, int(self.icon_size * 3))
+        self.button_width = max(1, int(self.icon_size * 5))
+        self.button_height = max(1, int(self.icon_size * 1.5))
         self.theme_color_list_width = 2 * self.button_width + self.icon_size
 
     def get_theme_color(self) -> ThemeState:
@@ -437,9 +437,9 @@ class InterfacePreview(QWidget):
         self.update_theme(self._theme_color)
 
     def _init_constants(self):
-        self.icon_size = max(12, int(self._metrics.icon_size * 0.7))
-        self.font_size = max(10, int(self._metrics.font_size * 0.85))
-        self.gap = max(6, self._metrics.icon_size // 2)
+        self.icon_size = max(1, int(self._metrics.icon_size * 0.7))
+        self.font_size = max(1, int(self._metrics.font_size * 0.8))
+        self.gap = max(1, self._metrics.icon_size // 2)
         self.half_gap = self.gap // 2
         self.double_gap = 2 * self.gap
         self.quad_gap = 4 * self.gap
