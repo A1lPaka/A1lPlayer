@@ -1,0 +1,170 @@
+from models import SubtitleGenerationDialogResult
+from services.subtitles import SubtitleGenerationJobRunner as runner_module
+from services.subtitles.SubtitleGenerationJobRunner import (
+    SubtitleGenerationJobRunner,
+    can_launch_subtitle_worker_run,
+)
+from services.subtitles.SubtitlePipelineState import (
+    SubtitleGenerationContext,
+    SubtitlePipelinePhase,
+    SubtitlePipelineRun,
+)
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.connections = []
+
+    def connect(self, callback, *_args):
+        self.connections.append(callback)
+
+
+class _FakeThread:
+    instances = []
+
+    def __init__(self, _parent):
+        self.started = _FakeSignal()
+        self.finished = _FakeSignal()
+        self.start_calls = 0
+        self.quit_calls = 0
+        self.delete_later_calls = 0
+        self._running = False
+        self.__class__.instances.append(self)
+
+    def isRunning(self):
+        return self._running
+
+    def start(self):
+        self.start_calls += 1
+        self._running = True
+
+    def quit(self):
+        self.quit_calls += 1
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
+
+
+class _FakeWorker:
+    instances = []
+
+    def __init__(self, run_id, media_path, options):
+        self.run_id = run_id
+        self.media_path = media_path
+        self.options = options
+        self.status_changed = _FakeSignal()
+        self.progress_changed = _FakeSignal()
+        self.details_changed = _FakeSignal()
+        self.finished = _FakeSignal()
+        self.failed = _FakeSignal()
+        self.canceled = _FakeSignal()
+        self.move_to_thread_calls = []
+        self.delete_later_calls = 0
+        self.__class__.instances.append(self)
+
+    def moveToThread(self, thread):
+        self.move_to_thread_calls.append(thread)
+
+    def run(self):
+        pass
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
+
+
+def _options() -> SubtitleGenerationDialogResult:
+    return SubtitleGenerationDialogResult(
+        audio_stream_index=None,
+        audio_language=None,
+        device=None,
+        model_size="small",
+        output_format="srt",
+        output_path="C:/media/movie.srt",
+        auto_open_after_generation=True,
+    )
+
+
+def _run() -> SubtitlePipelineRun:
+    return SubtitlePipelineRun(
+        run_id=7,
+        context=SubtitleGenerationContext(media_path="C:/media/movie.mkv", request_id=3),
+        requested_options=_options(),
+        phase=SubtitlePipelinePhase.RUNNING,
+    )
+
+
+def test_can_launch_subtitle_worker_run_checks_refs_and_phase():
+    run = _run()
+    thread = object()
+    worker = object()
+    run.subtitle_thread = thread
+    run.subtitle_worker = worker
+
+    assert can_launch_subtitle_worker_run(run, thread, worker) is True
+
+    run.phase = SubtitlePipelinePhase.SUCCEEDED
+
+    assert can_launch_subtitle_worker_run(run, thread, worker) is False
+    assert can_launch_subtitle_worker_run(run, object(), worker) is False
+
+
+def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatch):
+    _FakeThread.instances = []
+    _FakeWorker.instances = []
+    single_shots = []
+    can_start_calls = []
+    suspend_calls = []
+    callbacks = {
+        "status": lambda text: None,
+        "progress": lambda value: None,
+        "details": lambda text: None,
+        "finished": lambda path, auto_open, fallback: None,
+        "failed": lambda error, diagnostics: None,
+        "canceled": lambda: None,
+    }
+
+    def fake_single_shot(_delay, callback):
+        single_shots.append(callback)
+        callback()
+
+    def can_start(run_id, thread, worker):
+        can_start_calls.append((run_id, thread, worker))
+        return True
+
+    monkeypatch.setattr(runner_module, "QThread", _FakeThread)
+    monkeypatch.setattr(runner_module, "SubtitleGenerationWorker", _FakeWorker)
+    monkeypatch.setattr(runner_module.QTimer, "singleShot", fake_single_shot)
+
+    runner = SubtitleGenerationJobRunner(
+        None,
+        can_start_worker=can_start,
+        suspend_before_start=lambda: suspend_calls.append(True),
+        on_status_changed=callbacks["status"],
+        on_progress_changed=callbacks["progress"],
+        on_details_changed=callbacks["details"],
+        on_finished=callbacks["finished"],
+        on_failed=callbacks["failed"],
+        on_canceled=callbacks["canceled"],
+    )
+    run = _run()
+
+    runner.start(run, _options())
+
+    thread = _FakeThread.instances[0]
+    worker = _FakeWorker.instances[0]
+    assert run.subtitle_thread is thread
+    assert run.subtitle_worker is worker
+    assert run.subtitle_cancel_requested is False
+    assert worker.move_to_thread_calls == [thread]
+    assert worker.status_changed.connections == [callbacks["status"]]
+    assert worker.progress_changed.connections == [callbacks["progress"]]
+    assert worker.details_changed.connections == [callbacks["details"]]
+    assert worker.finished.connections[:2] == [callbacks["finished"], thread.quit]
+    assert worker.failed.connections[:2] == [callbacks["failed"], thread.quit]
+    assert worker.canceled.connections[:2] == [callbacks["canceled"], thread.quit]
+    assert thread.started.connections == [worker.run]
+    assert len(thread.finished.connections) == 3
+    assert len(single_shots) == 2
+    assert len(can_start_calls) == 2
+    assert suspend_calls == [True]
+    assert thread.start_calls == 1
