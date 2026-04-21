@@ -90,6 +90,7 @@ class SubtitleGenerationDialog(QWidget):
         self._metrics = metrics
         self._media_path = media_path
         self._audio_tracks: list[tuple[int | None, str]] = []
+        self._cancel_emitted = False
 
         self._init_constants()
         self._build_ui()
@@ -280,6 +281,10 @@ class SubtitleGenerationDialog(QWidget):
         self.close_button.setGeometry(close_button_x, button_y, self.button_width, self.button_height)
         self.generate_button.setGeometry(generate_button_x, button_y, self.button_width, self.button_height)
 
+    def closeEvent(self, event):
+        self._emit_canceled_once()
+        super().closeEvent(event)
+
     def get_result(self) -> SubtitleGenerationDialogResult:
         audio_stream_index = self.audio_track_combo.currentData()
         audio_language = self.audio_language_combo.currentData()
@@ -446,5 +451,11 @@ class SubtitleGenerationDialog(QWidget):
         self.generateRequested.emit(self.get_result())
 
     def _handle_close_clicked(self):
-        self.canceled.emit()
+        self._emit_canceled_once()
         self.close()
+
+    def _emit_canceled_once(self):
+        if self._cancel_emitted:
+            return
+        self._cancel_emitted = True
+        self.canceled.emit()
