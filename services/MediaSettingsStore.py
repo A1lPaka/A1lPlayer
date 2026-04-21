@@ -65,9 +65,13 @@ class MediaSettingsStore:
         if self._settings is None:
             return
         if os.path.isdir(file_path):
-            self._settings.setValue(self._LAST_OPEN_DIR_KEY, file_path)
+            self._settings.setValue(self._LAST_OPEN_DIR_KEY, self._storage_path(file_path))
             return
-        self._settings.setValue(self._LAST_OPEN_DIR_KEY, os.path.dirname(file_path))
+        open_dir = os.path.dirname(file_path)
+        self._settings.setValue(
+            self._LAST_OPEN_DIR_KEY,
+            self._storage_path(open_dir) if open_dir else "",
+        )
 
     def get_saved_position(self, path: str) -> int:
         normalized_path = normalize_path(path)
@@ -82,9 +86,9 @@ class MediaSettingsStore:
             return
 
         data = self._load_session_positions()
-        normalized_current = normalize_path(path)
-        data = {k: v for k, v in data.items() if normalize_path(k) != normalized_current}
-        data[path] = int(position_ms)
+        storage_path = self._storage_path(path)
+        data = {k: v for k, v in data.items() if normalize_path(k) != storage_path}
+        data[storage_path] = int(position_ms)
         if len(data) > self._MAX_SESSION_ITEMS:
             data = dict(list(data.items())[-self._MAX_SESSION_ITEMS:])
 
@@ -116,7 +120,7 @@ class MediaSettingsStore:
             item for item in self._get_recent_media_paths()
             if normalize_path(item) != normalized
         ]
-        paths.insert(0, path)
+        paths.insert(0, self._storage_path(path))
         self._set_recent_media_paths(paths[:self._MAX_RECENT_ITEMS])
 
     def clear_recent_media(self):
@@ -152,7 +156,7 @@ class MediaSettingsStore:
         result: dict[str, int] = {}
         for path, saved_ms in data.items():
             if isinstance(path, str) and path and isinstance(saved_ms, (int, float)):
-                result[path] = int(saved_ms)
+                result[self._storage_path(path)] = int(saved_ms)
         return result
 
     def _save_session_positions(self, data: dict[str, int]):
@@ -189,13 +193,35 @@ class MediaSettingsStore:
         if not isinstance(data, list):
             return []
 
-        paths = [entry for entry in data if isinstance(entry, str) and entry]
+        paths = []
+        seen: set[str] = set()
+        for entry in data:
+            if not isinstance(entry, str) or not entry:
+                continue
+            storage_path = self._storage_path(entry)
+            if storage_path in seen:
+                continue
+            seen.add(storage_path)
+            paths.append(storage_path)
         return paths[:self._MAX_RECENT_ITEMS]
 
     def _set_recent_media_paths(self, paths: list[str]):
         if self._settings is None:
             return
+        storage_paths = []
+        seen: set[str] = set()
+        for path in paths:
+            if not isinstance(path, str) or not path:
+                continue
+            storage_path = self._storage_path(path)
+            if storage_path in seen:
+                continue
+            seen.add(storage_path)
+            storage_paths.append(storage_path)
         self._settings.setValue(
             self._RECENT_MEDIA_KEY,
-            json.dumps(paths[:self._MAX_RECENT_ITEMS], ensure_ascii=True),
+            json.dumps(storage_paths[:self._MAX_RECENT_ITEMS], ensure_ascii=True),
         )
+
+    def _storage_path(self, path: str) -> str:
+        return normalize_path(path)
