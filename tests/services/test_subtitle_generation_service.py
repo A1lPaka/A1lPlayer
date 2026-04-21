@@ -418,6 +418,55 @@ def test_cuda_download_prompt_does_not_start_install_after_context_change(monkey
     assert service._pipeline_state.can_accept_generation_start()
 
 
+def test_shutdown_waits_for_cuda_prompt_to_return(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    service, _store = _make_service(QWidget(), player)
+    shutdown_results = []
+    shutdown_finished = []
+    start_calls = []
+    service.shutdown_finished.connect(lambda: shutdown_finished.append(True))
+
+    service.generate_subtitle()
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(
+        probe_request_id,
+        player.playback._media_path,
+        [_AudioStream(1, "Audio 1")],
+    )
+
+    def prompt_and_shutdown(_parent, _packages):
+        run = service._pipeline_state.active_job
+        assert run is not None
+        assert run.task == SubtitlePipelineTask.CUDA_PROMPT
+        shutdown_results.append(service.begin_shutdown())
+        assert service.is_shutdown_in_progress() is True
+        assert service.has_active_tasks() is True
+        assert shutdown_finished == []
+        return "download"
+
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationStartFlow.get_missing_windows_cuda_runtime_packages",
+        lambda: ["nvidia-cuda-runtime-cu12"],
+    )
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationStartFlow.prompt_cuda_runtime_choice",
+        prompt_and_shutdown,
+    )
+    monkeypatch.setattr(service._cuda_runtime_flow, "start", lambda run_id, packages: start_calls.append((run_id, list(packages))) or True)
+
+    cuda_options = _options()
+    cuda_options.device = "cuda"
+    service._ui.dialog_requests[-1]["on_generate"](cuda_options)
+
+    assert shutdown_results == [True]
+    assert start_calls == []
+    assert service.has_active_tasks() is False
+    assert service.is_shutdown_in_progress() is False
+    assert shutdown_finished == [True]
+
+
 def test_begin_shutdown_requests_graceful_stop_for_active_worker():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)

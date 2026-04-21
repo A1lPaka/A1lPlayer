@@ -279,6 +279,10 @@ class SubtitleGenerationService(QObject):
         return task_control_factory(run)
 
     def _background_task_is_active(self) -> bool:
+        run = self._pipeline_state.active_job
+        if run is not None and run.keeps_shutdown_pending():
+            return True
+
         task_control = self._active_task_control()
         return task_control is not None and task_control.is_active()
 
@@ -299,7 +303,7 @@ class SubtitleGenerationService(QObject):
             )
             return
 
-        if run.task == SubtitlePipelineTask.NONE:
+        if run.task in (SubtitlePipelineTask.NONE, SubtitlePipelineTask.CUDA_PROMPT):
             logger.debug("Active task stop ignored because no pipeline task is active | force=%s", force)
             return
 

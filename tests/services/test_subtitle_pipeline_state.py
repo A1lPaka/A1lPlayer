@@ -4,6 +4,7 @@ from services.subtitles.SubtitlePipelineState import (
     SubtitlePipelinePhase,
     SubtitlePipelineResult,
     SubtitlePipelineStateMachine,
+    SubtitlePipelineTask,
     SubtitleServiceState,
 )
 
@@ -77,3 +78,21 @@ def test_state_machine_begins_and_completes_run():
     assert run.phase == SubtitlePipelinePhase.SUCCEEDED
     assert state.active_job is None
     assert state.last_result == SubtitlePipelineResult.SUCCEEDED
+
+
+def test_cuda_prompt_starting_run_keeps_shutdown_pending():
+    state = SubtitlePipelineStateMachine()
+    run = state.begin_run(
+        SubtitleGenerationContext(media_path="C:/media/movie.mkv", request_id=7),
+        _options(),
+    )
+
+    assert run.keeps_shutdown_pending() is False
+
+    run.task = SubtitlePipelineTask.CUDA_PROMPT
+
+    assert run.keeps_shutdown_pending() is True
+
+    run.task = SubtitlePipelineTask.NONE
+
+    assert run.keeps_shutdown_pending() is False

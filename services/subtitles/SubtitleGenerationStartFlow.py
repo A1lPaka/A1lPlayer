@@ -204,7 +204,16 @@ class SubtitleGenerationStartFlow:
             run.context.request_id,
             ", ".join(missing_packages),
         )
-        choice = prompt_cuda_runtime_choice(self._parent, missing_packages)
+        run.task = SubtitlePipelineTask.CUDA_PROMPT
+        try:
+            choice = prompt_cuda_runtime_choice(self._parent, missing_packages)
+        finally:
+            if self._pipeline_state.active_job is run and run.task == SubtitlePipelineTask.CUDA_PROMPT:
+                run.task = SubtitlePipelineTask.NONE
+        if self._pipeline_state.is_shutdown_in_progress():
+            logger.info("CUDA runtime prompt returned after shutdown started | run_id=%s", run.run_id)
+            self._complete_run(run.run_id, SubtitlePipelinePhase.CANCELED)
+            return None
         if not self._starting_run_matches_current_context(run, "CUDA runtime prompt"):
             return None
 
