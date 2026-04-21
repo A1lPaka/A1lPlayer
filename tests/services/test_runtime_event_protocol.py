@@ -75,6 +75,7 @@ def test_runtime_request_json_roundtrips_are_unchanged():
         output_format="srt",
         output_path="C:/tmp/movie.srt",
         auto_open_after_generation=True,
+        overwrite_confirmed_for_path="C:/tmp/movie.srt",
     )
     subtitle_payload = json.loads(subtitle_request.to_json())
     assert subtitle_payload == {
@@ -86,8 +87,13 @@ def test_runtime_request_json_roundtrips_are_unchanged():
         "output_format": "srt",
         "output_path": "C:/tmp/movie.srt",
         "auto_open_after_generation": True,
+        "overwrite_confirmed_for_path": "C:/tmp/movie.srt",
     }
     assert SubtitleGenerationRequest.from_json(subtitle_request.to_json()) == subtitle_request
+
+    legacy_payload = dict(subtitle_payload)
+    legacy_payload.pop("overwrite_confirmed_for_path")
+    assert SubtitleGenerationRequest.from_json(json.dumps(legacy_payload)).overwrite_confirmed_for_path is None
 
     installer_request = CudaRuntimeInstallRequest(
         packages=("nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"),

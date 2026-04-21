@@ -1,7 +1,9 @@
 import logging
+import os
 import time
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Qt, Signal, Slot
@@ -14,7 +16,11 @@ from services.runtime.QtWorkerInvoke import invoke_worker_method
 from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
-from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
+from services.subtitles.SubtitleGenerationPreflight import (
+    SubtitleGenerationPreflight,
+    SubtitleGenerationValidationFailure,
+    SubtitleGenerationValidationResult,
+)
 from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
 from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
@@ -248,6 +254,8 @@ class SubtitleGenerationService(QObject):
         if not self._validation_presenter.confirm_or_show_failure(validation_result):
             self._discard_starting_run("subtitle generation preflight failed")
             return
+        options = self._apply_overwrite_confirmation(options, validation_result)
+        run.requested_options = options
 
         resolved_options = self._resolve_cuda_runtime_options(options, run)
         if resolved_options is None:
@@ -996,6 +1004,26 @@ class SubtitleGenerationService(QObject):
         self._next_run_id += 1
         self._active_run = run
         return run
+
+    def _apply_overwrite_confirmation(
+        self,
+        options: SubtitleGenerationDialogResult,
+        validation_result: SubtitleGenerationValidationResult,
+    ) -> SubtitleGenerationDialogResult:
+        if validation_result.reason != SubtitleGenerationValidationFailure.OVERWRITE_CONFIRMATION_REQUIRED:
+            return options
+
+        output_path = validation_result.output_path or options.output_path
+        return replace(
+            options,
+            overwrite_confirmed_for_path=self._normalize_output_path_for_confirmation(output_path),
+        )
+
+    def _normalize_output_path_for_confirmation(self, output_path: str) -> str:
+        try:
+            return os.path.normcase(str(Path(output_path).expanduser().resolve(strict=False)))
+        except (OSError, RuntimeError, ValueError):
+            return str(output_path)
 
     def _discard_starting_run(self, reason: str):
         self._assert_pipeline_thread()

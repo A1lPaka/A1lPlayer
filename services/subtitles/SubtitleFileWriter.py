@@ -23,6 +23,8 @@ class SubtitleFileWriter:
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         def write_srt(handle):
             for index, segment in enumerate(segments, start=1):
@@ -33,13 +35,21 @@ class SubtitleFileWriter:
                 )
                 handle.write(f"{segment.text}\n\n")
 
-        return self._write_subtitle_file_atomic(output_path, write_srt, cancel_event=cancel_event)
+        return self._write_subtitle_file_atomic(
+            output_path,
+            write_srt,
+            cancel_event=cancel_event,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+        )
 
     def save_vtt(
         self,
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         def write_vtt(handle):
             handle.write("WEBVTT\n\n")
@@ -50,7 +60,13 @@ class SubtitleFileWriter:
                 )
                 handle.write(f"{segment.text}\n\n")
 
-        return self._write_subtitle_file_atomic(output_path, write_vtt, cancel_event=cancel_event)
+        return self._write_subtitle_file_atomic(
+            output_path,
+            write_vtt,
+            cancel_event=cancel_event,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+        )
 
     def save_subtitles(
         self,
@@ -58,6 +74,8 @@ class SubtitleFileWriter:
         output_path: str,
         output_format: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         normalized_format = str(output_format).strip().lower()
         logger.info(
@@ -69,9 +87,21 @@ class SubtitleFileWriter:
         self._raise_if_canceled(cancel_event, "before-save")
         save_started_at = time.perf_counter()
         if normalized_format == "vtt":
-            saved_output_path = self.save_vtt(segments, output_path, cancel_event=cancel_event)
+            saved_output_path = self.save_vtt(
+                segments,
+                output_path,
+                cancel_event=cancel_event,
+                overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+                allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+            )
         else:
-            saved_output_path = self.save_srt(segments, output_path, cancel_event=cancel_event)
+            saved_output_path = self.save_srt(
+                segments,
+                output_path,
+                cancel_event=cancel_event,
+                overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+                allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+            )
         log_timing(
             logger,
             "Subtitle helper timing",
@@ -95,10 +125,15 @@ class SubtitleFileWriter:
 
     def _prepare_output_path_for_write(self, output_path: str | Path) -> Path:
         output_file = Path(output_path)
+        parent_dir = output_file.parent
+        if parent_dir.exists() and not parent_dir.is_dir():
+            raise RuntimeError("The destination folder path points to a file.")
         try:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            parent_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise RuntimeError(f"Failed to create the destination folder: {exc}") from exc
+        if not parent_dir.is_dir():
+            raise RuntimeError("The destination folder path points to a file.")
         return output_file
 
     def _create_temp_subtitle_file(self, output_file: Path):
@@ -118,8 +153,19 @@ class SubtitleFileWriter:
         output_path: str,
         writer,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         output_file = self._prepare_output_path_for_write(output_path)
+        self._validate_requested_output_path(
+            output_file,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+        )
+        write_target = self._resolve_output_write_target(
+            output_file,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+        )
 
         temp_handle = None
         temp_path: str | None = None
@@ -134,9 +180,14 @@ class SubtitleFileWriter:
             temp_handle.close()
             temp_handle = None
             self._raise_if_canceled(cancel_event, "before-atomic-replace")
+            write_target = self._resolve_output_write_target(
+                output_file,
+                overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+                allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
+            )
             try:
-                os.replace(temp_path, output_file)
-                final_output_path = str(output_file)
+                os.replace(temp_path, write_target)
+                final_output_path = str(write_target)
             except PermissionError:
                 fallback_output_file = self._build_fallback_subtitle_output_path(output_file)
                 logger.warning(
@@ -187,3 +238,48 @@ class SubtitleFileWriter:
                 return candidate
 
         raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")
+
+    def _resolve_output_write_target(
+        self,
+        output_file: Path,
+        *,
+        overwrite_confirmed_for_path: str | None,
+        allow_unconfirmed_overwrite: bool,
+    ) -> Path:
+        if output_file.exists():
+            if output_file.is_dir():
+                raise RuntimeError("The destination output path points to a folder.")
+            if not allow_unconfirmed_overwrite and not self._confirmed_path_matches(
+                output_file,
+                overwrite_confirmed_for_path,
+            ):
+                fallback_output_file = self._build_fallback_subtitle_output_path(output_file)
+                logger.warning(
+                    "Subtitle output appeared after validation; saving with fallback name | requested_output=%s | fallback_output=%s",
+                    output_file,
+                    fallback_output_file,
+                )
+                return fallback_output_file
+        return output_file
+
+    def _validate_requested_output_path(
+        self,
+        output_file: Path,
+        *,
+        overwrite_confirmed_for_path: str | None,
+    ):
+        if overwrite_confirmed_for_path is None:
+            return
+        if not self._same_normalized_path(output_file, Path(overwrite_confirmed_for_path)):
+            raise RuntimeError("Overwrite confirmation does not match the requested output path.")
+
+    def _confirmed_path_matches(self, output_file: Path, confirmed_path: str | None) -> bool:
+        return confirmed_path is not None and self._same_normalized_path(output_file, Path(confirmed_path))
+
+    def _same_normalized_path(self, left: Path, right: Path) -> bool:
+        try:
+            return os.path.normcase(str(left.expanduser().resolve(strict=False))) == os.path.normcase(
+                str(right.expanduser().resolve(strict=False))
+            )
+        except (OSError, RuntimeError, ValueError):
+            return False

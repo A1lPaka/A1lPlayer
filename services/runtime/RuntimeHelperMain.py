@@ -164,6 +164,8 @@ def run_subtitle_generation_helper() -> int:
             request.output_path,
             request.output_format,
             cancel_event=cancel_event,
+            overwrite_confirmed_for_path=request.overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=False,
         )
         _emit_event(
             build_finished_event(

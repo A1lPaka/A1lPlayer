@@ -12,3 +12,4 @@ class SubtitleGenerationDialogResult:
     output_format: str
     output_path: str
     auto_open_after_generation: bool
+    overwrite_confirmed_for_path: str | None = None

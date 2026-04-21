@@ -251,11 +251,15 @@ class SubtitleMaker:
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         return SubtitleFileWriter(self._raise_if_canceled).save_srt(
             segments,
             output_path,
             cancel_event=cancel_event,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
         )
 
     def save_vtt(
@@ -263,11 +267,15 @@ class SubtitleMaker:
         segments: list[SubtitleSegment],
         output_path: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         return SubtitleFileWriter(self._raise_if_canceled).save_vtt(
             segments,
             output_path,
             cancel_event=cancel_event,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
         )
 
     def save_subtitles(
@@ -276,12 +284,16 @@ class SubtitleMaker:
         output_path: str,
         output_format: str,
         cancel_event: threading.Event | None = None,
+        overwrite_confirmed_for_path: str | None = None,
+        allow_unconfirmed_overwrite: bool = True,
     ) -> str:
         return SubtitleFileWriter(self._raise_if_canceled).save_subtitles(
             segments,
             output_path,
             output_format,
             cancel_event=cancel_event,
+            overwrite_confirmed_for_path=overwrite_confirmed_for_path,
+            allow_unconfirmed_overwrite=allow_unconfirmed_overwrite,
         )
 
     def _extract_audio_stream(

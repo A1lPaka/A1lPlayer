@@ -218,6 +218,7 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
             output_format=options.output_format,
             output_path=options.output_path,
             auto_open_after_generation=options.auto_open_after_generation,
+            overwrite_confirmed_for_path=options.overwrite_confirmed_for_path,
         )
         self._init_json_subprocess_worker()
         self._stderr_buffer = BoundedLineBuffer(max_lines=200)

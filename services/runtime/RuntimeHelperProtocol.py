@@ -27,6 +27,7 @@ class SubtitleGenerationRequest:
     output_format: str
     output_path: str
     auto_open_after_generation: bool
+    overwrite_confirmed_for_path: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -43,6 +44,7 @@ class SubtitleGenerationRequest:
             output_format=str(data["output_format"]),
             output_path=str(data["output_path"]),
             auto_open_after_generation=bool(data["auto_open_after_generation"]),
+            overwrite_confirmed_for_path=_coerce_optional_str(data.get("overwrite_confirmed_for_path")),
         )
 
 

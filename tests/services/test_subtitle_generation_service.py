@@ -866,6 +866,41 @@ def test_generation_validation_overwrite_confirmation_is_handled_by_service(monk
     assert confirmation_calls == ["C:/tmp/existing.srt"]
 
 
+def test_generation_overwrite_confirmation_is_passed_to_worker_options(monkeypatch, workspace_tmp_path):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    service, _store = _make_service(QWidget(), player)
+    output_path = workspace_tmp_path / "existing.srt"
+    output_path.write_text("old", encoding="utf-8")
+
+    launches = []
+    monkeypatch.setattr(service, "_launch_subtitle_generation", lambda run, options: launches.append((run, options)))
+    monkeypatch.setattr(
+        service._preflight,
+        "validate_generation_request",
+        lambda *_args, **_kwargs: SubtitleGenerationValidationResult(
+            is_valid=False,
+            reason=SubtitleGenerationValidationFailure.OVERWRITE_CONFIRMATION_REQUIRED,
+            output_path=str(output_path),
+        ),
+    )
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationValidationPresenter.confirm_overwrite_subtitle",
+        lambda _parent, _output_path: True,
+    )
+
+    assert service.generate_subtitle() is True
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_finished(probe_request_id, player.playback._media_path, [_AudioStream(1, "Audio 1")])
+
+    service._ui.dialog_requests[-1]["on_generate"](_options(output_path=str(output_path)))
+
+    assert len(launches) == 1
+    assert launches[0][1].overwrite_confirmed_for_path is not None
+    assert Path(launches[0][1].overwrite_confirmed_for_path) == output_path
+
+
 def test_generate_starts_normally_after_audio_probe_ready(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
@@ -1704,3 +1739,91 @@ def test_real_subtitle_save_keeps_fallback_output_path_behavior(monkeypatch, wor
     assert output_path.read_text(encoding="utf-8") == "existing"
     assert replace_calls[0][1] == "movie.srt"
     assert replace_calls[1][1] == "movie (1).srt"
+
+
+def test_real_subtitle_save_uses_fallback_for_unconfirmed_existing_target(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_unconfirmed_existing_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.write_text("existing", encoding="utf-8")
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+
+    saved_output_path = maker.save_subtitles(
+        segments,
+        str(output_path),
+        "srt",
+        allow_unconfirmed_overwrite=False,
+    )
+
+    assert Path(saved_output_path) == workspace_tmp_path / "movie (1).srt"
+    assert output_path.read_text(encoding="utf-8") == "existing"
+    assert Path(saved_output_path).read_text(encoding="utf-8").startswith("1\n00:00:00,000")
+
+
+def test_real_subtitle_save_replaces_confirmed_existing_target(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_confirmed_existing_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.write_text("existing", encoding="utf-8")
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+
+    saved_output_path = maker.save_subtitles(
+        segments,
+        str(output_path),
+        "srt",
+        overwrite_confirmed_for_path=str(output_path),
+        allow_unconfirmed_overwrite=False,
+    )
+
+    assert Path(saved_output_path) == output_path
+    assert "Hello" in output_path.read_text(encoding="utf-8")
+
+
+def test_real_subtitle_save_rejects_target_directory(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_target_dir_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.mkdir()
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+
+    with pytest.raises(RuntimeError, match="destination output path points to a folder"):
+        maker.save_subtitles(
+            segments,
+            str(output_path),
+            "srt",
+            overwrite_confirmed_for_path=str(output_path),
+            allow_unconfirmed_overwrite=False,
+        )
+
+
+def test_real_subtitle_save_rejects_confirmation_path_mismatch(workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_confirmation_mismatch_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.write_text("existing", encoding="utf-8")
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+
+    with pytest.raises(RuntimeError, match="Overwrite confirmation does not match"):
+        maker.save_subtitles(
+            segments,
+            str(output_path),
+            "srt",
+            overwrite_confirmed_for_path=str(workspace_tmp_path / "other.srt"),
+            allow_unconfirmed_overwrite=False,
+        )

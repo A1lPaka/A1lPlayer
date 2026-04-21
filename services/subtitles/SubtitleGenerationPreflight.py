@@ -112,6 +112,14 @@ class SubtitleGenerationPreflight:
                 preflight_error=preflight_error,
             )
 
+        if output_file.exists() and output_file.is_dir():
+            return SubtitleGenerationValidationResult(
+                is_valid=False,
+                reason=SubtitleGenerationValidationFailure.OUTPUT_PATH_UNAVAILABLE,
+                output_path=str(output_file),
+                preflight_error="The destination output path points to a folder.",
+            )
+
         if os.path.exists(output_path):
             return SubtitleGenerationValidationResult(
                 is_valid=False,
