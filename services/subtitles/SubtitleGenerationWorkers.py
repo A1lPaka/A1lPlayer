@@ -81,6 +81,7 @@ class AudioStreamProbeWorker(
             return
         self._emit_finished(list(audio_streams))
 
+    @Slot()
     def cancel(self):
         if not self._request_cancel():
             return
@@ -92,6 +93,7 @@ class AudioStreamProbeWorker(
         if self._process is not None:
             self._begin_termination()
 
+    @Slot()
     def force_stop(self):
         first_request = not self._force_stop_requested
         self._force_stop_requested = True
@@ -292,6 +294,7 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
             )
             self._emit_failed("Subtitle generation failed to start.", diagnostics)
 
+    @Slot()
     def cancel(self):
         if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
             logger.info("Repeated cancel request ignored for subtitle generation subprocess | media=%s", self._request.media_path)
@@ -302,6 +305,7 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
         self.status_changed.emit("Cancellation requested...")
         self.details_changed.emit(self._build_cancel_details())
 
+    @Slot()
     def force_stop(self):
         self._request_force_subprocess_stop(
             self._on_force_stop_requested,

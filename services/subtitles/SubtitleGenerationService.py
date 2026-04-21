@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QWidget
 from models import SubtitleGenerationDialogResult
 from services.MediaSettingsStore import MediaSettingsStore
 from services.MediaLibraryService import SubtitleAttachResult
+from services.runtime.QtWorkerInvoke import invoke_worker_method
 from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
@@ -536,7 +537,7 @@ class SubtitleGenerationService(QObject):
 
             if force:
                 logger.warning("Force-stop requested for subtitle generation worker | run_id=%s", run_id)
-                run.subtitle_worker.force_stop()
+                invoke_worker_method(run.subtitle_worker, "force_stop")
                 return
 
             if run.subtitle_cancel_requested:
@@ -545,7 +546,7 @@ class SubtitleGenerationService(QObject):
 
             run.subtitle_cancel_requested = True
             logger.info("Cancel requested for subtitle generation worker | run_id=%s", run_id)
-            run.subtitle_worker.cancel()
+            invoke_worker_method(run.subtitle_worker, "cancel")
             self._ui.show_subtitle_cancel_pending()
             return
 
