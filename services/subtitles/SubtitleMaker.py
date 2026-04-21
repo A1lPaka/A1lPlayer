@@ -19,6 +19,7 @@ from services.subtitles.SubtitleTypes import (
     SubtitleGenerationEmptyResultError,
     SubtitleSegment,
 )
+from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class SubtitleMaker:
         self.model_size = model_size
         self.device = device or self._detect_device()
         self._model = None
-        self._ffmpeg_process: subprocess.Popen[bytes] | None = None
+        self._ffmpeg_process: subprocess.Popen[str] | None = None
 
     def load_model(self):
         if self._model is not None:
@@ -317,16 +318,31 @@ class SubtitleMaker:
         ]
 
         audio_extract_started_at = time.perf_counter()
+        process: subprocess.Popen[str] | None = None
+        stderr_buffer = BoundedLineBuffer(max_lines=200)
+        stderr_thread: threading.Thread | None = None
         try:
-            self._ffmpeg_process = subprocess.Popen(
+            process = subprocess.Popen(
                 command,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                text=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
+            self._ffmpeg_process = process
+            if process.stderr is not None:
+                stderr_thread = threading.Thread(
+                    target=self._collect_process_stream,
+                    args=(process.stderr, stderr_buffer, "stderr"),
+                    name="ffmpeg audio extraction stderr reader",
+                    daemon=True,
+                )
+                stderr_thread.start()
+
             while True:
                 try:
-                    stdout_data, stderr_data = self._ffmpeg_process.communicate(timeout=0.2)
+                    process.wait(timeout=0.2)
                     break
                 except subprocess.TimeoutExpired:
                     self._raise_if_canceled(cancel_event, "during-audio-extraction")
@@ -343,8 +359,11 @@ class SubtitleMaker:
             self._remove_file_if_exists(output_path)
             raise
         finally:
-            process = self._ffmpeg_process
             self._ffmpeg_process = None
+            if process is not None:
+                self._close_stream(process.stderr)
+            if stderr_thread is not None:
+                self._join_process_reader(stderr_thread, timeout=0.5, stream_name="stderr")
 
         if process is None:
             self._remove_file_if_exists(output_path)
@@ -356,7 +375,7 @@ class SubtitleMaker:
 
         if process.returncode != 0:
             self._remove_file_if_exists(output_path)
-            error_text = self._decode_process_output(stderr_data) or self._decode_process_output(stdout_data) or "Unknown ffmpeg error."
+            error_text = stderr_buffer.consume_text() or "Unknown ffmpeg error."
             if process.returncode < 0:
                 raise SubtitleGenerationCanceledError()
             logger.error(
@@ -418,10 +437,27 @@ class SubtitleMaker:
             except OSError:
                 logger.debug("Best-effort ffmpeg terminate failed", exc_info=True)
 
-    def _decode_process_output(self, payload: bytes | None) -> str:
-        if not payload:
-            return ""
-        return payload.decode("utf-8", errors="replace").strip()
+    def _collect_process_stream(self, stream, buffer: BoundedLineBuffer, stream_name: str):
+        try:
+            for line in stream:
+                text = str(line).rstrip()
+                if text:
+                    buffer.append(text)
+        except OSError:
+            logger.debug("ffmpeg %s stream closed during audio extraction", stream_name)
+
+    def _join_process_reader(self, thread: threading.Thread, *, timeout: float, stream_name: str):
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            logger.warning("ffmpeg audio extraction %s reader did not stop within %.1fs", stream_name, timeout)
+
+    def _close_stream(self, stream):
+        if stream is None:
+            return
+        try:
+            stream.close()
+        except OSError:
+            logger.debug("Best-effort ffmpeg stream close failed", exc_info=True)
 
     def _remove_file_if_exists(self, path: str | Path):
         AppTempService.remove_file_if_exists(path, log_context="temporary file cleanup")

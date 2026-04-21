@@ -1,6 +1,7 @@
 import importlib.util
 import subprocess
 import sys
+import time
 from subprocess import CompletedProcess
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,47 @@ class _ProbeWorker:
 
     def deleteLater(self):
         return None
+
+
+class _FakeFfmpegStderr:
+    def __init__(self, lines):
+        self._lines = list(lines)
+        self._index = 0
+        self.closed = False
+        self.exhausted = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.closed or self._index >= len(self._lines):
+            self.exhausted = True
+            raise StopIteration
+        line = self._lines[self._index]
+        self._index += 1
+        return line
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeFfmpegProcess:
+    def __init__(self, stderr_lines, returncode=2):
+        self.stderr = _FakeFfmpegStderr(stderr_lines)
+        self.returncode = returncode
+        self.terminate_calls = 0
+
+    def wait(self, timeout=None):
+        deadline = time.perf_counter() + (timeout or 0.5)
+        while not self.stderr.exhausted and time.perf_counter() < deadline:
+            time.sleep(0.001)
+        return self.returncode
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminate_calls += 1
 
 
 def _load_real_module(module_name: str, relative_path: str):
@@ -1306,6 +1348,40 @@ def test_subtitle_maker_keeps_legacy_public_exports():
     assert module.SubtitleGenerationEmptyResultError.__name__ == "SubtitleGenerationEmptyResultError"
     assert callable(module.probe_audio_streams)
     assert callable(module.get_missing_windows_cuda_runtime_packages)
+
+
+def test_real_ffmpeg_audio_extract_uses_bounded_stderr_buffer(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_ffmpeg_bounded_stderr_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    popen_calls = []
+    process = _FakeFfmpegProcess((f"ffmpeg line {index}\n" for index in range(300)), returncode=2)
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return process
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        module.AppTempService,
+        "create_subtitle_generation_file_path",
+        lambda **_kwargs: workspace_tmp_path / "extracted.wav",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        maker._extract_audio_stream("C:/media/movie.mkv", 2)
+
+    error_text = str(exc_info.value)
+    assert "ffmpeg line 299" in error_text
+    assert "ffmpeg line 0" not in error_text
+    assert process.stderr.closed is True
+    assert popen_calls[0][1]["stdout"] is module.subprocess.DEVNULL
+    assert popen_calls[0][1]["stderr"] is module.subprocess.PIPE
+    assert popen_calls[0][1]["text"] is True
 
 
 def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_tracks():
