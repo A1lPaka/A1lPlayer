@@ -115,6 +115,19 @@ class _FakeFfmpegProcess:
         self.terminate_calls += 1
 
 
+class _FakeModelInfo:
+    duration = 1.0
+    language = "en"
+
+
+class _FakeWhisperModel:
+    def __init__(self, *_args, **_kwargs):
+        return None
+
+    def transcribe(self, *_args, **_kwargs):
+        return [], _FakeModelInfo()
+
+
 def _load_real_module(module_name: str, relative_path: str):
     project_root = Path(__file__).resolve().parents[2]
     module_path = project_root / relative_path
@@ -1998,3 +2011,33 @@ def test_real_subtitle_save_rejects_confirmation_path_mismatch(workspace_tmp_pat
             overwrite_confirmed_for_path=str(workspace_tmp_path / "other.srt"),
             allow_unconfirmed_overwrite=False,
         )
+
+
+def test_real_transcription_progress_explains_model_loading(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_maker_model_progress_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+    fake_faster_whisper = type(sys)("faster_whisper")
+    fake_faster_whisper.WhisperModel = _FakeWhisperModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_faster_whisper)
+    monkeypatch.setattr(module.SubtitleMaker, "_detect_device", lambda _self: "cpu")
+
+    maker = module.SubtitleMaker(device="cpu")
+    progress_events = []
+
+    with pytest.raises(module.SubtitleGenerationEmptyResultError):
+        maker.transcribe_file(
+            "C:/media/movie.mkv",
+            progress_callback=lambda status, progress, details: progress_events.append((status, progress, details)),
+        )
+
+    model_loading = progress_events[1]
+    model_ready = progress_events[2]
+
+    assert model_loading[0] == "Loading speech model..."
+    assert model_loading[1] == module.SubtitleMaker._PROGRESS_LOADING_MODEL
+    assert "First run may download model files." in model_loading[2]
+    assert "disk and network speed" in model_loading[2]
+    assert model_ready[0] == "Speech model ready."
+    assert model_ready[1] == module.SubtitleMaker._PROGRESS_MODEL_READY

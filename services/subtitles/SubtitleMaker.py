@@ -30,6 +30,7 @@ _configure_windows_nvidia_runtime_paths = configure_windows_nvidia_runtime_paths
 class SubtitleMaker:
     _PROGRESS_PREPARING = 0
     _PROGRESS_LOADING_MODEL = 10
+    _PROGRESS_MODEL_READY = 20
     _PROGRESS_EXTRACTING_AUDIO = 25
     _PROGRESS_TRANSCRIBING_START = 35
     _PROGRESS_TRANSCRIBING_END = 94
@@ -120,16 +121,27 @@ class SubtitleMaker:
 
             if progress_callback is not None:
                 progress_callback(
-                    "Loading model...",
+                    "Loading speech model...",
                     self._PROGRESS_LOADING_MODEL,
                     self._build_stage_details(
-                        stage="Loading model",
+                        stage="Loading speech model",
                         device=self.device,
                         model=self.model_size,
+                        note="First run may download model files. This can take a while depending on disk and network speed.",
                     ),
                 )
             model = self.load_model()
             self._raise_if_canceled(cancel_event, "after-model-load")
+            if progress_callback is not None:
+                progress_callback(
+                    "Speech model ready.",
+                    self._PROGRESS_MODEL_READY,
+                    self._build_stage_details(
+                        stage="Speech model ready",
+                        device=self.device,
+                        model=self.model_size,
+                    ),
+                )
 
             if audio_stream_index is not None:
                 self._raise_if_canceled(cancel_event, "before-audio-extraction")
@@ -418,6 +430,7 @@ class SubtitleMaker:
         language: str | None = None,
         audio_stream_index: int | None = None,
         source: str | None = None,
+        note: str | None = None,
     ) -> str:
         lines = [
             f"Stage: {stage}",
@@ -430,6 +443,8 @@ class SubtitleMaker:
             lines.append(f"Audio stream: #{int(audio_stream_index)}")
         if source is not None:
             lines.append(f"Source: {source}")
+        if note is not None:
+            lines.append(str(note))
         return "\n".join(lines)
 
     def _detect_device(self) -> str:
