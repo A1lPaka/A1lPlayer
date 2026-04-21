@@ -98,9 +98,9 @@ class SubtitleGenerationService(QObject):
             self._player,
             self._ui,
             self._preflight,
-            is_generation_dialog_open=lambda: self._pipeline_state.service_state == SubtitleServiceState.DIALOG_OPEN,
+            is_generation_dialog_open=self._pipeline_state.has_dialog_open,
             dialog_media_path=lambda: self._dialog_request_media_path,
-            service_state_name=lambda: self._pipeline_state.service_state.name,
+            dialog_lifecycle_state_name=lambda: self._pipeline_state.dialog_lifecycle_state.name,
         )
         self._audio_probe_flow.thread_finished.connect(self._complete_shutdown_if_possible)
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
@@ -118,22 +118,34 @@ class SubtitleGenerationService(QObject):
             logger.info("Subtitle generation requested without an active media item")
             return False
 
-        if self._shutdown_completed or self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._shutdown_completed or self._pipeline_state.is_shutdown_in_progress():
             logger.info("Subtitle generation request ignored because shutdown is in progress")
             return False
 
-        if self._pipeline_state.active_run is not None and self._pipeline_state.active_run.blocks_new_requests():
+        if self._pipeline_state.blocks_new_generation_request():
             self._ui.focus_active_dialog()
             show_subtitle_generation_already_running(self._parent)
             logger.info("Subtitle generation request ignored because another background task is running")
             return False
 
-        if self._pipeline_state.service_state == SubtitleServiceState.DIALOG_OPEN:
+        if self._pipeline_state.has_dialog_open():
             self._ui.focus_active_dialog()
             logger.info("Subtitle generation request focused the existing generation dialog")
             return False
 
-        if not self._pipeline_state.transition_service_state(
+        if not self._pipeline_state.can_open_generation_dialog():
+            logger.warning(
+                "Subtitle generation request ignored because dialog lifecycle is not openable | state=%s | job_phase=%s",
+                self._pipeline_state.dialog_lifecycle_state.name,
+                (
+                    self._pipeline_state.active_job_lifecycle_state.name
+                    if self._pipeline_state.active_job_lifecycle_state is not None
+                    else "<none>"
+                ),
+            )
+            return False
+
+        if not self._pipeline_state.transition_dialog_lifecycle_state(
             SubtitleServiceState.DIALOG_OPEN,
             "open generation dialog",
             allowed=(SubtitleServiceState.IDLE,),
@@ -154,10 +166,10 @@ class SubtitleGenerationService(QObject):
     def _start_subtitle_generation(self, options: SubtitleGenerationDialogResult):
         self._assert_pipeline_thread()
         self._log_dialog_confirm_timing(options.output_path)
-        if self._pipeline_state.service_state != SubtitleServiceState.DIALOG_OPEN:
+        if not self._pipeline_state.can_accept_generation_start():
             logger.warning(
                 "Rejected subtitle generation start because the generation dialog is not active | state=%s",
-                self._pipeline_state.service_state.name,
+                self._pipeline_state.dialog_lifecycle_state.name,
             )
             return
 
@@ -199,14 +211,14 @@ class SubtitleGenerationService(QObject):
 
         resolved_options = self._resolve_cuda_runtime_options(options, run)
         if resolved_options is None:
-            if self._pipeline_state.active_run is run and run.phase == SubtitlePipelinePhase.STARTING:
+            if self._pipeline_state.active_job is run and run.phase == SubtitlePipelinePhase.STARTING:
                 self._discard_starting_run("subtitle launch postponed or canceled during CUDA resolution")
             return
 
         latest_context = self._capture_current_generation_context()
         if latest_context is None:
             logger.warning("Subtitle generation aborted because playback context is unavailable before launch")
-            self._pipeline_state.discard_active_run()
+            self._pipeline_state.discard_active_job()
             self._transition_back_to_dialog("playback context unavailable before launch")
             return
         if latest_context != run.context:
@@ -218,7 +230,7 @@ class SubtitleGenerationService(QObject):
                 latest_context.media_path,
                 latest_context.request_id,
             )
-            self._pipeline_state.discard_active_run()
+            self._pipeline_state.discard_active_job()
             self._transition_back_to_dialog("playback context changed before launch")
             return
 
@@ -231,7 +243,7 @@ class SubtitleGenerationService(QObject):
         options: SubtitleGenerationDialogResult,
     ):
         self._assert_pipeline_thread()
-        if run is not self._pipeline_state.active_run:
+        if run is not self._pipeline_state.active_job:
             logger.debug("Ignoring subtitle worker launch for stale run | run_id=%s", run.run_id)
             return
         if run.phase not in (SubtitlePipelinePhase.STARTING, SubtitlePipelinePhase.RUNNING):
@@ -243,8 +255,8 @@ class SubtitleGenerationService(QObject):
             return
 
         self._pipeline_state.set_run_phase(run, SubtitlePipelinePhase.RUNNING, "launch subtitle generation worker")
-        if self._pipeline_state.service_state != SubtitleServiceState.SHUTTING_DOWN:
-            self._pipeline_state.transition_service_state(
+        if not self._pipeline_state.is_shutdown_in_progress():
+            self._pipeline_state.transition_dialog_lifecycle_state(
                 SubtitleServiceState.IDLE,
                 "generation dialog replaced by subtitle progress",
                 allowed=(SubtitleServiceState.DIALOG_OPEN, SubtitleServiceState.IDLE),
@@ -344,7 +356,7 @@ class SubtitleGenerationService(QObject):
 
     def _starting_run_matches_current_context(self, run: SubtitlePipelineRun, event_name: str) -> bool:
         self._assert_pipeline_thread()
-        if run is not self._pipeline_state.active_run:
+        if run is not self._pipeline_state.active_job:
             logger.debug("Ignoring %s result for stale subtitle pipeline run | run_id=%s", event_name, run.run_id)
             return False
         if run.phase != SubtitlePipelinePhase.STARTING:
@@ -376,7 +388,7 @@ class SubtitleGenerationService(QObject):
         missing_packages: list[str],
     ):
         self._assert_pipeline_thread()
-        if run is not self._pipeline_state.active_run:
+        if run is not self._pipeline_state.active_job:
             logger.debug("Ignoring CUDA runtime install start for stale run | run_id=%s", run.run_id)
             return
         if run.phase != SubtitlePipelinePhase.STARTING:
@@ -388,8 +400,8 @@ class SubtitleGenerationService(QObject):
             return
 
         self._pipeline_state.set_run_phase(run, SubtitlePipelinePhase.RUNNING, "start CUDA runtime install")
-        if self._pipeline_state.service_state != SubtitleServiceState.SHUTTING_DOWN:
-            self._pipeline_state.transition_service_state(
+        if not self._pipeline_state.is_shutdown_in_progress():
+            self._pipeline_state.transition_dialog_lifecycle_state(
                 SubtitleServiceState.IDLE,
                 "generation dialog replaced by CUDA runtime progress",
                 allowed=(SubtitleServiceState.DIALOG_OPEN, SubtitleServiceState.IDLE),
@@ -414,12 +426,12 @@ class SubtitleGenerationService(QObject):
                 SubtitlePipelinePhase.FAILED,
                 close_progress=True,
             )
-            if self._pipeline_state.service_state != SubtitleServiceState.SHUTTING_DOWN:
+            if not self._pipeline_state.is_shutdown_in_progress():
                 show_cuda_runtime_install_failed(self._parent, "GPU runtime installation could not be started.")
             return
 
     def _deferred_suspend_and_start_subtitle_worker(self, run_id: int, thread: QThread):
-        run = self._require_active_run(run_id, "deferred subtitle worker launch")
+        run = self._require_active_job(run_id, "deferred subtitle worker launch")
         if run is None:
             return
 
@@ -445,7 +457,7 @@ class SubtitleGenerationService(QObject):
         )
 
     def _deferred_start_subtitle_worker(self, run_id: int, thread: QThread):
-        run = self._require_active_run(run_id, "deferred subtitle worker thread start")
+        run = self._require_active_job(run_id, "deferred subtitle worker thread start")
         if run is None:
             return
 
@@ -462,7 +474,7 @@ class SubtitleGenerationService(QObject):
     @Slot()
     def _request_active_task_stop(self, force: bool = False):
         self._assert_pipeline_thread()
-        run = self._pipeline_state.active_run
+        run = self._pipeline_state.active_job
         if run is None or not run.accepts_stop_requests():
             logger.debug(
                 "Active task stop ignored because pipeline is not stoppable | run_phase=%s | force=%s",
@@ -517,14 +529,14 @@ class SubtitleGenerationService(QObject):
         ):
             return True
 
-        run = self._pipeline_state.active_run
+        run = self._pipeline_state.active_job
         if run is None:
             return False
 
         return run.keeps_shutdown_pending()
 
     def is_shutdown_in_progress(self) -> bool:
-        return self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN and not self._shutdown_completed
+        return self._pipeline_state.is_shutdown_in_progress() and not self._shutdown_completed
 
     def begin_shutdown(self) -> bool:
         self._assert_pipeline_thread()
@@ -532,15 +544,18 @@ class SubtitleGenerationService(QObject):
             logger.debug("Subtitle generation service shutdown requested after completion")
             return False
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             logger.info(
                 "Subtitle generation service shutdown already in progress | force_requested=%s",
                 self._force_shutdown_requested,
             )
             return self.has_active_tasks()
 
-        logger.info("Subtitle generation service async shutdown started | state=%s", self._pipeline_state.service_state.name)
-        self._pipeline_state.transition_service_state(
+        logger.info(
+            "Subtitle generation service async shutdown started | state=%s",
+            self._pipeline_state.dialog_lifecycle_state.name,
+        )
+        self._pipeline_state.transition_dialog_lifecycle_state(
             SubtitleServiceState.SHUTTING_DOWN,
             "begin graceful shutdown",
             allowed=tuple(SubtitleServiceState),
@@ -558,9 +573,9 @@ class SubtitleGenerationService(QObject):
             logger.debug("Subtitle generation service force shutdown requested after completion")
             return False
 
-        if self._pipeline_state.service_state != SubtitleServiceState.SHUTTING_DOWN:
+        if not self._pipeline_state.is_shutdown_in_progress():
             logger.warning("Subtitle generation service force shutdown requested before graceful shutdown")
-            self._pipeline_state.transition_service_state(
+            self._pipeline_state.transition_dialog_lifecycle_state(
                 SubtitleServiceState.SHUTTING_DOWN,
                 "begin force shutdown",
                 allowed=tuple(SubtitleServiceState),
@@ -579,22 +594,26 @@ class SubtitleGenerationService(QObject):
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
-    def _finalize_shutdown_service_state(self):
+    def _finalize_shutdown_lifecycle(self):
         self._assert_pipeline_thread()
         self._ui.close_progress_dialog()
-        self._pipeline_state.discard_active_run()
+        self._pipeline_state.discard_active_job()
         self._audio_probe_flow.stop_all("finalize-shutdown", force=True)
         self._release_playback_takeover(resume_playback=False)
         self._shutdown_completed = True
         self._force_shutdown_requested = False
 
     def _complete_shutdown_if_possible(self):
-        if self._pipeline_state.service_state != SubtitleServiceState.SHUTTING_DOWN or self._shutdown_completed:
+        if not self._pipeline_state.is_shutdown_in_progress() or self._shutdown_completed:
             return
 
         if self.has_active_tasks():
-            active_task = self._pipeline_state.active_run.task.name if self._pipeline_state.active_run is not None else "NONE"
-            active_phase = self._pipeline_state.active_run.phase.name if self._pipeline_state.active_run is not None else "<none>"
+            active_task = self._pipeline_state.active_job.task.name if self._pipeline_state.active_job is not None else "NONE"
+            active_phase = (
+                self._pipeline_state.active_job_lifecycle_state.name
+                if self._pipeline_state.active_job_lifecycle_state is not None
+                else "<none>"
+            )
             logger.debug(
                 "Subtitle generation service shutdown still waiting for background tasks | task=%s | phase=%s | force_requested=%s",
                 active_task,
@@ -603,20 +622,20 @@ class SubtitleGenerationService(QObject):
             )
             return
 
-        self._finalize_shutdown_service_state()
+        self._finalize_shutdown_lifecycle()
         logger.info("Subtitle generation service shutdown finished")
         self.shutdown_finished.emit()
 
     @Slot()
     def _on_generation_dialog_canceled(self):
         self._assert_pipeline_thread()
-        if self._pipeline_state.service_state != SubtitleServiceState.DIALOG_OPEN:
+        if not self._pipeline_state.has_dialog_open():
             return
 
         self._audio_probe_flow.invalidate_active_request("dialog closed")
         self._clear_dialog_request_timing()
         logger.info("Subtitle generation dialog closed without launching a job")
-        self._pipeline_state.transition_service_state(
+        self._pipeline_state.transition_dialog_lifecycle_state(
             SubtitleServiceState.IDLE,
             "close generation dialog",
             allowed=(SubtitleServiceState.DIALOG_OPEN,),
@@ -628,7 +647,7 @@ class SubtitleGenerationService(QObject):
         if task == SubtitlePipelineTask.SUBTITLE_GENERATION:
             self._pending_subtitle_thread_run_ids.discard(run_id)
 
-        run = self._pipeline_state.active_run if self._pipeline_state.active_run is not None and self._pipeline_state.active_run.run_id == run_id else None
+        run = self._pipeline_state.active_job if self._pipeline_state.active_job is not None and self._pipeline_state.active_job.run_id == run_id else None
         if run is not None and task == SubtitlePipelineTask.SUBTITLE_GENERATION:
             self._clear_subtitle_runtime(run)
 
@@ -644,18 +663,18 @@ class SubtitleGenerationService(QObject):
                 "Background task thread finished for stale subtitle pipeline run | run_id=%s | task=%s | state=%s",
                 run_id,
                 task.name,
-                self._pipeline_state.service_state.name,
+                self._pipeline_state.dialog_lifecycle_state.name,
             )
 
         if run is not None and self._run_is_terminal(run):
-            self._pipeline_state.discard_active_run()
+            self._pipeline_state.discard_active_job()
         self._complete_shutdown_if_possible()
 
     def _on_cuda_runtime_flow_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.CUDA_INSTALL)
 
     def _current_run_id_for_active_subtitle_worker(self, event_name: str) -> int | None:
-        run = self._pipeline_state.active_run
+        run = self._pipeline_state.active_job
         if run is None or run.subtitle_worker is None:
             logger.debug("Ignoring %s because no subtitle worker is active", event_name)
             return None
@@ -731,7 +750,7 @@ class SubtitleGenerationService(QObject):
         self._ui.update_progress_details(text)
 
     def _on_subtitle_generation_finished(self, run_id: int, output_path: str, auto_open: bool, used_fallback_output_path: bool):
-        run = self._require_active_run(run_id, "subtitle generation finished")
+        run = self._require_active_job(run_id, "subtitle generation finished")
         if run is None:
             return
 
@@ -750,7 +769,7 @@ class SubtitleGenerationService(QObject):
             close_progress=True,
         )
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             return
 
         auto_open_outcome = SubtitleAutoOpenOutcome.LOADED
@@ -778,7 +797,7 @@ class SubtitleGenerationService(QObject):
         )
 
     def _on_subtitle_generation_failed(self, run_id: int, error_text: str, diagnostics: str):
-        run = self._require_active_run(run_id, "subtitle generation failed")
+        run = self._require_active_job(run_id, "subtitle generation failed")
         if run is None:
             return
 
@@ -798,13 +817,13 @@ class SubtitleGenerationService(QObject):
             close_progress=True,
         )
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             return
 
         show_subtitle_generation_failed(self._parent, error_text)
 
     def _on_subtitle_generation_canceled(self, run_id: int):
-        run = self._require_active_run(run_id, "subtitle generation canceled")
+        run = self._require_active_job(run_id, "subtitle generation canceled")
         if run is None:
             return
 
@@ -815,13 +834,13 @@ class SubtitleGenerationService(QObject):
             close_progress=True,
         )
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             return
 
         show_subtitle_generation_canceled(self._parent)
 
     def _on_cuda_runtime_install_finished(self, run_id: int):
-        run = self._require_active_run(run_id, "CUDA runtime install finished")
+        run = self._require_active_job(run_id, "CUDA runtime install finished")
         if run is None:
             return
 
@@ -837,7 +856,7 @@ class SubtitleGenerationService(QObject):
             )
             return
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             self._complete_run(
                 run_id,
                 SubtitlePipelinePhase.CANCELED,
@@ -861,7 +880,7 @@ class SubtitleGenerationService(QObject):
         self._launch_subtitle_generation(run, run.subtitle_options)
 
     def _on_cuda_runtime_install_failed(self, run_id: int, error_text: str):
-        run = self._require_active_run(run_id, "CUDA runtime install failed")
+        run = self._require_active_job(run_id, "CUDA runtime install failed")
         if run is None:
             return
 
@@ -872,13 +891,13 @@ class SubtitleGenerationService(QObject):
             close_progress=True,
         )
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             return
 
         show_cuda_runtime_install_failed(self._parent, error_text)
 
     def _on_cuda_runtime_install_canceled(self, run_id: int):
-        run = self._require_active_run(run_id, "CUDA runtime install canceled")
+        run = self._require_active_job(run_id, "CUDA runtime install canceled")
         if run is None:
             return
 
@@ -889,7 +908,7 @@ class SubtitleGenerationService(QObject):
             close_progress=True,
         )
 
-        if self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN:
+        if self._pipeline_state.is_shutdown_in_progress():
             return
 
         show_cuda_runtime_install_canceled(self._parent)
@@ -952,11 +971,11 @@ class SubtitleGenerationService(QObject):
 
     def _discard_starting_run(self, reason: str):
         self._assert_pipeline_thread()
-        run = self._pipeline_state.active_run
+        run = self._pipeline_state.active_job
         if run is not None:
             logger.debug("Discarding starting subtitle pipeline run | run_id=%s | reason=%s", run.run_id, reason)
             self._clear_subtitle_runtime(run)
-        self._pipeline_state.discard_active_run()
+        self._pipeline_state.discard_active_job()
         self._transition_back_to_dialog(reason)
 
     def _clear_subtitle_runtime(self, run: SubtitlePipelineRun):
@@ -981,7 +1000,7 @@ class SubtitleGenerationService(QObject):
 
     def _transition_back_to_dialog(self, reason: str):
         self._assert_pipeline_thread()
-        self._pipeline_state.transition_service_state(
+        self._pipeline_state.transition_dialog_lifecycle_state(
             SubtitleServiceState.DIALOG_OPEN,
             reason,
             allowed=(SubtitleServiceState.DIALOG_OPEN,),
@@ -995,7 +1014,7 @@ class SubtitleGenerationService(QObject):
             close_progress: bool,
     ):
         self._assert_pipeline_thread()
-        run = self._pipeline_state.active_run if self._pipeline_state.active_run is not None and self._pipeline_state.active_run.run_id == run_id else None
+        run = self._pipeline_state.active_job if self._pipeline_state.active_job is not None and self._pipeline_state.active_job.run_id == run_id else None
         if run is None:
             logger.debug("Ignoring terminal transition for stale subtitle pipeline run | run_id=%s", run_id)
             return
@@ -1011,22 +1030,22 @@ class SubtitleGenerationService(QObject):
             result=terminal_phase.name.lower(),
         )
 
-        is_shutdown = self._pipeline_state.service_state == SubtitleServiceState.SHUTTING_DOWN
+        is_shutdown = self._pipeline_state.is_shutdown_in_progress()
 
         if close_progress:
             self._ui.close_progress_dialog()
 
-        clear_active_run = not self._run_is_waiting_for_thread_cleanup(run)
-        if clear_active_run:
+        clear_active_job = not self._run_is_waiting_for_thread_cleanup(run)
+        if clear_active_job:
             self._clear_subtitle_runtime(run)
         self._pipeline_state.complete_run(
             run,
             terminal_phase,
-            clear_active_run=clear_active_run,
+            clear_active_job=clear_active_job,
             record_result=not is_shutdown,
         )
         if not is_shutdown:
-            self._pipeline_state.transition_service_state(
+            self._pipeline_state.transition_dialog_lifecycle_state(
                 SubtitleServiceState.IDLE,
                 f"record terminal result for run {run_id}",
                 allowed=(SubtitleServiceState.IDLE, SubtitleServiceState.DIALOG_OPEN),
@@ -1049,25 +1068,25 @@ class SubtitleGenerationService(QObject):
         self._playback_takeover.release(resume_playback=resume_playback)
 
     def _is_current_run_event(self, run_id: int, event_name: str) -> bool:
-        if self._pipeline_state.active_run is None:
-            logger.debug("Ignoring %s for stale subtitle pipeline run | run_id=%s | active_run=<none>", event_name, run_id)
+        if self._pipeline_state.active_job is None:
+            logger.debug("Ignoring %s for stale subtitle pipeline run | run_id=%s | active_job=<none>", event_name, run_id)
             return False
 
-        if self._pipeline_state.active_run.run_id != run_id:
+        if self._pipeline_state.active_job.run_id != run_id:
             logger.debug(
-                "Ignoring %s for stale subtitle pipeline run | run_id=%s | active_run=%s",
+                "Ignoring %s for stale subtitle pipeline run | run_id=%s | active_job=%s",
                 event_name,
                 run_id,
-                self._pipeline_state.active_run.run_id,
+                self._pipeline_state.active_job.run_id,
             )
             return False
 
         return True
 
-    def _require_active_run(self, run_id: int, event_name: str) -> SubtitlePipelineRun | None:
+    def _require_active_job(self, run_id: int, event_name: str) -> SubtitlePipelineRun | None:
         if not self._is_current_run_event(run_id, event_name):
             return None
-        return self._pipeline_state.active_run
+        return self._pipeline_state.active_job
 
     def _assert_pipeline_thread(self):
         app = QCoreApplication.instance()
@@ -1090,9 +1109,9 @@ class SubtitleGenerationService(QObject):
         return is_main_thread and service_thread == app_thread
 
     def _current_run_id(self) -> int | None:
-        if self._pipeline_state.active_run is None:
+        if self._pipeline_state.active_job is None:
             return None
-        return self._pipeline_state.active_run.run_id
+        return self._pipeline_state.active_job.run_id
 
     def _log_dialog_confirm_timing(self, output_path: str):
         if self._dialog_request_started_at is None:

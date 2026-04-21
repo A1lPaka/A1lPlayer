@@ -25,7 +25,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         *,
         is_generation_dialog_open: Callable[[], bool],
         dialog_media_path: Callable[[], str | None],
-        service_state_name: Callable[[], str],
+        dialog_lifecycle_state_name: Callable[[], str],
     ):
         super().__init__(parent)
         self._parent = parent
@@ -34,7 +34,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         self._preflight = preflight
         self._is_generation_dialog_open = is_generation_dialog_open
         self._dialog_media_path = dialog_media_path
-        self._service_state_name = service_state_name
+        self._dialog_lifecycle_state_name = dialog_lifecycle_state_name
         self._probe_media_path: str | None = None
         self._probe_state = AudioStreamProbeState.IDLE
         self._cached_audio_streams = None
@@ -224,7 +224,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
             logger.debug(
                 "Ignoring audio stream probe result because generation dialog is no longer open | probe_request_id=%s | state=%s | media=%s",
                 probe_request_id,
-                self._service_state_name(),
+                self._dialog_lifecycle_state_name(),
                 media_path,
             )
             return False

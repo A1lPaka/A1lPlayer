@@ -84,35 +84,56 @@ class SubtitlePipelineRun:
 
 class SubtitlePipelineStateMachine:
     def __init__(self):
-        self.service_state = SubtitleServiceState.IDLE
-        self.active_run: SubtitlePipelineRun | None = None
+        self.dialog_lifecycle_state = SubtitleServiceState.IDLE
+        self.active_job: SubtitlePipelineRun | None = None
         self.last_result: SubtitlePipelineResult | None = None
         self._next_run_id = 1
 
-    def transition_service_state(
+    @property
+    def active_job_lifecycle_state(self) -> SubtitlePipelinePhase | None:
+        if self.active_job is None:
+            return None
+        return self.active_job.phase
+
+    def can_open_generation_dialog(self) -> bool:
+        return self.dialog_lifecycle_state == SubtitleServiceState.IDLE and not self.blocks_new_generation_request()
+
+    def has_dialog_open(self) -> bool:
+        return self.dialog_lifecycle_state == SubtitleServiceState.DIALOG_OPEN
+
+    def blocks_new_generation_request(self) -> bool:
+        return self.active_job is not None and self.active_job.blocks_new_requests()
+
+    def is_shutdown_in_progress(self) -> bool:
+        return self.dialog_lifecycle_state == SubtitleServiceState.SHUTTING_DOWN
+
+    def can_accept_generation_start(self) -> bool:
+        return self.has_dialog_open()
+
+    def transition_dialog_lifecycle_state(
         self,
-        new_service_state: SubtitleServiceState,
+        new_dialog_lifecycle_state: SubtitleServiceState,
         reason: str,
         *,
         allowed: tuple[SubtitleServiceState, ...],
     ) -> bool:
-        if self.service_state not in allowed:
+        if self.dialog_lifecycle_state not in allowed:
             logger.warning(
-                "Rejected subtitle service state transition | from=%s | to=%s | reason=%s",
-                self.service_state.name,
-                new_service_state.name,
+                "Rejected subtitle dialog lifecycle transition | from=%s | to=%s | reason=%s",
+                self.dialog_lifecycle_state.name,
+                new_dialog_lifecycle_state.name,
                 reason,
             )
             return False
 
-        if self.service_state != new_service_state:
+        if self.dialog_lifecycle_state != new_dialog_lifecycle_state:
             logger.debug(
-                "Subtitle service state transition | from=%s | to=%s | reason=%s",
-                self.service_state.name,
-                new_service_state.name,
+                "Subtitle dialog lifecycle transition | from=%s | to=%s | reason=%s",
+                self.dialog_lifecycle_state.name,
+                new_dialog_lifecycle_state.name,
                 reason,
             )
-        self.service_state = new_service_state
+        self.dialog_lifecycle_state = new_dialog_lifecycle_state
         return True
 
     def begin_run(
@@ -126,7 +147,7 @@ class SubtitlePipelineStateMachine:
             requested_options=options,
         )
         self._next_run_id += 1
-        self.active_run = run
+        self.active_job = run
         return run
 
     def set_run_phase(self, run: SubtitlePipelineRun, phase: SubtitlePipelinePhase, reason: str):
@@ -141,15 +162,15 @@ class SubtitlePipelineStateMachine:
         )
         run.phase = phase
 
-    def discard_active_run(self):
-        self.active_run = None
+    def discard_active_job(self):
+        self.active_job = None
 
     def complete_run(
         self,
         run: SubtitlePipelineRun,
         terminal_phase: SubtitlePipelinePhase,
         *,
-        clear_active_run: bool,
+        clear_active_job: bool,
         record_result: bool,
     ):
         if terminal_phase not in (
@@ -160,8 +181,8 @@ class SubtitlePipelineStateMachine:
             raise ValueError(f"Unsupported terminal state: {terminal_phase}")
 
         self.set_run_phase(run, terminal_phase, f"complete run {run.run_id}")
-        if clear_active_run and self.active_run is run:
-            self.active_run = None
+        if clear_active_job and self.active_job is run:
+            self.active_job = None
         if record_result:
             self.last_result = self._result_from_terminal_phase(terminal_phase)
 
