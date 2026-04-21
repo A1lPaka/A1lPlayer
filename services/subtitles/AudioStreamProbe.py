@@ -10,6 +10,21 @@ logger = logging.getLogger(__name__)
 FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS = 15.0
 
 
+def build_audio_stream_probe_command(media_path: str) -> list[str]:
+    return [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index,codec_name,channels,channel_layout:stream_tags=language,title:stream_disposition=default",
+        "-of",
+        "json",
+        str(media_path),
+    ]
+
+
 def _normalize_stream_tag(value) -> str:
     if value is None:
         return ""
@@ -43,61 +58,9 @@ def _build_audio_stream_label(stream: dict, position: int) -> str:
     return " | ".join(parts)
 
 
-def probe_audio_streams(media_path: str) -> list[AudioStreamInfo]:
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a",
-        "-show_entries",
-        "stream=index,codec_name,channels,channel_layout:stream_tags=language,title:stream_disposition=default",
-        "-of",
-        "json",
-        str(media_path),
-    ]
-
+def parse_audio_stream_probe_output(media_path: str, stdout: str) -> list[AudioStreamInfo]:
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as exc:
-        logger.error(
-            "ffprobe audio stream inspection timed out | media=%s | timeout_seconds=%s",
-            media_path,
-            FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
-        )
-        raise RuntimeError(
-            "Audio stream inspection timed out after "
-            f"{FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS:g} seconds."
-        ) from exc
-    except FileNotFoundError as exc:
-        logger.error("ffprobe executable was not found during audio stream inspection | media=%s", media_path)
-        raise RuntimeError("ffprobe was not found. Please install ffmpeg/ffprobe to inspect audio streams.") from exc
-    except OSError as exc:
-        logger.error(
-            "ffprobe audio stream inspection could not be started | media=%s | reason=%s",
-            media_path,
-            exc,
-        )
-        raise RuntimeError(f"Audio stream inspection failed to start: {exc}") from exc
-
-    if result.returncode != 0:
-        error_text = (result.stderr or result.stdout or "Unknown ffprobe error.").strip()
-        logger.error(
-            "ffprobe audio stream inspection failed | media=%s | returncode=%s | details=%s",
-            media_path,
-            result.returncode,
-            error_text,
-        )
-        raise RuntimeError(f"Failed to inspect audio streams: {error_text}")
-
-    try:
-        payload = json.loads(result.stdout or "{}")
+        payload = json.loads(stdout or "{}")
     except json.JSONDecodeError as exc:
         logger.error(
             "ffprobe audio stream inspection returned invalid JSON | media=%s | details=%s",
@@ -155,3 +118,48 @@ def probe_audio_streams(media_path: str) -> list[AudioStreamInfo]:
             continue
 
     return audio_streams
+
+
+def probe_audio_streams(media_path: str) -> list[AudioStreamInfo]:
+    command = build_audio_stream_probe_command(media_path)
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.error(
+            "ffprobe audio stream inspection timed out | media=%s | timeout_seconds=%s",
+            media_path,
+            FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError(
+            "Audio stream inspection timed out after "
+            f"{FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS:g} seconds."
+        ) from exc
+    except FileNotFoundError as exc:
+        logger.error("ffprobe executable was not found during audio stream inspection | media=%s", media_path)
+        raise RuntimeError("ffprobe was not found. Please install ffmpeg/ffprobe to inspect audio streams.") from exc
+    except OSError as exc:
+        logger.error(
+            "ffprobe audio stream inspection could not be started | media=%s | reason=%s",
+            media_path,
+            exc,
+        )
+        raise RuntimeError(f"Audio stream inspection failed to start: {exc}") from exc
+
+    if result.returncode != 0:
+        error_text = (result.stderr or result.stdout or "Unknown ffprobe error.").strip()
+        logger.error(
+            "ffprobe audio stream inspection failed | media=%s | returncode=%s | details=%s",
+            media_path,
+            result.returncode,
+            error_text,
+        )
+        raise RuntimeError(f"Failed to inspect audio streams: {error_text}")
+
+    return parse_audio_stream_probe_output(media_path, result.stdout)

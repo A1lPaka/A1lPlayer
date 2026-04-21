@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QThread, QTimer, Qt, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
 from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
@@ -12,7 +12,9 @@ from ui.MessageBoxService import show_audio_stream_inspection_warning
 logger = logging.getLogger(__name__)
 
 
-class SubtitleGenerationAudioProbeFlow:
+class SubtitleGenerationAudioProbeFlow(QObject):
+    thread_finished = Signal()
+
     def __init__(
         self,
         parent: QWidget,
@@ -24,6 +26,7 @@ class SubtitleGenerationAudioProbeFlow:
         dialog_media_path: Callable[[], str | None],
         service_state_name: Callable[[], str],
     ):
+        super().__init__(parent)
         self._parent = parent
         self._player = player
         self._ui = ui
@@ -101,8 +104,10 @@ class SubtitleGenerationAudioProbeFlow:
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_probe_finished, Qt.QueuedConnection)
         worker.failed.connect(self._on_probe_failed, Qt.QueuedConnection)
+        worker.canceled.connect(self._on_probe_canceled, Qt.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
+        worker.canceled.connect(thread.quit)
         thread.finished.connect(
             lambda probe_request_id=probe_request_id: self._on_probe_thread_finished(probe_request_id)
         )
@@ -119,7 +124,7 @@ class SubtitleGenerationAudioProbeFlow:
             ),
         )
 
-    def invalidate_active_request(self, reason: str):
+    def invalidate_active_request(self, reason: str, *, force: bool = False):
         if self._current_probe_request_id is None:
             return
         probe_request_id = self._current_probe_request_id
@@ -129,8 +134,25 @@ class SubtitleGenerationAudioProbeFlow:
             probe_request_id,
             reason,
         )
-        self._finish_probe_worker(probe_request_id)
         self._current_probe_request_id = None
+        self._request_probe_stop(probe_request_id, force=force)
+
+    def is_active(self) -> bool:
+        return any(thread.isRunning() for thread in self._threads.values())
+
+    def stop_all(self, reason: str, *, force: bool = False):
+        if not self._threads:
+            return
+        self._abandon_loading_probe()
+        self._current_probe_request_id = None
+        logger.debug(
+            "Stopping all audio stream probe requests | count=%s | reason=%s | force=%s",
+            len(self._threads),
+            reason,
+            force,
+        )
+        for probe_request_id in list(self._threads):
+            self._request_probe_stop(probe_request_id, force=force)
 
     def probe_state_for_media(self, media_path: str | None) -> AudioStreamProbeState:
         normalized_media_path = str(media_path or "")
@@ -272,36 +294,59 @@ class SubtitleGenerationAudioProbeFlow:
 
     @Slot(int, str, object)
     def _on_probe_finished(self, probe_request_id: int, media_path: str, audio_streams):
-        self._finish_probe_worker(probe_request_id)
+        try:
+            if not self._is_current_probe_result(probe_request_id, media_path):
+                return
 
-        if not self._is_current_probe_result(probe_request_id, media_path):
-            return
-
-        self._current_probe_request_id = None
-        self._cache_probe_success(media_path, audio_streams)
-        self._apply_loaded_audio_tracks(media_path, audio_streams)
+            self._current_probe_request_id = None
+            self._cache_probe_success(media_path, audio_streams)
+            self._apply_loaded_audio_tracks(media_path, audio_streams)
+        finally:
+            self._release_probe_if_thread_stopped(probe_request_id)
 
     @Slot(int, str, str)
     def _on_probe_failed(self, probe_request_id: int, media_path: str, reason: str):
-        self._finish_probe_worker(probe_request_id)
+        try:
+            if not self._is_current_probe_result(probe_request_id, media_path):
+                return
 
-        if not self._is_current_probe_result(probe_request_id, media_path):
-            return
+            self._current_probe_request_id = None
+            self._cache_probe_failure(media_path, reason)
+            self._apply_audio_track_probe_failure(media_path, reason, show_warning=True)
+        finally:
+            self._release_probe_if_thread_stopped(probe_request_id)
 
-        self._current_probe_request_id = None
-        self._cache_probe_failure(media_path, reason)
-        self._apply_audio_track_probe_failure(media_path, reason, show_warning=True)
+    @Slot(int)
+    def _on_probe_canceled(self, probe_request_id: int):
+        logger.debug("Audio stream probe canceled | probe_request_id=%s", probe_request_id)
 
-    def _finish_probe_worker(self, probe_request_id: int):
-        self._workers.pop(probe_request_id, None)
+    def _request_probe_stop(self, probe_request_id: int, *, force: bool):
+        worker = self._workers.get(probe_request_id)
         thread = self._threads.get(probe_request_id)
         if thread is None:
             return
         if thread.isRunning():
-            thread.quit()
+            if worker is not None:
+                if force:
+                    worker.force_stop()
+                else:
+                    worker.cancel()
             return
 
+        self._workers.pop(probe_request_id, None)
         self._threads.pop(probe_request_id, None)
+        if worker is not None:
+            worker.deleteLater()
+        thread.deleteLater()
+
+    def _release_probe_if_thread_stopped(self, probe_request_id: int):
+        thread = self._threads.get(probe_request_id)
+        if thread is None or thread.isRunning():
+            return
+        worker = self._workers.pop(probe_request_id, None)
+        self._threads.pop(probe_request_id, None)
+        if worker is not None:
+            worker.deleteLater()
         thread.deleteLater()
 
     def _deferred_start_probe_worker(self, probe_request_id: int, thread: QThread):
@@ -331,3 +376,4 @@ class SubtitleGenerationAudioProbeFlow:
         logger.debug("Audio stream probe thread finished | probe_request_id=%s", probe_request_id)
         self._workers.pop(probe_request_id, None)
         self._threads.pop(probe_request_id, None)
+        self.thread_finished.emit()

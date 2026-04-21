@@ -155,6 +155,7 @@ class SubtitleGenerationService(QObject):
             dialog_media_path=lambda: self._dialog_request_media_path,
             service_state_name=lambda: self._service_state.name,
         )
+        self._audio_probe_flow.thread_finished.connect(self._complete_shutdown_if_possible)
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
         self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
         self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
@@ -560,7 +561,11 @@ class SubtitleGenerationService(QObject):
         self._ui.show_cuda_install_cancel_pending()
 
     def has_active_tasks(self) -> bool:
-        if self._pending_subtitle_thread_run_ids or self._cuda_runtime_flow.is_active():
+        if (
+            self._pending_subtitle_thread_run_ids
+            or self._cuda_runtime_flow.is_active()
+            or self._audio_probe_flow.is_active()
+        ):
             return True
 
         run = self._active_run
@@ -621,7 +626,7 @@ class SubtitleGenerationService(QObject):
         self._force_shutdown_requested = True
         self._ui.close_progress_dialog()
         self._request_active_task_stop(force=True)
-        self._audio_probe_flow.invalidate_active_request("shutdown")
+        self._audio_probe_flow.stop_all("shutdown", force=True)
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
@@ -629,7 +634,7 @@ class SubtitleGenerationService(QObject):
         self._assert_pipeline_thread()
         self._ui.close_progress_dialog()
         self._active_run = None
-        self._audio_probe_flow.invalidate_active_request("finalize-shutdown")
+        self._audio_probe_flow.stop_all("finalize-shutdown", force=True)
         self._release_playback_takeover(resume_playback=False)
         self._shutdown_completed = True
         self._force_shutdown_requested = False

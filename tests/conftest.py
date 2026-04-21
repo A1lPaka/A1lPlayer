@@ -462,18 +462,29 @@ def _install_subtitle_service_stubs():
         class AudioStreamProbeWorker(QObject):
             finished = Signal(int, str, object)
             failed = Signal(int, str, str)
+            canceled = Signal(int)
 
             def __init__(self, probe_request_id, media_path):
                 super().__init__()
                 self.probe_request_id = probe_request_id
                 self.media_path = media_path
                 self.start_calls = 0
+                self.cancel_calls = 0
+                self.force_stop_calls = 0
 
             def start(self):
                 self.start_calls += 1
 
             def run(self):
                 self.start_calls += 1
+
+            def cancel(self):
+                self.cancel_calls += 1
+                self.canceled.emit(self.probe_request_id)
+
+            def force_stop(self):
+                self.force_stop_calls += 1
+                self.canceled.emit(self.probe_request_id)
 
         class SubtitleGenerationWorker(QObject):
             status_changed = Signal(str)

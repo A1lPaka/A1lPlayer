@@ -17,26 +17,42 @@ from services.runtime.RuntimeHelperProtocol import (
     SubtitleGenerationRequest,
 )
 from services.runtime.JsonSubprocessWorker import JsonSubprocessWorkerBase
-from services.subtitles.AudioStreamProbe import probe_audio_streams
+from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
+from services.subtitles.AudioStreamProbe import (
+    FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
+    build_audio_stream_probe_command,
+    parse_audio_stream_probe_output,
+)
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
     build_exception_diagnostics,
     build_process_diagnostics,
+    CancelAwareWorkerMixin,
+    TerminalEventMixin,
 )
 
 
 logger = logging.getLogger(__name__)
 
 
-class AudioStreamProbeWorker(QObject):
+class AudioStreamProbeWorker(
+    QObject,
+    SubprocessLifecycleMixin,
+    CancelAwareWorkerMixin,
+    TerminalEventMixin,
+):
     finished = Signal(int, str, object)
     failed = Signal(int, str, str)
+    canceled = Signal(int)
 
     def __init__(self, probe_request_id: int, media_path: str):
         super().__init__()
         self._probe_request_id = int(probe_request_id)
         self._media_path = str(media_path)
+        self._init_subprocess_lifecycle()
+        self._init_cancel_state()
+        self._init_terminal_event_state()
 
     @Slot()
     def run(self):
@@ -46,18 +62,136 @@ class AudioStreamProbeWorker(QObject):
                 self._probe_request_id,
                 self._media_path,
             )
-            audio_streams = probe_audio_streams(self._media_path)
+            audio_streams = self._probe_audio_streams()
         except Exception as exc:
+            if self._is_cancel_requested():
+                self._emit_canceled()
+                return
             logger.warning(
                 "Background audio stream probe failed | probe_request_id=%s | media=%s | reason=%s",
                 self._probe_request_id,
                 self._media_path,
                 exc,
             )
-            self.failed.emit(self._probe_request_id, self._media_path, str(exc))
+            self._emit_failed(str(exc))
             return
 
-        self.finished.emit(self._probe_request_id, self._media_path, list(audio_streams))
+        if self._is_cancel_requested():
+            self._emit_canceled()
+            return
+        self._emit_finished(list(audio_streams))
+
+    def cancel(self):
+        if not self._request_cancel():
+            return
+
+        logger.info(
+            "Cancel requested for audio stream probe | probe_request_id=%s",
+            self._probe_request_id,
+        )
+        if self._process is not None:
+            self._begin_termination()
+
+    def force_stop(self):
+        first_request = not self._force_stop_requested
+        self._force_stop_requested = True
+        self._request_cancel()
+        if first_request:
+            logger.warning(
+                "Force-stop requested for audio stream probe | probe_request_id=%s",
+                self._probe_request_id,
+            )
+        else:
+            logger.info(
+                "Repeated force-stop request ignored for audio stream probe | probe_request_id=%s",
+                self._probe_request_id,
+            )
+
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                self._kill_process_tree(process)
+            except Exception:
+                logger.exception(
+                    "Failed to kill audio stream probe process | probe_request_id=%s | pid=%s",
+                    self._probe_request_id,
+                    process.pid,
+                )
+
+    def _probe_audio_streams(self):
+        command = build_audio_stream_probe_command(self._media_path)
+        process: subprocess.Popen[str] | None = None
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                **self._subprocess_spawn_options(),
+            )
+            self._process = process
+            if self._is_cancel_requested():
+                self._begin_termination()
+
+            stdout, stderr = process.communicate(timeout=FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            logger.error(
+                "ffprobe audio stream inspection timed out | media=%s | timeout_seconds=%s",
+                self._media_path,
+                FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
+            )
+            self._begin_termination()
+            raise RuntimeError(
+                "Audio stream inspection timed out after "
+                f"{FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS:g} seconds."
+            ) from exc
+        except FileNotFoundError as exc:
+            logger.error("ffprobe executable was not found during audio stream inspection | media=%s", self._media_path)
+            raise RuntimeError("ffprobe was not found. Please install ffmpeg/ffprobe to inspect audio streams.") from exc
+        except OSError as exc:
+            logger.error(
+                "ffprobe audio stream inspection could not be started | media=%s | reason=%s",
+                self._media_path,
+                exc,
+            )
+            raise RuntimeError(f"Audio stream inspection failed to start: {exc}") from exc
+        finally:
+            self._process = None
+            if process is not None:
+                self._close_stream(process.stdout)
+                self._close_stream(process.stderr)
+
+        if process.returncode != 0:
+            error_text = (stderr or stdout or "Unknown ffprobe error.").strip()
+            logger.error(
+                "ffprobe audio stream inspection failed | media=%s | returncode=%s | details=%s",
+                self._media_path,
+                process.returncode,
+                error_text,
+            )
+            raise RuntimeError(f"Failed to inspect audio streams: {error_text}")
+
+        return parse_audio_stream_probe_output(self._media_path, stdout)
+
+    def _emit_finished(self, audio_streams):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.finished.emit(self._probe_request_id, self._media_path, audio_streams)
+
+    def _emit_failed(self, reason: str):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.failed.emit(self._probe_request_id, self._media_path, reason)
+
+    def _emit_canceled(self):
+        if not self._mark_terminal_event_emitted():
+            return
+        self.canceled.emit(self._probe_request_id)
+
+    def _subprocess_log_name(self) -> str:
+        return "audio stream probe"
 
 
 class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):

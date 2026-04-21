@@ -40,6 +40,32 @@ class _RunningThread:
         return True
 
 
+class _ProbeThread:
+    def __init__(self):
+        self.running = True
+
+    def isRunning(self):
+        return self.running
+
+    def deleteLater(self):
+        return None
+
+
+class _ProbeWorker:
+    def __init__(self):
+        self.cancel_calls = 0
+        self.force_stop_calls = 0
+
+    def cancel(self):
+        self.cancel_calls += 1
+
+    def force_stop(self):
+        self.force_stop_calls += 1
+
+    def deleteLater(self):
+        return None
+
+
 def _load_real_module(module_name: str, relative_path: str):
     project_root = Path(__file__).resolve().parents[2]
     module_path = project_root / relative_path
@@ -76,6 +102,16 @@ def _seed_active_run(service: SubtitleGenerationService, media_path: str = "C:/m
     )
     service._active_run.phase = SubtitlePipelinePhase.RUNNING
     return service._active_run
+
+
+def _seed_active_audio_probe(service: SubtitleGenerationService, probe_request_id: int = 101):
+    thread = _ProbeThread()
+    worker = _ProbeWorker()
+    service._audio_probe_flow._begin_probe("C:/media/movie.mkv")
+    service._audio_probe_flow._current_probe_request_id = probe_request_id
+    service._audio_probe_flow._threads[probe_request_id] = thread
+    service._audio_probe_flow._workers[probe_request_id] = worker
+    return probe_request_id, thread, worker
 
 
 def test_generation_starts_from_idle_and_rejects_reentry(monkeypatch):
@@ -338,6 +374,29 @@ def test_begin_shutdown_requests_graceful_stop_for_active_cuda_flow():
     assert service.is_shutdown_in_progress() is True
 
 
+def test_begin_shutdown_waits_for_active_audio_probe():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    probe_request_id, thread, worker = _seed_active_audio_probe(service)
+    finished = []
+    service.shutdown_finished.connect(lambda: finished.append(True))
+
+    pending = service.begin_shutdown()
+
+    assert pending is True
+    assert worker.cancel_calls == 1
+    assert service.has_active_tasks() is True
+    assert service.is_shutdown_in_progress() is True
+    assert finished == []
+
+    thread.running = False
+    service._audio_probe_flow._on_probe_thread_finished(probe_request_id)
+
+    assert service.has_active_tasks() is False
+    assert service.is_shutdown_in_progress() is False
+    assert finished == [True]
+
+
 def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)
@@ -354,6 +413,18 @@ def test_begin_force_shutdown_requests_force_stop_for_active_worker():
     assert service._service_state == SubtitleServiceState.SHUTTING_DOWN
     assert worker.force_stop_calls == 1
     assert service._ui.closed_progress_dialogs == 1
+
+
+def test_begin_force_shutdown_escalates_active_audio_probe():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    _probe_request_id, _thread, worker = _seed_active_audio_probe(service)
+
+    assert service.begin_shutdown() is True
+    assert service.begin_force_shutdown() is True
+
+    assert worker.cancel_calls == 1
+    assert worker.force_stop_calls == 1
 
 
 def test_begin_force_shutdown_after_graceful_cancel_escalates_active_worker():
@@ -1060,7 +1131,11 @@ def test_real_audio_stream_probe_worker_emits_finished_with_list_result(monkeypa
         "services/subtitles/SubtitleGenerationWorkers.py",
     )
 
-    monkeypatch.setattr(module, "probe_audio_streams", lambda media_path: (_AudioStream(1, f"{media_path}-track"),))
+    monkeypatch.setattr(
+        module.AudioStreamProbeWorker,
+        "_probe_audio_streams",
+        lambda self: (_AudioStream(1, f"{self._media_path}-track"),),
+    )
 
     worker = module.AudioStreamProbeWorker(11, "C:/media/movie.mkv")
     finished_calls = []
@@ -1080,7 +1155,11 @@ def test_real_audio_stream_probe_worker_emits_failure_on_probe_error(monkeypatch
         "services/subtitles/SubtitleGenerationWorkers.py",
     )
 
-    monkeypatch.setattr(module, "probe_audio_streams", lambda _media_path: (_ for _ in ()).throw(RuntimeError("probe boom")))
+    monkeypatch.setattr(
+        module.AudioStreamProbeWorker,
+        "_probe_audio_streams",
+        lambda _self: (_ for _ in ()).throw(RuntimeError("probe boom")),
+    )
 
     worker = module.AudioStreamProbeWorker(12, "C:/media/broken.mkv")
     finished_calls = []
@@ -1316,6 +1395,7 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
             self._media_path = media_path
             self.finished = _Signal()
             self.failed = _Signal()
+            self.canceled = _Signal()
 
         def moveToThread(self, _thread):
             return None
@@ -1326,6 +1406,12 @@ def test_real_audio_probe_worker_start_result_is_ignored_after_fast_reopen(monke
                 self._media_path,
                 [_AudioStream(1, f"{self._media_path}-track-{len(scheduled_starts)}")],
             )
+
+        def cancel(self):
+            self.canceled.emit(self._probe_request_id)
+
+        def force_stop(self):
+            self.canceled.emit(self._probe_request_id)
 
         def deleteLater(self):
             return None
