@@ -1557,6 +1557,31 @@ def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_t
     assert canceled == [True]
 
 
+def test_real_generation_dialog_compacts_long_media_path():
+    dialog_module = _load_real_module(
+        "real_subtitle_generation_dialog_compact_path_test",
+        "ui/SubtitleGenerationDialog.py",
+    )
+
+    parent = QWidget()
+    dialog = dialog_module.SubtitleGenerationDialog(
+        __import__("models.ThemeColor", fromlist=["ThemeState"]).ThemeState(),
+        __import__("utils", fromlist=["get_metrics"]).get_metrics(parent),
+        parent=parent,
+    )
+    long_path = "C:/Users/danii/Desktop/A1lPlayer/services/subtitles/very/deep/movie.mkv"
+
+    dialog.resize(360, dialog.height())
+    dialog.set_media_path(long_path)
+    dialog.resizeEvent(None)
+
+    assert dialog.media_value_label.text().startswith("C:\\") or dialog.media_value_label.text().startswith("C:/")
+    assert "Users" in dialog.media_value_label.text()
+    assert "..." in dialog.media_value_label.text()
+    assert dialog.media_value_label.text().endswith("movie.mkv")
+    assert dialog.media_value_label.toolTip() == long_path
+
+
 def test_real_generation_dialog_system_close_emits_cancel_once():
     coordinator_module = _load_real_module(
         "real_subtitle_generation_ui_coordinator_system_close_test",
@@ -1586,6 +1611,30 @@ def test_real_generation_dialog_system_close_emits_cancel_once():
 
     assert canceled == [True]
     assert coordinator._generation_dialog is None
+
+
+def test_real_progress_dialog_compacts_path_details():
+    progress_module = _load_real_module(
+        "real_subtitle_progress_dialog_compact_path_test",
+        "ui/SubtitleProgressDialog.py",
+    )
+
+    parent = QWidget()
+    dialog = progress_module.SubtitleProgressDialog(
+        __import__("models.ThemeColor", fromlist=["ThemeState"]).ThemeState(),
+        __import__("utils", fromlist=["get_metrics"]).get_metrics(parent),
+        parent=parent,
+    )
+    long_path = "C:/Users/danii/Desktop/A1lPlayer/services/subtitles/very/deep/movie.srt"
+
+    dialog.resize(320, dialog.height())
+    dialog.set_details(f"Device: CUDA\nOutput: {long_path}")
+
+    assert "Output: C:" in dialog.details_label.text()
+    assert "Users" in dialog.details_label.text()
+    assert "..." in dialog.details_label.text()
+    assert dialog.details_label.text().endswith("movie.srt")
+    assert dialog.details_label.toolTip() == f"Device: CUDA\nOutput: {long_path}"
 
 
 def test_real_progress_dialog_system_close_requests_cancel_without_destroying():

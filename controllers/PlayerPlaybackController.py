@@ -430,7 +430,7 @@ class PlayerPlaybackController(QObject):
         checked = 0
         while checked < count and 0 <= index < count:
             media_path = paths[index]
-            if os.path.exists(media_path):
+            if os.path.isfile(media_path):
                 return index
 
             logger.warning("Skipping unavailable playlist item | index=%s | media=%s", index, media_path)

@@ -294,6 +294,17 @@ def test_open_paths_playlist_skips_missing_current_item(workspace_tmp_path):
     assert controller.engine.loaded_media == [valid_path]
 
 
+def test_open_paths_playlist_skips_directory_item(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    directory_path = workspace_tmp_path / "folder.mp4"
+    directory_path.mkdir()
+    valid_path = _make_media_files(workspace_tmp_path, ["second.mp4"])[0]
+
+    assert controller.open_paths([str(directory_path), valid_path]) is True
+    assert controller.current_media_path() == valid_path
+    assert controller.engine.loaded_media == [valid_path]
+
+
 def test_open_paths_playlist_fails_when_all_items_are_missing():
     controller = PlayerPlaybackController()
     missing_paths = [
@@ -302,6 +313,18 @@ def test_open_paths_playlist_fails_when_all_items_are_missing():
     ]
 
     assert controller.open_paths(missing_paths) is False
+    assert controller.current_media_path() is None
+    assert controller.engine.loaded_media == []
+
+
+def test_open_paths_playlist_fails_when_all_items_are_directories(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_dir = workspace_tmp_path / "first.mp4"
+    second_dir = workspace_tmp_path / "second.mp4"
+    first_dir.mkdir()
+    second_dir.mkdir()
+
+    assert controller.open_paths([str(first_dir), str(second_dir)]) is False
     assert controller.current_media_path() is None
     assert controller.engine.loaded_media == []
 

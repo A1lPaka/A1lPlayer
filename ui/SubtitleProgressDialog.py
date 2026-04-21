@@ -5,7 +5,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QLabel, QPushButton, QProgressBar, QWidget
 
 from models.ThemeColor import ThemeState
-from utils import Metrics
+from utils import Metrics, compact_path_for_display
 
 
 class SubtitleProgressDialog(QWidget):
@@ -129,7 +129,9 @@ class SubtitleProgressDialog(QWidget):
         self._update_status_label()
 
     def set_details(self, text: str):
-        self.details_label.setText(text)
+        full_text = str(text)
+        self.details_label.setText(self._compact_details_text(full_text))
+        self.details_label.setToolTip(full_text if self.details_label.text() != full_text else "")
 
     def set_cancel_enabled(self, enabled: bool, button_text: str | None = None):
         self.cancel_button.setEnabled(bool(enabled))
@@ -157,6 +159,17 @@ class SubtitleProgressDialog(QWidget):
             return
         self._cancel_requested = True
         self.cancelRequested.emit()
+
+    def _compact_details_text(self, text: str) -> str:
+        max_chars = max(24, self.details_label.width() // max(1, self._metrics.font_size))
+        lines = []
+        for line in text.splitlines():
+            label, separator, value = line.partition(": ")
+            if separator and ("\\" in value or "/" in value):
+                lines.append(f"{label}{separator}{compact_path_for_display(value, max_chars=max_chars)}")
+            else:
+                lines.append(line)
+        return "\n".join(lines)
 
     def _apply_fonts(self):
         normal_font = self.font()

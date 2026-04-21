@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from models.ThemeColor import ThemeState
 from models import SubtitleGenerationDialogResult
 from services.MediaPathService import build_file_dialog_filter
-from utils import Metrics, res_path
+from utils import Metrics, compact_path_for_display, res_path
 
 
 class ArrowComboBox(QComboBox):
@@ -111,7 +111,7 @@ class SubtitleGenerationDialog(QWidget):
     def _build_ui(self):
         self.media_label = QLabel("Current media:", self)
         self.media_value_label = QLabel("", self)
-        self.media_value_label.setWordWrap(True)
+        self.media_value_label.setWordWrap(False)
 
         self.audio_track_label = QLabel("Audio track", self)
         self.audio_track_combo = ArrowComboBox(self)
@@ -162,7 +162,7 @@ class SubtitleGenerationDialog(QWidget):
 
     def set_media_path(self, media_path: str):
         self._media_path = media_path or ""
-        self.media_value_label.setText(self._media_path if self._media_path else "No media selected")
+        self._update_media_value_label()
         if not self.output_path_input.text().strip():
             self.output_path_input.setText(self._default_output_path())
 
@@ -246,6 +246,7 @@ class SubtitleGenerationDialog(QWidget):
 
         self.media_label.setGeometry(self.gap, y, self.label_width, self.button_height)
         self.media_value_label.setGeometry(field_x, y, row_width, self.button_height)
+        self._update_media_value_label()
         y += self.button_height + self.icon_size
 
         self.audio_track_label.setGeometry(self.gap, y, self.label_width, self.button_height)
@@ -416,6 +417,16 @@ class SubtitleGenerationDialog(QWidget):
         base_path, _ = os.path.splitext(self._media_path)
         extension = self.output_format_combo.currentData() or "srt"
         return f"{base_path}.{extension}"
+
+    def _update_media_value_label(self):
+        if not self._media_path:
+            self.media_value_label.setText("No media selected")
+            self.media_value_label.setToolTip("")
+            return
+
+        max_chars = max(24, self.media_value_label.width() // max(1, self._metrics.font_size))
+        self.media_value_label.setText(compact_path_for_display(self._media_path, max_chars=max_chars))
+        self.media_value_label.setToolTip(self._media_path)
 
     def _sync_output_path_extension(self):
         current_path = self.output_path_input.text().strip()
