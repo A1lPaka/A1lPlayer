@@ -35,13 +35,6 @@ class SubprocessStopPolicyMixin:
         else:
             on_repeated_force_stop()
 
-        process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                self._kill_process_tree(process)
-            except Exception:
-                on_kill_failed(process)
-
         self._begin_termination()
         return first_request
 

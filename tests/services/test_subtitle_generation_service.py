@@ -67,6 +67,13 @@ class _ProbeWorker:
         return None
 
 
+class _AliveProcess:
+    pid = 9876
+
+    def poll(self):
+        return None
+
+
 class _FakeFfmpegStderr:
     def __init__(self, lines):
         self._lines = list(lines)
@@ -1282,6 +1289,27 @@ def test_real_audio_stream_probe_worker_is_qthread_driven():
     assert hasattr(worker, "run")
     assert not hasattr(worker, "start")
     assert not hasattr(worker, "_thread")
+
+
+def test_audio_stream_probe_force_stop_uses_background_termination(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_probe_force_stop_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+
+    worker = module.AudioStreamProbeWorker(14, "C:/media/movie.mkv")
+    begin_calls = []
+    kill_calls = []
+    worker._process = _AliveProcess()
+    monkeypatch.setattr(worker, "_begin_termination", lambda: begin_calls.append(True))
+    monkeypatch.setattr(worker, "_kill_process_tree", lambda process: kill_calls.append(process.pid))
+
+    worker.force_stop()
+    worker.force_stop()
+
+    assert worker._is_cancel_requested() is True
+    assert kill_calls == []
+    assert begin_calls == [True, True]
 
 
 def test_real_probe_audio_streams_reports_timeout(monkeypatch):

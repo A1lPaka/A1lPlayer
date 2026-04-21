@@ -65,7 +65,7 @@ def test_graceful_subprocess_stop_is_idempotent():
     assert worker.begin_calls == 1
 
 
-def test_force_subprocess_stop_after_cancel_escalates_to_kill_path_when_process_is_alive():
+def test_force_subprocess_stop_after_cancel_escalates_via_background_termination():
     process = _AliveProcess()
     worker = _StopPolicyHarness(process)
 
@@ -81,7 +81,7 @@ def test_force_subprocess_stop_after_cancel_escalates_to_kill_path_when_process_
     assert worker.cancel_hooks == 1
     assert worker.force_hooks == 1
     assert worker.repeated_force_hooks == 0
-    assert worker.kill_calls == 1
+    assert worker.kill_calls == 0
     assert worker.begin_calls == 2
 
 
@@ -101,7 +101,7 @@ def test_repeated_force_subprocess_stop_only_runs_repeated_hook():
 
     assert worker.force_hooks == 1
     assert worker.repeated_force_hooks == 1
-    assert worker.kill_calls == 2
+    assert worker.kill_calls == 0
     assert worker.begin_calls == 2
 
 

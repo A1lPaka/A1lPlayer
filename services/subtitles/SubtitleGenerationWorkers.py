@@ -109,16 +109,7 @@ class AudioStreamProbeWorker(
                 self._probe_request_id,
             )
 
-        process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                self._kill_process_tree(process)
-            except Exception:
-                logger.exception(
-                    "Failed to kill audio stream probe process | probe_request_id=%s | pid=%s",
-                    self._probe_request_id,
-                    process.pid,
-                )
+        self._begin_termination()
 
     def _probe_audio_streams(self):
         command = build_audio_stream_probe_command(self._media_path)

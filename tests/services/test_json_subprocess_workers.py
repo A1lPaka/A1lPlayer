@@ -322,7 +322,7 @@ def test_cuda_exit_without_terminal_event_uses_user_error_tail(monkeypatch):
     assert canceled == [True]
 
 
-def test_repeated_cancel_is_idempotent_and_force_stop_hard_kills_alive_process(monkeypatch):
+def test_repeated_cancel_is_idempotent_and_force_stop_uses_background_termination(monkeypatch):
     import services.runtime.CudaRuntimeInstallWorker as cuda_module
 
     monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
@@ -348,7 +348,7 @@ def test_repeated_cancel_is_idempotent_and_force_stop_hard_kills_alive_process(m
     cuda_worker.force_stop()
     cuda_worker.force_stop()
 
-    assert kill_calls == [9876, 9876]
+    assert kill_calls == []
     assert cuda_begin_calls == [True, True]
 
 
