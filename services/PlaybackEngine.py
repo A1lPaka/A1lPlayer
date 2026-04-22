@@ -502,6 +502,15 @@ class PlaybackService(QObject):
                 self.media_ended.emit(request_id)
                 continue
 
+            if request_id != self._current_request_id:
+                logger.debug(
+                    "Ignoring stale playback failure event | request_id=%s | active_request_id=%s | media=%s",
+                    request_id,
+                    self._current_request_id,
+                    media_path or "<unknown>",
+                )
+                continue
+
             self._cleanup_runtime_subtitle_copy()
             logger.error("Playback failure path reached | request_id=%s | media=%s", request_id, media_path or "<unknown>")
             self.playback_error.emit(

@@ -87,7 +87,7 @@ def _load_real_playback_engine(monkeypatch):
     return module, fake_instance
 
 
-def test_late_media_error_keeps_original_request_id(monkeypatch):
+def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
     module, fake_instance = _load_real_playback_engine(monkeypatch)
     service = module.PlaybackService()
     errors = SignalRecorder()
@@ -103,13 +103,28 @@ def test_late_media_error_keeps_original_request_id(monkeypatch):
     service._flush_player_events_from_qt_thread()
 
     assert second_request_id != first_request_id
-    assert errors.calls == [
-        (
-            first_request_id,
-            "A.mp4",
-            "Failed to open or play this media file. The file may be corrupted or unsupported.",
-        )
-    ]
+    assert errors.calls == []
+
+
+def test_late_media_error_keeps_current_runtime_subtitle_copy(monkeypatch, workspace_tmp_path):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+
+    first_request_id = service.load_media("A.mp4")
+    first_media = fake_instance.media[-1]
+    old_callback, old_args = first_media.event_manager().callbacks[_FakeVlc.EventType.MediaStateChanged]
+    second_request_id = service.load_media("B.mp4")
+    runtime_copy = workspace_tmp_path / "current-runtime.srt"
+    runtime_copy.write_text("subtitle", encoding="utf-8")
+    service._runtime_subtitle_copy_path = str(runtime_copy)
+
+    event = SimpleNamespace(u=SimpleNamespace(new_state=_FakeVlc.State.Error.value))
+    old_callback(event, *old_args)
+    service._flush_player_events_from_qt_thread()
+
+    assert second_request_id != first_request_id
+    assert service._runtime_subtitle_copy_path == str(runtime_copy)
+    assert runtime_copy.is_file()
 
 
 def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
