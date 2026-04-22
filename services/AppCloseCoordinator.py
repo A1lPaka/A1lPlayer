@@ -130,11 +130,19 @@ class AppCloseCoordinator(QObject):
 
         if self._force_requested:
             if self._force_timeout_warning_shown:
+                logger.critical(
+                    "Application force shutdown timed out again; proceeding with emergency local shutdown"
+                )
+                self._finish_shutdown(
+                    "Application emergency close requested after force shutdown timeout",
+                    request_final_close=True,
+                )
                 return
             logger.warning("Application force shutdown is still waiting for background tasks to terminate")
             self._force_timeout_warning_shown = True
             self._close_timeout_dialog()
             show_force_close_still_running(self._parent)
+            self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
             return
 
         if self._timeout_dialog is not None:
