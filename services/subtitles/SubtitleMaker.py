@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 from services.AppTempService import AppTempService
+from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.subtitles.AudioStreamProbe import FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS, probe_audio_streams
 from services.subtitles.CudaRuntimeDiscovery import (
     WINDOWS_CUDA_RUNTIME_PACKAGE_FILES,
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 _configure_windows_nvidia_runtime_paths = configure_windows_nvidia_runtime_paths
 
 
-class SubtitleMaker:
+class SubtitleMaker(SubprocessLifecycleMixin):
     _PROGRESS_PREPARING = 0
     _PROGRESS_LOADING_MODEL = 10
     _PROGRESS_MODEL_READY = 20
@@ -40,7 +41,7 @@ class SubtitleMaker:
         self.model_size = model_size
         self.device = device or self._detect_device()
         self._model = None
-        self._ffmpeg_process: subprocess.Popen[str] | None = None
+        self._init_subprocess_lifecycle()
 
     def load_model(self):
         if self._model is not None:
@@ -353,8 +354,9 @@ class SubtitleMaker:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                **self._subprocess_spawn_options(),
             )
-            self._ffmpeg_process = process
+            self._set_active_process(process)
             if process.stderr is not None:
                 stderr_thread = threading.Thread(
                     target=self._collect_process_stream,
@@ -376,14 +378,16 @@ class SubtitleMaker:
             raise RuntimeError("ffmpeg was not found. Please install ffmpeg to extract a specific audio stream.") from exc
         except SubtitleGenerationCanceledError:
             self.cancel()
+            self._wait_for_process_stop(process)
             self._remove_file_if_exists(output_path)
             raise
         except (OSError, ValueError, subprocess.SubprocessError):
             self.cancel()
+            self._wait_for_process_stop(process)
             self._remove_file_if_exists(output_path)
             raise
         finally:
-            self._ffmpeg_process = None
+            self._clear_active_process(process)
             if process is not None:
                 self._close_stream(process.stderr)
             if stderr_thread is not None:
@@ -457,12 +461,15 @@ class SubtitleMaker:
         return "cpu"
 
     def cancel(self):
-        process = self._ffmpeg_process
-        if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-            except OSError:
-                logger.debug("Best-effort ffmpeg terminate failed", exc_info=True)
+        self._begin_termination()
+
+    def _wait_for_process_stop(self, process: subprocess.Popen[str] | None):
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.wait(timeout=self._graceful_cancel_timeout_seconds() + 0.5)
+        except subprocess.TimeoutExpired:
+            logger.warning("ffmpeg audio extraction process did not stop after cancellation | pid=%s", process.pid)
 
     def _collect_process_stream(self, stream, buffer: BoundedLineBuffer, stream_name: str):
         try:

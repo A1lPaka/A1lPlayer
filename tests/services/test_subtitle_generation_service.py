@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import subprocess
 import sys
+import threading
 import time
 from subprocess import CompletedProcess
 from dataclasses import dataclass
@@ -113,6 +114,33 @@ class _FakeFfmpegProcess:
 
     def terminate(self):
         self.terminate_calls += 1
+
+
+class _CancelingFfmpegProcess:
+    pid = 54321
+    returncode = None
+
+    def __init__(self, cancel_event):
+        self.stderr = _FakeFfmpegStderr([])
+        self._cancel_event = cancel_event
+        self.wait_calls = []
+        self.killed = False
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if len(self.wait_calls) == 1:
+            self._cancel_event.set()
+            raise subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=timeout)
+        if not self.killed:
+            raise subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=timeout)
+        self.returncode = -9
+        return self.returncode
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        return None
 
 
 class _FakeModelInfo:
@@ -1535,6 +1563,39 @@ def test_real_ffmpeg_audio_extract_uses_bounded_stderr_buffer(monkeypatch, works
     assert popen_calls[0][1]["stdout"] is module.subprocess.DEVNULL
     assert popen_calls[0][1]["stderr"] is module.subprocess.PIPE
     assert popen_calls[0][1]["text"] is True
+
+
+def test_real_ffmpeg_audio_extract_cancel_kills_ignored_terminate(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_ffmpeg_cancel_kill_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    cancel_event = threading.Event()
+    process = _CancelingFfmpegProcess(cancel_event)
+    kill_calls = []
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        module.AppTempService,
+        "create_subtitle_generation_file_path",
+        lambda **_kwargs: workspace_tmp_path / "extracted.wav",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    monkeypatch.setattr(
+        maker,
+        "_kill_process_tree",
+        lambda killed_process: kill_calls.append(killed_process.pid) or setattr(killed_process, "killed", True),
+    )
+
+    with pytest.raises(module.SubtitleGenerationCanceledError):
+        maker._extract_audio_stream("C:/media/movie.mkv", 2, cancel_event=cancel_event)
+
+    assert kill_calls == [process.pid]
+    assert process.wait_calls[0] == 0.2
+    assert process.wait_calls[-1] == pytest.approx(maker._graceful_cancel_timeout_seconds() + 0.5)
+    assert process.stderr.closed is True
 
 
 def test_real_generation_dialog_opens_immediately_in_loading_state_and_updates_tracks():
