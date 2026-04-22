@@ -341,7 +341,7 @@ def test_repeated_cancel_is_idempotent_and_force_stop_uses_background_terminatio
     cuda_worker = cuda_module.CudaRuntimeInstallWorker(["pkg"])
     cuda_begin_calls = []
     kill_calls = []
-    cuda_worker._process = _AliveProcess()
+    cuda_worker._set_active_process(_AliveProcess())
     monkeypatch.setattr(cuda_worker, "_begin_termination", lambda: cuda_begin_calls.append(True))
     monkeypatch.setattr(cuda_worker, "_kill_process_tree", lambda process: kill_calls.append(process.pid))
 
@@ -350,6 +350,64 @@ def test_repeated_cancel_is_idempotent_and_force_stop_uses_background_terminatio
 
     assert kill_calls == []
     assert cuda_begin_calls == [True, True]
+
+
+def test_worker_stop_methods_are_direct_thread_safe_requests(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as cuda_module
+
+    monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    subtitle_module = _load_real_module(
+        "real_subtitle_generation_workers_direct_stop_test",
+        "services/subtitles/SubtitleGenerationWorkers.py",
+    )
+
+    subtitle_worker = subtitle_module.SubtitleGenerationWorker(8, "C:/media/movie.mkv", _subtitle_options())
+    subtitle_statuses = []
+    subtitle_details = []
+    subtitle_begin_calls = []
+    subtitle_worker.status_changed.connect(lambda text: subtitle_statuses.append(text))
+    subtitle_worker.details_changed.connect(lambda text: subtitle_details.append(text))
+    subtitle_worker._set_active_process(_AliveProcess())
+    monkeypatch.setattr(subtitle_worker, "_begin_termination", lambda: subtitle_begin_calls.append(True))
+
+    subtitle_worker.cancel()
+    subtitle_worker.force_stop()
+
+    assert subtitle_worker._is_cancel_requested() is True
+    assert subtitle_worker._is_force_stop_requested() is True
+    assert subtitle_begin_calls == [True, True]
+    assert subtitle_statuses == []
+    assert subtitle_details == []
+
+    cuda_worker = cuda_module.CudaRuntimeInstallWorker(["pkg"])
+    cuda_statuses = []
+    cuda_details = []
+    cuda_begin_calls = []
+    cuda_worker.status_changed.connect(lambda text: cuda_statuses.append(text))
+    cuda_worker.details_changed.connect(lambda text: cuda_details.append(text))
+    cuda_worker._set_active_process(_AliveProcess())
+    monkeypatch.setattr(cuda_worker, "_begin_termination", lambda: cuda_begin_calls.append(True))
+
+    cuda_worker.cancel()
+    cuda_worker.force_stop()
+
+    assert cuda_worker._is_cancel_requested() is True
+    assert cuda_worker._is_force_stop_requested() is True
+    assert cuda_begin_calls == [True, True]
+    assert cuda_statuses == []
+    assert cuda_details == []
+
+    audio_worker = subtitle_module.AudioStreamProbeWorker(12, "C:/media/movie.mkv")
+    audio_begin_calls = []
+    audio_worker._set_active_process(_AliveProcess())
+    monkeypatch.setattr(audio_worker, "_begin_termination", lambda: audio_begin_calls.append(True))
+
+    audio_worker.cancel()
+    audio_worker.force_stop()
+
+    assert audio_worker._is_cancel_requested() is True
+    assert audio_worker._is_force_stop_requested() is True
+    assert audio_begin_calls == [True, True]
 
 
 def test_json_subprocess_reader_join_timeout_is_logged(caplog):

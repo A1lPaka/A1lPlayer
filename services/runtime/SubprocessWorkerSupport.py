@@ -27,9 +27,8 @@ class SubprocessStopPolicyMixin:
         return True
 
     def _request_force_subprocess_stop(self, on_force_requested, on_repeated_force_stop, on_kill_failed) -> bool:
-        first_request = not self._force_stop_requested
+        first_request = self._mark_force_stop_requested()
         if first_request:
-            self._force_stop_requested = True
             self._request_cancel()
             on_force_requested()
         else:

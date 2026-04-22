@@ -10,11 +10,11 @@ class _AliveProcess:
         return None
 
 
-class _StopPolicyHarness(CancelAwareWorkerMixin, SubprocessStopPolicyMixin):
+class _StopPolicyHarness(CancelAwareWorkerMixin, SubprocessLifecycleMixin, SubprocessStopPolicyMixin):
     def __init__(self, process=None):
+        self._init_subprocess_lifecycle()
         self._init_cancel_state()
-        self._process = process
-        self._force_stop_requested = False
+        self._set_active_process(process)
         self.begin_calls = 0
         self.kill_calls = 0
         self.cancel_hooks = 0
@@ -44,7 +44,7 @@ class _StopPolicyHarness(CancelAwareWorkerMixin, SubprocessStopPolicyMixin):
 class _LifecycleHarness(SubprocessLifecycleMixin):
     def __init__(self, process=None):
         self._init_subprocess_lifecycle()
-        self._process = process
+        self._set_active_process(process)
         self.terminated_processes = []
 
     def _request_graceful_stop(self, process):
@@ -77,7 +77,7 @@ def test_force_subprocess_stop_after_cancel_escalates_via_background_termination
     ) is True
 
     assert worker._is_cancel_requested() is True
-    assert worker._force_stop_requested is True
+    assert worker._is_force_stop_requested() is True
     assert worker.cancel_hooks == 1
     assert worker.force_hooks == 1
     assert worker.repeated_force_hooks == 0
@@ -109,11 +109,11 @@ def test_subprocess_lifecycle_terminates_process_snapshot_only():
     first_process = _AliveProcess(pid=1)
     second_process = _AliveProcess(pid=2)
     worker = _LifecycleHarness(first_process)
-    worker._force_stop_requested = True
+    worker._mark_force_stop_requested()
 
     worker._terminating_process = first_process
     worker._termination_started = True
-    worker._process = second_process
+    worker._set_active_process(second_process)
 
     worker._terminate_process_lifecycle(first_process)
 
@@ -127,7 +127,7 @@ def test_subprocess_lifecycle_stale_completion_does_not_clear_active_termination
     old_process = _AliveProcess(pid=1)
     active_process = _AliveProcess(pid=2)
     worker = _LifecycleHarness(active_process)
-    worker._force_stop_requested = True
+    worker._mark_force_stop_requested()
     worker._terminating_process = active_process
     worker._termination_started = True
 

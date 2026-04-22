@@ -109,7 +109,6 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
         )
         self._emit_failed("Failed to install GPU runtime:", error_text)
 
-    @Slot()
     def cancel(self):
         if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
             logger.info("Repeated cancel request ignored for CUDA runtime installer worker")
@@ -118,7 +117,6 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
     def _on_cancel_requested(self):
         logger.info("CUDA runtime installer worker cancel requested")
 
-    @Slot()
     def force_stop(self):
         self._request_force_subprocess_stop(
             self._on_force_stop_requested,
@@ -198,7 +196,7 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
         )
 
     def _build_exception_diagnostics(self, exc: BaseException) -> str:
-        process = self._process or getattr(self, "_last_json_subprocess_process", None)
+        process = self._process_snapshot() or getattr(self, "_last_json_subprocess_process", None)
         return_code = process.returncode if process is not None else None
         return build_exception_diagnostics(
             exc,

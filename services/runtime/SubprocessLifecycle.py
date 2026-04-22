@@ -19,6 +19,29 @@ class SubprocessLifecycleMixin:
         self._terminating_process: subprocess.Popen[str] | None = None
         self._force_stop_requested = False
 
+    def _set_active_process(self, process: subprocess.Popen[str] | None):
+        with self._termination_lock:
+            self._process = process
+
+    def _clear_active_process(self, process: subprocess.Popen[str] | None):
+        with self._termination_lock:
+            if self._process is process:
+                self._process = None
+
+    def _process_snapshot(self) -> subprocess.Popen[str] | None:
+        with self._termination_lock:
+            return self._process
+
+    def _mark_force_stop_requested(self) -> bool:
+        with self._termination_lock:
+            first_request = not self._force_stop_requested
+            self._force_stop_requested = True
+            return first_request
+
+    def _is_force_stop_requested(self) -> bool:
+        with self._termination_lock:
+            return self._force_stop_requested
+
     def _begin_termination(self):
         with self._termination_lock:
             if self._termination_started:
@@ -38,7 +61,7 @@ class SubprocessLifecycleMixin:
             if process is None or process.poll() is not None:
                 return
 
-            if self._force_stop_requested:
+            if self._is_force_stop_requested():
                 self._kill_process_tree(process)
                 return
 
@@ -55,7 +78,7 @@ class SubprocessLifecycleMixin:
                     process.wait(timeout=self._graceful_cancel_timeout_seconds())
                     return
                 except subprocess.TimeoutExpired:
-                    if self._force_stop_requested:
+                    if self._is_force_stop_requested():
                         self._kill_process_tree(process)
                         return
                     logger.warning(

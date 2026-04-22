@@ -81,7 +81,6 @@ class AudioStreamProbeWorker(
             return
         self._emit_finished(list(audio_streams))
 
-    @Slot()
     def cancel(self):
         if not self._request_cancel():
             return
@@ -90,13 +89,11 @@ class AudioStreamProbeWorker(
             "Cancel requested for audio stream probe | probe_request_id=%s",
             self._probe_request_id,
         )
-        if self._process is not None:
+        if self._process_snapshot() is not None:
             self._begin_termination()
 
-    @Slot()
     def force_stop(self):
-        first_request = not self._force_stop_requested
-        self._force_stop_requested = True
+        first_request = self._mark_force_stop_requested()
         self._request_cancel()
         if first_request:
             logger.warning(
@@ -124,7 +121,7 @@ class AudioStreamProbeWorker(
                 errors="replace",
                 **self._subprocess_spawn_options(),
             )
-            self._process = process
+            self._set_active_process(process)
             if self._is_cancel_requested():
                 self._begin_termination()
 
@@ -151,7 +148,7 @@ class AudioStreamProbeWorker(
             )
             raise RuntimeError(f"Audio stream inspection failed to start: {exc}") from exc
         finally:
-            self._process = None
+            self._clear_active_process(process)
             if process is not None:
                 self._close_stream(process.stdout)
                 self._close_stream(process.stderr)
@@ -286,7 +283,6 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
             )
             self._emit_failed("Subtitle generation failed to start.", diagnostics)
 
-    @Slot()
     def cancel(self):
         if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
             logger.info("Repeated cancel request ignored for subtitle generation subprocess | media=%s", self._request.media_path)
@@ -295,7 +291,6 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
     def _on_cancel_requested(self):
         logger.info("Cancel requested for subtitle generation subprocess | media=%s", self._request.media_path)
 
-    @Slot()
     def force_stop(self):
         self._request_force_subprocess_stop(
             self._on_force_stop_requested,

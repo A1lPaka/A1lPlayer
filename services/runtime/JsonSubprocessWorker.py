@@ -54,7 +54,7 @@ class JsonSubprocessWorkerBase(
         try:
             process = self._spawn_json_subprocess(launch_spec)
             self._last_json_subprocess_process = process
-            self._process = process
+            self._set_active_process(process)
             self._after_json_subprocess_spawned(process, launch_spec)
             if self._is_cancel_requested():
                 self._on_json_subprocess_deferred_cancel(process)
@@ -88,7 +88,7 @@ class JsonSubprocessWorkerBase(
                 self._join_json_subprocess_reader(stdout_thread, timeout=1.0, stream_name="stdout")
             return JsonSubprocessRunResult(process=process, return_code=return_code)
         finally:
-            self._process = None
+            self._clear_active_process(process)
             if process is not None:
                 self._close_stream(process.stdin)
                 self._close_stream(process.stdout)

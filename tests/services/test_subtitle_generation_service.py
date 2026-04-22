@@ -1362,7 +1362,7 @@ def test_audio_stream_probe_force_stop_uses_background_termination(monkeypatch):
     worker = module.AudioStreamProbeWorker(14, "C:/media/movie.mkv")
     begin_calls = []
     kill_calls = []
-    worker._process = _AliveProcess()
+    worker._set_active_process(_AliveProcess())
     monkeypatch.setattr(worker, "_begin_termination", lambda: begin_calls.append(True))
     monkeypatch.setattr(worker, "_kill_process_tree", lambda process: kill_calls.append(process.pid))
 

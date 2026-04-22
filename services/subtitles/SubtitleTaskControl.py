@@ -27,6 +27,7 @@ class SubtitleWorkerTaskControl:
             logger.debug("Subtitle generation stop ignored because no worker is active | force=%s", force)
             return False
 
+        # Worker run() occupies its QThread, so stop requests are direct thread-safe calls.
         if force:
             logger.warning("Force-stop requested for subtitle generation worker | run_id=%s", self._run.run_id)
             self._run.subtitle_worker.force_stop()
