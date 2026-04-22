@@ -4,7 +4,6 @@ import logging
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 
-from services.runtime.WorkerStopControl import call_worker_stop
 from services.runtime.CudaRuntimeInstallWorker import CudaRuntimeInstallWorker
 
 
@@ -80,7 +79,7 @@ class SubtitleCudaRuntimeFlow(QObject):
 
         if force:
             logger.warning("Force-stop requested for CUDA runtime flow | run_id=%s", self._current_run_id())
-            call_worker_stop(self._worker, "force_stop")
+            self._worker.force_stop()
             return True
 
         if self._cancel_requested:
@@ -89,7 +88,7 @@ class SubtitleCudaRuntimeFlow(QObject):
 
         self._cancel_requested = True
         logger.info("Cancel requested for CUDA runtime flow | run_id=%s", self._current_run_id())
-        call_worker_stop(self._worker, "cancel")
+        self._worker.cancel()
         return True
 
     def is_active(self) -> bool:

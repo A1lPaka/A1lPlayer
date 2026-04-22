@@ -294,8 +294,6 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
 
     def _on_cancel_requested(self):
         logger.info("Cancel requested for subtitle generation subprocess | media=%s", self._request.media_path)
-        self.status_changed.emit("Cancellation requested...")
-        self.details_changed.emit(self._build_cancel_details())
 
     @Slot()
     def force_stop(self):
@@ -433,16 +431,6 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
                 f"Device: {device_label}",
                 f"Model: {self._request.model_size}",
                 f"Output: {self._request.output_path}",
-            ]
-        )
-
-    def _build_cancel_details(self) -> str:
-        return "\n".join(
-            [
-                "Stopping subtitle generation subprocess.",
-                "The current transcription job will be terminated outside the GUI process.",
-                "",
-                self._build_initial_details(),
             ]
         )
 

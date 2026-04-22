@@ -117,7 +117,6 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
 
     def _on_cancel_requested(self):
         logger.info("CUDA runtime installer worker cancel requested")
-        self.status_changed.emit("Cancelling GPU runtime installation...")
 
     @Slot()
     def force_stop(self):

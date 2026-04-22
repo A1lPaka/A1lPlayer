@@ -2,7 +2,6 @@ import logging
 from collections.abc import Collection
 from typing import Protocol
 
-from services.runtime.WorkerStopControl import call_worker_stop
 from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.SubtitlePipelineState import SubtitlePipelineRun
 
@@ -30,7 +29,7 @@ class SubtitleWorkerTaskControl:
 
         if force:
             logger.warning("Force-stop requested for subtitle generation worker | run_id=%s", self._run.run_id)
-            call_worker_stop(self._run.subtitle_worker, "force_stop")
+            self._run.subtitle_worker.force_stop()
             return True
 
         if self._run.subtitle_cancel_requested:
@@ -39,7 +38,7 @@ class SubtitleWorkerTaskControl:
 
         self._run.subtitle_cancel_requested = True
         logger.info("Cancel requested for subtitle generation worker | run_id=%s", self._run.run_id)
-        call_worker_stop(self._run.subtitle_worker, "cancel")
+        self._run.subtitle_worker.cancel()
         return True
 
     def is_active(self) -> bool:

@@ -4,7 +4,6 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
-from services.runtime.WorkerStopControl import call_worker_stop
 from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
 from services.subtitles.SubtitleGenerationWorkers import AudioStreamProbeWorker
 from ui.MessageBoxService import show_audio_stream_inspection_warning
@@ -329,9 +328,9 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         if thread.isRunning():
             if worker is not None:
                 if force:
-                    call_worker_stop(worker, "force_stop")
+                    worker.force_stop()
                 else:
-                    call_worker_stop(worker, "cancel")
+                    worker.cancel()
             return
 
         self._workers.pop(probe_request_id, None)
