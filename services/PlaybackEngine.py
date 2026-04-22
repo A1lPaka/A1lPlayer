@@ -7,13 +7,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-import vlc
+try:
+    import vlc
+except (ImportError, OSError) as exc:
+    vlc = None
+    _VLC_IMPORT_ERROR = exc
+else:
+    _VLC_IMPORT_ERROR = None
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
 from services.AppTempService import AppTempService
 
 VLC_AUDIO_CHANNEL_MONO = 7
 AUDIO_DEVICE_DEFAULT_ID = "__default__"
+PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE = (
+    "The VLC playback backend is unavailable. Please install VLC or check that libVLC is available on PATH."
+)
+
+_VLC_ERRORS = (AttributeError, TypeError, ValueError, OSError)
+if vlc is not None:
+    _VLC_ERRORS = (*_VLC_ERRORS, getattr(vlc, "VLCException", Exception))
 
 
 logger = logging.getLogger(__name__)
@@ -52,29 +65,14 @@ class PlaybackService(QObject):
         self._current_playback_token: _PlaybackToken | None = None
         self._current_media = None
         self._current_media_event_manager = None
+        self.instance = None
+        self.player = None
+        self._backend_error_message: str | None = None
         self._queued_player_events: deque[tuple[str, int, str]] = deque()
         self._queued_player_events_lock = threading.Lock()
         self._player_events_flush_scheduled = False
         self._is_shutdown = False
-        self._audio_modes = {
-            "stereo": {
-                "channel": int(vlc.AudioOutputChannel.Stereo.value),
-            },
-            "reverse_stereo": {
-                "channel": int(vlc.AudioOutputChannel.RStereo.value),
-            },
-            "left": {
-                "channel": int(vlc.AudioOutputChannel.Left.value),
-            },
-            "right": {
-                "channel": int(vlc.AudioOutputChannel.Right.value),
-            },
-            "mono": {
-                # python-vlc does not expose Mono in AudioOutputChannel,
-                # but libVLC accepts the raw channel id 7 for mono mode.
-                "channel": VLC_AUDIO_CHANNEL_MONO,
-            },
-        }
+        self._audio_modes = self._build_audio_modes()
         self._delayed_audio_sync_timer = QTimer(self)
         self._delayed_audio_sync_timer.setSingleShot(True)
         self._delayed_audio_sync_timer.setInterval(self._AUDIO_SYNC_DELAY_MS)
@@ -84,15 +82,41 @@ class PlaybackService(QObject):
         self.playing.connect(self.sync_audio_to_player)
 
     def _create_backend(self):
+        if vlc is None:
+            self._backend_error_message = PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE
+            logger.error(
+                "VLC Python bindings could not be imported | error=%s | PATH=%s",
+                _VLC_IMPORT_ERROR,
+                os.environ.get("PATH", ""),
+            )
+            return
+
         logger.info("Creating VLC playback backend")
-        self.instance = vlc.Instance()
-        self.player = self.instance.media_player_new()
+        try:
+            self.instance = vlc.Instance()
+            self.player = self.instance.media_player_new()
+        except _VLC_ERRORS as exc:
+            self.instance = None
+            self.player = None
+            self._backend_error_message = PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE
+            logger.exception(
+                "Failed to create VLC playback backend | error=%s | PATH=%s",
+                exc,
+                os.environ.get("PATH", ""),
+            )
+            return
 
         if self._bound_win_id is not None:
             self.bind_video_output(self._bound_win_id)
 
     def _has_backend(self) -> bool:
         return not self._is_shutdown and getattr(self, "player", None) is not None and getattr(self, "instance", None) is not None
+
+    def is_backend_available(self) -> bool:
+        return self._has_backend()
+
+    def backend_error_message(self) -> str | None:
+        return self._backend_error_message
 
     def shutdown(self):
         if self._is_shutdown:
@@ -110,7 +134,7 @@ class PlaybackService(QObject):
         if player is not None:
             try:
                 player.stop()
-            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+            except _VLC_ERRORS:
                 logger.debug("Failed to stop VLC player during shutdown", exc_info=True)
         self._cleanup_runtime_subtitle_copy()
         self._release_backend()
@@ -126,16 +150,53 @@ class PlaybackService(QObject):
         if player is not None:
             try:
                 player.release()
-            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+            except _VLC_ERRORS:
                 logger.debug("Failed to release VLC player during shutdown", exc_info=True)
             self.player = None
 
         if instance is not None:
             try:
                 instance.release()
-            except (AttributeError, TypeError, ValueError, vlc.VLCException):
+            except _VLC_ERRORS:
                 logger.debug("Failed to release VLC instance during shutdown", exc_info=True)
             self.instance = None
+
+    def _build_audio_modes(self) -> dict[str, dict[str, int]]:
+        if vlc is None:
+            return self._fallback_audio_modes()
+
+        try:
+            return {
+                "stereo": {
+                    "channel": int(vlc.AudioOutputChannel.Stereo.value),
+                },
+                "reverse_stereo": {
+                    "channel": int(vlc.AudioOutputChannel.RStereo.value),
+                },
+                "left": {
+                    "channel": int(vlc.AudioOutputChannel.Left.value),
+                },
+                "right": {
+                    "channel": int(vlc.AudioOutputChannel.Right.value),
+                },
+                "mono": {
+                    # python-vlc does not expose Mono in AudioOutputChannel,
+                    # but libVLC accepts the raw channel id 7 for mono mode.
+                    "channel": VLC_AUDIO_CHANNEL_MONO,
+                },
+            }
+        except _VLC_ERRORS:
+            logger.debug("Falling back to raw VLC audio channel ids", exc_info=True)
+            return self._fallback_audio_modes()
+
+    def _fallback_audio_modes(self) -> dict[str, dict[str, int]]:
+        return {
+            "stereo": {"channel": 1},
+            "reverse_stereo": {"channel": 2},
+            "left": {"channel": 3},
+            "right": {"channel": 4},
+            "mono": {"channel": VLC_AUDIO_CHANNEL_MONO},
+        }
 
     def _attach_media_event_handlers(self, media, token: _PlaybackToken):
         event_manager = media.event_manager()
@@ -149,7 +210,7 @@ class PlaybackService(QObject):
             return
         try:
             event_manager.event_detach(vlc.EventType.MediaStateChanged)
-        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+        except _VLC_ERRORS:
             logger.debug("Failed to detach VLC media event handler", exc_info=True)
         self._current_media_event_manager = None
         self._current_media = None
@@ -183,8 +244,25 @@ class PlaybackService(QObject):
 
     def load_media(self, media_path: str) -> int:
         if not self._has_backend():
-            logger.warning("Media load rejected because playback backend is shut down | media=%s", media_path)
-            return self._current_request_id
+            self._current_request_id += 1
+            self._current_media_path = media_path
+            request_id = self._current_request_id
+            message = self._backend_error_message or PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE
+            logger.warning(
+                "Media load rejected because playback backend is unavailable | request_id=%s | media=%s | reason=%s",
+                request_id,
+                media_path,
+                message,
+            )
+            QTimer.singleShot(
+                0,
+                lambda request_id=request_id, media_path=media_path, message=message: self._emit_backend_unavailable_error(
+                    request_id,
+                    media_path,
+                    message,
+                ),
+            )
+            return request_id
         self._cleanup_runtime_subtitle_copy()
         self._current_request_id += 1
         self._current_media_path = media_path
@@ -196,6 +274,11 @@ class PlaybackService(QObject):
         self._attach_media_event_handlers(media, self._current_playback_token)
         self.player.set_media(media)
         return self._current_request_id
+
+    def _emit_backend_unavailable_error(self, request_id: int, media_path: str, message: str):
+        if self._is_shutdown or request_id != self._current_request_id:
+            return
+        self.playback_error.emit(request_id, media_path, message)
 
     def current_request_id(self) -> int:
         return self._current_request_id
@@ -252,7 +335,7 @@ class PlaybackService(QObject):
             return None
         try:
             size = self.player.video_get_size(0)
-        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+        except _VLC_ERRORS:
             logger.debug("VLC video size is not available yet", exc_info=True)
             return None
 
@@ -534,12 +617,12 @@ class PlaybackService(QObject):
             return
         try:
             self.player.video_set_mouse_input(False)
-        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+        except _VLC_ERRORS:
             logger.debug("Failed to disable VLC mouse input", exc_info=True)
 
         try:
             self.player.video_set_key_input(False)
-        except (AttributeError, TypeError, ValueError, vlc.VLCException):
+        except _VLC_ERRORS:
             logger.debug("Failed to disable VLC key input", exc_info=True)
 
     def _schedule_video_geometry_probe(self, attempts: int = 12, delay_ms: int = 120):

@@ -1,6 +1,9 @@
 import importlib.util
+import builtins
 from pathlib import Path
 from types import SimpleNamespace
+
+from PySide6.QtCore import QCoreApplication
 
 from tests.fakes import SignalRecorder
 
@@ -87,6 +90,43 @@ def _load_real_playback_engine(monkeypatch):
     return module, fake_instance
 
 
+def _load_playback_engine_without_vlc(monkeypatch):
+    module_path = Path(__file__).parents[2] / "services" / "PlaybackEngine.py"
+    spec = importlib.util.spec_from_file_location("real_playback_engine_missing_vlc_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+    original_import = builtins.__import__
+
+    def import_without_vlc(name, *args, **kwargs):
+        if name == "vlc":
+            raise ImportError("python-vlc is not installed")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_vlc)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_module_import_survives_missing_vlc(monkeypatch):
+    module = _load_playback_engine_without_vlc(monkeypatch)
+
+    service = module.PlaybackService()
+    errors = SignalRecorder()
+    service.playback_error.connect(errors)
+
+    request_id = service.load_media("missing-vlc.mp4")
+    QCoreApplication.processEvents()
+
+    assert module.vlc is None
+    assert service.is_backend_available() is False
+    assert errors.calls == [
+        (
+            request_id,
+            "missing-vlc.mp4",
+            module.PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE,
+        )
+    ]
+
+
 def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
     module, fake_instance = _load_real_playback_engine(monkeypatch)
     service = module.PlaybackService()
@@ -104,6 +144,32 @@ def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
 
     assert second_request_id != first_request_id
     assert errors.calls == []
+
+
+def test_backend_creation_failure_emits_playback_error(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+
+    class _BrokenVlc(_FakeVlc):
+        def Instance(self):
+            raise OSError("libVLC was not found")
+
+    monkeypatch.setattr(module, "vlc", _BrokenVlc(_FakeInstance()))
+    service = module.PlaybackService()
+    errors = SignalRecorder()
+    service.playback_error.connect(errors)
+
+    request_id = service.load_media("missing-backend.mp4")
+    QCoreApplication.processEvents()
+
+    assert service.is_backend_available() is False
+    assert request_id == 1
+    assert errors.calls == [
+        (
+            request_id,
+            "missing-backend.mp4",
+            module.PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE,
+        )
+    ]
 
 
 def test_late_media_error_keeps_current_runtime_subtitle_copy(monkeypatch, workspace_tmp_path):
