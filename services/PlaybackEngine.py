@@ -711,9 +711,8 @@ class PlaybackService(QObject):
                     previous_runtime_path,
                     self._current_media_path or "<none>",
                 )
-            return
 
-        if previous_track_id != -1:
+        if previous_track_id >= -1:
             self.player.video_set_spu(int(previous_track_id))
 
     def _remove_subtitle_copy(self, path: str | Path):

@@ -31,9 +31,33 @@ class _FakeMedia:
 class _FakePlayer:
     def __init__(self):
         self.media = None
+        self.spu = -1
+        self.spu_calls = []
+        self.add_slave_results = []
+        self.subtitle_file_results = []
 
     def set_media(self, media):
         self.media = media
+
+    def get_media(self):
+        return self.media
+
+    def video_get_spu(self):
+        return self.spu
+
+    def video_set_spu(self, track_id):
+        self.spu = int(track_id)
+        self.spu_calls.append(int(track_id))
+        return 0
+
+    def add_slave(self, *_args):
+        result = self.add_slave_results.pop(0) if self.add_slave_results else 0
+        if result == 0:
+            self.spu = 1
+        return result
+
+    def video_set_subtitle_file(self, _path):
+        return self.subtitle_file_results.pop(0) if self.subtitle_file_results else 0
 
     def release(self):
         return None
@@ -71,6 +95,7 @@ class _FakeVlc:
         Left=SimpleNamespace(value=3),
         Right=SimpleNamespace(value=4),
     )
+    MediaSlaveType = SimpleNamespace(subtitle="subtitle")
     VLCException = Exception
 
     def __init__(self, instance):
@@ -191,6 +216,27 @@ def test_late_media_error_keeps_current_runtime_subtitle_copy(monkeypatch, works
     assert second_request_id != first_request_id
     assert service._runtime_subtitle_copy_path == str(runtime_copy)
     assert runtime_copy.is_file()
+
+
+def test_failed_subtitle_load_restores_previous_runtime_track(monkeypatch, workspace_tmp_path):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    service.load_media("movie.mp4")
+    previous_runtime = workspace_tmp_path / "previous.srt"
+    broken_subtitle = workspace_tmp_path / "broken.srt"
+    previous_runtime.write_text("previous", encoding="utf-8")
+    broken_subtitle.write_text("broken", encoding="utf-8")
+    service._runtime_subtitle_copy_path = str(previous_runtime)
+    service.player.spu = -1
+    service.player.add_slave_results = [1, 1, 0]
+    service.player.subtitle_file_results = [1, 1]
+    monkeypatch.setattr(service, "_prepare_runtime_subtitle_copy", lambda _path: str(broken_subtitle))
+
+    assert service.open_subtitle_file(str(broken_subtitle)) is False
+
+    assert service.player.spu_calls[-1] == -1
+    assert service.player.spu == -1
+    assert service._runtime_subtitle_copy_path == str(previous_runtime)
 
 
 def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
