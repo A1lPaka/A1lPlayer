@@ -137,6 +137,7 @@ class MediaLibraryService(QObject):
         normalized_paths = self._paths.deduplicate_paths(file_paths)
         if not normalized_paths:
             logger.info("Open media request ignored because no usable media paths were provided")
+            self._show_media_access_failed(self._player, None)
             return False
 
         logger.info("Opening media paths | count=%s | first=%s", len(normalized_paths), normalized_paths[0])
@@ -157,6 +158,7 @@ class MediaLibraryService(QObject):
             )
             self._pending_recent_request_id = None
             self._pending_recent_paths = []
+            self._show_media_access_failed(self._player, normalized_paths[0])
             return False
 
         self._pending_recent_request_id = self._player.playback.current_request_id()
