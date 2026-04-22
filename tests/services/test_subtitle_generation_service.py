@@ -803,6 +803,25 @@ def test_shutdown_waits_for_subtitle_thread_cleanup_after_terminal_event():
     assert finished == [True]
 
 
+def test_aborted_subtitle_worker_start_clears_pending_runtime():
+    player = FakePlayerWindow()
+    service, _store = _make_service(QWidget(), player)
+    run = _seed_active_job(service)
+    thread = _ProbeThread()
+    worker = _ProbeWorker()
+    run.subtitle_thread = thread
+    run.subtitle_worker = worker
+    run.subtitle_cancel_requested = True
+    service._pending_subtitle_thread_run_ids.add(run.run_id)
+
+    service._on_subtitle_worker_start_aborted(run.run_id, thread, worker)
+
+    assert run.run_id not in service._pending_subtitle_thread_run_ids
+    assert run.subtitle_thread is None
+    assert run.subtitle_worker is None
+    assert run.subtitle_cancel_requested is False
+
+
 def test_shutdown_waits_for_cuda_thread_cleanup_after_terminal_event():
     player = FakePlayerWindow()
     service, _store = _make_service(QWidget(), player)

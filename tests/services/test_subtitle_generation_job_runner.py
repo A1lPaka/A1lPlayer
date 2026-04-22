@@ -115,6 +115,7 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     can_start_calls = []
     suspend_calls = []
     callbacks = {
+        "start_aborted": lambda run_id, thread, worker: None,
         "status": lambda text: None,
         "progress": lambda value: None,
         "details": lambda text: None,
@@ -138,6 +139,7 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     runner = SubtitleGenerationJobRunner(
         None,
         can_start_worker=can_start,
+        on_start_aborted=callbacks["start_aborted"],
         suspend_before_start=lambda: suspend_calls.append(True),
         on_status_changed=callbacks["status"],
         on_progress_changed=callbacks["progress"],
@@ -168,3 +170,39 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     assert len(can_start_calls) == 2
     assert suspend_calls == [True]
     assert thread.start_calls == 1
+
+
+def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
+    _FakeThread.instances = []
+    _FakeWorker.instances = []
+    aborted = []
+
+    def fake_single_shot(_delay, callback):
+        callback()
+
+    monkeypatch.setattr(runner_module, "QThread", _FakeThread)
+    monkeypatch.setattr(runner_module, "SubtitleGenerationWorker", _FakeWorker)
+    monkeypatch.setattr(runner_module.QTimer, "singleShot", fake_single_shot)
+
+    runner = SubtitleGenerationJobRunner(
+        None,
+        can_start_worker=lambda _run_id, _thread, _worker: False,
+        on_start_aborted=lambda run_id, thread, worker: aborted.append((run_id, thread, worker)),
+        suspend_before_start=lambda: None,
+        on_status_changed=lambda text: None,
+        on_progress_changed=lambda value: None,
+        on_details_changed=lambda text: None,
+        on_finished=lambda path, auto_open, fallback: None,
+        on_failed=lambda error, diagnostics: None,
+        on_canceled=lambda: None,
+    )
+    run = _run()
+
+    runner.start(run, _options())
+
+    thread = _FakeThread.instances[0]
+    worker = _FakeWorker.instances[0]
+    assert aborted == [(run.run_id, thread, worker)]
+    assert thread.start_calls == 0
+    assert worker.delete_later_calls == 1
+    assert thread.delete_later_calls == 1

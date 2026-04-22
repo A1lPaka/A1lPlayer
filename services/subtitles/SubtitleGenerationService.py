@@ -109,6 +109,7 @@ class SubtitleGenerationService(QObject):
         self._subtitle_job_runner = SubtitleGenerationJobRunner(
             parent,
             can_start_worker=self._can_start_subtitle_worker,
+            on_start_aborted=self._on_subtitle_worker_start_aborted,
             suspend_before_start=self._suspend_player_ui_for_generation,
             on_status_changed=self._on_worker_status_changed_from_worker,
             on_progress_changed=self._on_worker_progress_changed_from_worker,
@@ -240,6 +241,14 @@ class SubtitleGenerationService(QObject):
 
         self._pending_subtitle_thread_run_ids.add(run.run_id)
         self._subtitle_job_runner.start(run, options)
+
+    def _on_subtitle_worker_start_aborted(self, run_id: int, thread: QThread, worker):
+        self._assert_pipeline_thread()
+        self._pending_subtitle_thread_run_ids.discard(run_id)
+        run = self._pipeline_state.active_job
+        if run is not None and run.run_id == run_id and run.subtitle_thread is thread and run.subtitle_worker is worker:
+            self._clear_subtitle_runtime(run)
+        self._complete_shutdown_if_possible()
 
     def _can_start_subtitle_worker(self, run_id: int, thread: QThread, worker) -> bool:
         run = self._require_active_job(run_id, "deferred subtitle worker launch")

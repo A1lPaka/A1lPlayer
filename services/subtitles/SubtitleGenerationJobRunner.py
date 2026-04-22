@@ -22,6 +22,7 @@ class SubtitleGenerationJobRunner(QObject):
         parent: QWidget,
         *,
         can_start_worker: Callable[[int, QThread, SubtitleGenerationWorker], bool],
+        on_start_aborted: Callable[[int, QThread, SubtitleGenerationWorker], None],
         suspend_before_start: Callable[[], None],
         on_status_changed: Callable[[str], None],
         on_progress_changed: Callable[[int], None],
@@ -33,6 +34,7 @@ class SubtitleGenerationJobRunner(QObject):
         super().__init__(parent)
         self._parent = parent
         self._can_start_worker = can_start_worker
+        self._on_start_aborted = on_start_aborted
         self._suspend_before_start = suspend_before_start
         self._on_status_changed = on_status_changed
         self._on_progress_changed = on_progress_changed
@@ -90,6 +92,7 @@ class SubtitleGenerationJobRunner(QObject):
         worker: SubtitleGenerationWorker,
     ):
         if not self._can_start_worker(run_id, thread, worker):
+            self._abort_unstarted_worker(run_id, thread, worker)
             return
 
         self._suspend_before_start()
@@ -109,6 +112,7 @@ class SubtitleGenerationJobRunner(QObject):
         worker: SubtitleGenerationWorker,
     ):
         if not self._can_start_worker(run_id, thread, worker):
+            self._abort_unstarted_worker(run_id, thread, worker)
             return
 
         if thread.isRunning():
@@ -116,6 +120,20 @@ class SubtitleGenerationJobRunner(QObject):
             return
 
         thread.start()
+
+    def _abort_unstarted_worker(
+        self,
+        run_id: int,
+        thread: QThread,
+        worker: SubtitleGenerationWorker,
+    ):
+        if thread.isRunning():
+            return
+
+        logger.debug("Cleaning up subtitle worker whose deferred start was canceled | run_id=%s", run_id)
+        self._on_start_aborted(run_id, thread, worker)
+        worker.deleteLater()
+        thread.deleteLater()
 
 
 def can_launch_subtitle_worker_run(
