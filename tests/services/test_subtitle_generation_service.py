@@ -1905,7 +1905,8 @@ def test_real_subtitle_save_keeps_fallback_output_path_behavior(monkeypatch, wor
     assert Path(saved_output_path).exists() is True
     assert output_path.read_text(encoding="utf-8") == "existing"
     assert replace_calls[0][1] == "movie.srt"
-    assert len(replace_calls) == 1
+    assert replace_calls[1][1] == "movie (1).srt"
+    assert len(replace_calls) == 2
 
 
 def test_real_subtitle_save_uses_fallback_for_unconfirmed_existing_target(workspace_tmp_path):
@@ -1942,18 +1943,18 @@ def test_real_subtitle_save_does_not_overwrite_raced_fallback_candidate(monkeypa
     raced_fallback = workspace_tmp_path / "movie (1).srt"
     output_path.write_text("existing", encoding="utf-8")
     segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
-    original_link = module.os.link
+    original_open = module.os.open
     race_injected = False
 
-    def fake_link(src, dst):
+    def fake_open(path, flags, mode=0o777, *, dir_fd=None):
         nonlocal race_injected
-        if Path(dst) == raced_fallback and not race_injected:
+        if Path(path) == raced_fallback and not race_injected:
             race_injected = True
             raced_fallback.write_text("concurrent writer", encoding="utf-8")
             raise FileExistsError("fallback was claimed concurrently")
-        return original_link(src, dst)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(module.os, "link", fake_link)
+    monkeypatch.setattr(module.os, "open", fake_open)
 
     saved_output_path = maker.save_subtitles(
         segments,
@@ -1964,6 +1965,34 @@ def test_real_subtitle_save_does_not_overwrite_raced_fallback_candidate(monkeypa
 
     assert Path(saved_output_path) == workspace_tmp_path / "movie (2).srt"
     assert raced_fallback.read_text(encoding="utf-8") == "concurrent writer"
+    assert Path(saved_output_path).read_text(encoding="utf-8").startswith("1\n00:00:00,000")
+
+
+def test_real_subtitle_fallback_does_not_require_hard_links(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_maker_fallback_without_link_test",
+        "services/subtitles/SubtitleMaker.py",
+    )
+
+    maker = module.SubtitleMaker(device="cpu")
+    output_path = workspace_tmp_path / "movie.srt"
+    output_path.write_text("existing", encoding="utf-8")
+    segments = [module.SubtitleSegment(start=0.0, end=1.0, text="Hello")]
+
+    monkeypatch.setattr(
+        module.os,
+        "link",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("hard links unavailable")),
+    )
+
+    saved_output_path = maker.save_subtitles(
+        segments,
+        str(output_path),
+        "srt",
+        allow_unconfirmed_overwrite=False,
+    )
+
+    assert Path(saved_output_path) == workspace_tmp_path / "movie (1).srt"
     assert Path(saved_output_path).read_text(encoding="utf-8").startswith("1\n00:00:00,000")
 
 

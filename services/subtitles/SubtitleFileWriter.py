@@ -237,12 +237,24 @@ class SubtitleFileWriter:
 
     def _write_temp_file_to_fallback(self, temp_path: str, requested_output_path: Path) -> Path:
         for candidate in self._iter_fallback_subtitle_output_paths(requested_output_path):
+            reserved_fd: int | None = None
             try:
-                os.link(temp_path, candidate)
+                reserved_fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
             except FileExistsError:
                 continue
+            except OSError as exc:
+                raise RuntimeError(f"Failed to reserve fallback subtitle output path: {exc}") from exc
 
-            self._remove_file_if_exists(temp_path)
+            try:
+                os.close(reserved_fd)
+                reserved_fd = None
+                os.replace(temp_path, candidate)
+            except OSError as exc:
+                if reserved_fd is not None:
+                    os.close(reserved_fd)
+                self._remove_file_if_exists(candidate)
+                raise RuntimeError(f"Failed to write fallback subtitle file: {exc}") from exc
+
             return candidate
 
         raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")
