@@ -143,7 +143,7 @@ def _install_fake_popen(monkeypatch, process):
 def test_subtitle_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
     module = _load_real_module(
         "real_subtitle_generation_workers_json_lifecycle_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
     process = _FakeProcess(
         stdout=[
@@ -172,7 +172,7 @@ def test_subtitle_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
 def test_json_stdout_reader_bounds_oversized_event_lines(monkeypatch):
     module = _load_real_module(
         "real_subtitle_generation_workers_json_line_limit_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
     process = _FakeProcess(
         stdout=[
@@ -231,7 +231,7 @@ def test_known_terminal_events_emit_worker_signals(monkeypatch):
 
     subtitle_module = _load_real_module(
         "real_subtitle_generation_workers_terminal_event_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
 
     subtitle_worker = subtitle_module.SubtitleGenerationWorker(4, "C:/media/movie.mkv", _subtitle_options())
@@ -265,7 +265,7 @@ def test_known_terminal_events_emit_worker_signals(monkeypatch):
 def test_subtitle_exit_without_terminal_event_fails_or_cancels(monkeypatch):
     module = _load_real_module(
         "real_subtitle_generation_workers_missing_terminal_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
     process = _FakeProcess(stdout=[], stderr=["helper stderr\n"], returncode=2)
     _install_fake_popen(monkeypatch, process)
@@ -328,7 +328,7 @@ def test_repeated_cancel_is_idempotent_and_force_stop_uses_background_terminatio
     monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
     subtitle_module = _load_real_module(
         "real_subtitle_generation_workers_stop_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
 
     subtitle_worker = subtitle_module.SubtitleGenerationWorker(7, "C:/media/movie.mkv", _subtitle_options())
@@ -358,7 +358,7 @@ def test_worker_stop_methods_are_direct_thread_safe_requests(monkeypatch):
     monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
     subtitle_module = _load_real_module(
         "real_subtitle_generation_workers_direct_stop_test",
-        "services/subtitles/SubtitleGenerationWorkers.py",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
     )
 
     subtitle_worker = subtitle_module.SubtitleGenerationWorker(8, "C:/media/movie.mkv", _subtitle_options())

@@ -14,10 +14,10 @@ from PySide6.QtWidgets import QApplication
 
 
 def _install_playback_engine_stub():
-    if "services.PlaybackEngine" in sys.modules:
+    if "services.playback.PlaybackEngine" in sys.modules:
         return
 
-    playback_engine = types.ModuleType("services.PlaybackEngine")
+    playback_engine = types.ModuleType("services.playback.PlaybackEngine")
 
     class PlaybackService(QObject):
         playing = Signal(int)
@@ -157,6 +157,7 @@ def _install_playback_engine_stub():
             return None
 
     playback_engine.PlaybackService = PlaybackService
+    sys.modules["services.playback.PlaybackEngine"] = playback_engine
     sys.modules["services.PlaybackEngine"] = playback_engine
 
 

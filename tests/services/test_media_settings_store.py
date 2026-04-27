@@ -68,11 +68,11 @@ def test_save_position_updates_session_position_cache():
 
 def test_save_position_stores_normalized_session_path(monkeypatch):
     monkeypatch.setattr(
-        "services.MediaSettingsStore.normalize_path",
+        "services.app.MediaSettingsStore.normalize_path",
         lambda path: path.lower(),
     )
     monkeypatch.setattr(
-        "services.MediaSettingsStore.canonical_path",
+        "services.app.MediaSettingsStore.canonical_path",
         lambda path: path,
     )
     settings = _FakeSettings({
@@ -106,11 +106,11 @@ def test_clear_saved_position_updates_session_position_cache():
 
 def test_add_recent_path_stores_normalized_paths(monkeypatch):
     monkeypatch.setattr(
-        "services.MediaSettingsStore.normalize_path",
+        "services.app.MediaSettingsStore.normalize_path",
         lambda path: path.lower(),
     )
     monkeypatch.setattr(
-        "services.MediaSettingsStore.canonical_path",
+        "services.app.MediaSettingsStore.canonical_path",
         lambda path: path,
     )
     settings = _FakeSettings({
@@ -130,7 +130,7 @@ def test_add_recent_path_stores_normalized_paths(monkeypatch):
 
 
 def test_save_last_open_dir_stores_normalized_directory(monkeypatch):
-    monkeypatch.setattr("services.MediaSettingsStore.canonical_path", lambda path: path)
+    monkeypatch.setattr("services.app.MediaSettingsStore.canonical_path", lambda path: path)
     settings = _FakeSettings()
     store = MediaSettingsStore(settings=settings)
 

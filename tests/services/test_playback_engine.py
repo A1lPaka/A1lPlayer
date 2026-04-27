@@ -106,7 +106,7 @@ class _FakeVlc:
 
 
 def _load_real_playback_engine(monkeypatch):
-    module_path = Path(__file__).parents[2] / "services" / "PlaybackEngine.py"
+    module_path = Path(__file__).parents[2] / "services" / "playback" / "PlaybackEngine.py"
     spec = importlib.util.spec_from_file_location("real_playback_engine_for_test", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -116,7 +116,7 @@ def _load_real_playback_engine(monkeypatch):
 
 
 def _load_playback_engine_without_vlc(monkeypatch):
-    module_path = Path(__file__).parents[2] / "services" / "PlaybackEngine.py"
+    module_path = Path(__file__).parents[2] / "services" / "playback" / "PlaybackEngine.py"
     spec = importlib.util.spec_from_file_location("real_playback_engine_missing_vlc_test", module_path)
     module = importlib.util.module_from_spec(spec)
     original_import = builtins.__import__

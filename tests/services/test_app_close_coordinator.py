@@ -96,7 +96,7 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "services.AppCloseCoordinator.show_force_close_still_running",
+        "services.app.AppCloseCoordinator.show_force_close_still_running",
         lambda _parent: force_warning_calls.append(True),
     )
 
@@ -162,7 +162,7 @@ def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(mo
     )
 
     monkeypatch.setattr(
-        "services.AppCloseCoordinator.show_force_close_still_running",
+        "services.app.AppCloseCoordinator.show_force_close_still_running",
         lambda _parent: force_warning_calls.append(True),
     )
 
