@@ -1,15 +1,10 @@
 import inspect
 
-from PySide6.QtWidgets import QWidget
-
 from services.media.MediaLibraryService import MediaLibraryService
 from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
 
-from tests.fakes import FakeMediaStore, FakePlayerWindow
 
-
-def _make_service(parent: QWidget, player: FakePlayerWindow):
-    store = FakeMediaStore()
+def _make_service(parent, player, store):
     media_library = MediaLibraryService(parent, player, store)
     return SubtitleGenerationService(parent, player, store, media_library)
 
@@ -31,21 +26,23 @@ def test_service_public_facade_is_stable():
     assert hasattr(SubtitleGenerationService, "shutdown_finished")
 
 
-def test_generate_subtitle_requires_loaded_media():
-    parent = QWidget()
-    player = FakePlayerWindow()
-    service = _make_service(parent, player)
+def test_generate_subtitle_requires_loaded_media(qt_parent, fake_player_window, fake_media_store):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
 
     assert service.generate_subtitle() is False
 
 
-def test_generate_subtitle_opens_dialog_and_requests_audio_probe(monkeypatch):
-    parent = QWidget()
-    player = FakePlayerWindow()
+def test_generate_subtitle_opens_dialog_and_requests_audio_probe(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    player = fake_player_window
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     player.playback._has_media_loaded = True
-    service = _make_service(parent, player)
+    service = _make_service(qt_parent, player, fake_media_store)
     dialog_requests = []
     audio_probe_requests = []
     takeover_calls = []
@@ -80,13 +77,17 @@ def test_generate_subtitle_opens_dialog_and_requests_audio_probe(monkeypatch):
     assert audio_probe_requests == ["C:/media/movie.mkv"]
 
 
-def test_generate_subtitle_focuses_existing_dialog_instead_of_reopening(monkeypatch):
-    parent = QWidget()
-    player = FakePlayerWindow()
+def test_generate_subtitle_focuses_existing_dialog_instead_of_reopening(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    player = fake_player_window
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     player.playback._has_media_loaded = True
-    service = _make_service(parent, player)
+    service = _make_service(qt_parent, player, fake_media_store)
     focus_calls = []
     already_running_calls = []
 
@@ -102,13 +103,17 @@ def test_generate_subtitle_focuses_existing_dialog_instead_of_reopening(monkeypa
     assert already_running_calls == []
 
 
-def test_generate_subtitle_rejects_reentry_while_background_task_runs(monkeypatch):
-    parent = QWidget()
-    player = FakePlayerWindow()
+def test_generate_subtitle_rejects_reentry_while_background_task_runs(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    player = fake_player_window
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
     player.playback._has_media_loaded = True
-    service = _make_service(parent, player)
+    service = _make_service(qt_parent, player, fake_media_store)
     focus_calls = []
     already_running_calls = []
 
