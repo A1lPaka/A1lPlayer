@@ -61,7 +61,7 @@ class SubtitleCudaRuntimeFlow(QObject):
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         worker.canceled.connect(thread.quit)
-        thread.finished.connect(lambda run_id=run_id: self._on_thread_finished(run_id))
+        thread.finished.connect(lambda run_id=run_id, thread=thread: self._on_thread_finished(run_id, thread))
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
 
@@ -152,9 +152,13 @@ class SubtitleCudaRuntimeFlow(QObject):
     def _on_worker_canceled(self):
         self._emit_active_worker_event("CUDA runtime canceled", self.canceled)
 
-    @Slot()
-    def _on_thread_finished(self, run_id: int):
+    @Slot(int, QThread)
+    def _on_thread_finished(self, run_id: int, thread: QThread):
         logger.debug("CUDA runtime flow thread finished | run_id=%s", run_id)
+        if self._thread is not thread or self._run_id != run_id:
+            logger.debug("Ignoring stale CUDA runtime flow thread finish | run_id=%s", run_id)
+            return
+
         self._thread = None
         self._worker = None
         self._cancel_requested = False
