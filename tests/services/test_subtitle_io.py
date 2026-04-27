@@ -112,6 +112,17 @@ def test_subtitle_file_writer_empty_segments_creates_empty_srt(workspace_tmp_pat
     assert output_path.read_text(encoding="utf-8") == ""
 
 
+def test_subtitle_file_writer_canonicalizes_relative_output_path(workspace_tmp_path, monkeypatch):
+    monkeypatch.chdir(workspace_tmp_path)
+    writer = SubtitleFileWriter(_not_canceled)
+
+    saved_path = writer.save_srt([], "nested/movie.srt")
+
+    output_path = workspace_tmp_path / "nested" / "movie.srt"
+    assert saved_path == str(output_path.resolve())
+    assert output_path.is_file()
+
+
 def test_subtitle_file_writer_reports_destination_folder_errors(workspace_tmp_path):
     parent_file = workspace_tmp_path / "not-a-folder"
     parent_file.write_text("file", encoding="utf-8")

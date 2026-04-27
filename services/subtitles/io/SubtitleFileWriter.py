@@ -10,6 +10,7 @@ import time
 from services.app.AppTempService import AppTempService
 from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from services.subtitles.domain.SubtitleTypes import SubtitleGenerationCanceledError, SubtitleSegment
+from utils import canonical_path, normalize_path
 
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ class SubtitleFileWriter:
         AppTempService.remove_file_if_exists(path, log_context="temporary file cleanup")
 
     def _prepare_output_path_for_write(self, output_path: str | Path) -> Path:
-        output_file = Path(output_path)
+        output_file = Path(canonical_path(str(output_path)))
         parent_dir = output_file.parent
         if parent_dir.exists() and not parent_dir.is_dir():
             raise RuntimeError("The destination folder path points to a file.")
@@ -308,9 +309,4 @@ class SubtitleFileWriter:
         return confirmed_path is not None and self._same_normalized_path(output_file, Path(confirmed_path))
 
     def _same_normalized_path(self, left: Path, right: Path) -> bool:
-        try:
-            return os.path.normcase(str(left.expanduser().resolve(strict=False))) == os.path.normcase(
-                str(right.expanduser().resolve(strict=False))
-            )
-        except (OSError, RuntimeError, ValueError):
-            return False
+        return normalize_path(str(left)) == normalize_path(str(right))
