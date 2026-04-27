@@ -477,7 +477,7 @@ class PlayerPlaybackController(QObject):
             self.media_confirmed.emit(request_id, current_path)
             self.current_media_changed.emit(current_path)
         if self._pending_start_position_ms > 0:
-            self._apply_pending_start_position()
+            self._apply_pending_start_position(request_id)
 
     def _handle_engine_paused(self, request_id: int):
         if request_id != self._active_request_id:
@@ -505,7 +505,9 @@ class PlayerPlaybackController(QObject):
         self._set_playback_state(self.STATE_STOPPED)
         self.playback_error.emit(request_id, media_path, message)
 
-    def _apply_pending_start_position(self, attempts: int = 8, delay_ms: int = 100):
+    def _apply_pending_start_position(self, request_id: int, attempts: int = 8, delay_ms: int = 100):
+        if request_id != self._active_request_id:
+            return
         if self._pending_start_position_ms <= 0:
             return
         if attempts <= 0:
@@ -525,7 +527,10 @@ class PlayerPlaybackController(QObject):
             self._pending_start_position_ms = 0
             return
 
-        QTimer.singleShot(delay_ms, lambda: self._apply_pending_start_position(attempts - 1, delay_ms))
+        QTimer.singleShot(
+            delay_ms,
+            lambda request_id=request_id: self._apply_pending_start_position(request_id, attempts - 1, delay_ms),
+        )
 
     def _set_playback_state(self, state: str):
         if self._playback_state == state:

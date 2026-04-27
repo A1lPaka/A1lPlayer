@@ -294,16 +294,17 @@ def test_video_geometry_probe_callback_stops_after_shutdown(monkeypatch):
 
     original_schedule = service._schedule_video_geometry_probe
 
-    def tracking_schedule(attempts=12, delay_ms=120):
-        probe_calls.append((attempts, delay_ms))
-        return original_schedule(attempts, delay_ms)
+    def tracking_schedule(request_id, attempts=12, delay_ms=120):
+        probe_calls.append((request_id, attempts, delay_ms))
+        return original_schedule(request_id, attempts, delay_ms)
 
     monkeypatch.setattr(service, "_schedule_video_geometry_probe", tracking_schedule)
 
-    service._schedule_video_geometry_probe(attempts=2, delay_ms=1)
+    service._current_request_id = 7
+    service._schedule_video_geometry_probe(7, attempts=2, delay_ms=1)
     assert len(scheduled_callbacks) == 1
 
     service._is_shutdown = True
     scheduled_callbacks[0]()
 
-    assert probe_calls == [(2, 1)]
+    assert probe_calls == [(7, 2, 1)]
