@@ -107,7 +107,7 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
             result.process.returncode,
             diagnostics or error_text,
         )
-        self._emit_failed("Failed to install GPU runtime:", error_text)
+        self._emit_failed("Failed to install GPU runtime:", diagnostics or error_text)
 
     def cancel(self):
         if not self._request_graceful_subprocess_stop(self._on_cancel_requested):

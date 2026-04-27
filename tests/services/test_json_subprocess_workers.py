@@ -317,7 +317,7 @@ def test_subtitle_exit_without_terminal_event_fails_or_cancels(monkeypatch):
     assert canceled == [True]
 
 
-def test_cuda_exit_without_terminal_event_uses_user_error_tail(monkeypatch):
+def test_cuda_exit_without_terminal_event_includes_diagnostics(monkeypatch):
     import services.runtime.CudaRuntimeInstallWorker as module
 
     monkeypatch.setattr(module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
@@ -331,7 +331,10 @@ def test_cuda_exit_without_terminal_event_uses_user_error_tail(monkeypatch):
 
     worker.run()
 
-    assert failed == ["Failed to install GPU runtime:\nstderr tail"]
+    assert len(failed) == 1
+    assert "returncode=9" in failed[0]
+    assert "stderr tail" in failed[0]
+    assert "stdout tail" in failed[0]
 
     canceled_worker = module.CudaRuntimeInstallWorker(["pkg"])
     canceled = []
