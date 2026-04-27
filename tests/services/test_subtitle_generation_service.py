@@ -1198,6 +1198,34 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
     assert launch_calls[0][1].audio_stream_index is None
 
 
+def test_reopening_generation_dialog_does_not_repeat_cached_audio_probe_warning(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    service, _store = _make_service(QWidget(), player)
+
+    warning_messages = []
+    monkeypatch.setattr(
+        "services.subtitles.SubtitleGenerationAudioProbeFlow.show_audio_stream_inspection_warning",
+        lambda _parent, reason: warning_messages.append(reason),
+    )
+
+    service.generate_subtitle()
+    probe_request_id = service._audio_probe_flow.current_probe_request_id
+    service._audio_probe_flow._on_probe_failed(probe_request_id, player.playback._media_path, "probe failed")
+    service._ui.dialog_requests[-1]["on_cancel"]()
+
+    assert service.generate_subtitle() is True
+
+    assert warning_messages == ["probe failed"]
+    assert service._ui.applied_audio_tracks[-1] == {
+        "audio_tracks": [(None, "Current / default")],
+        "selected_track_id": None,
+        "selector_enabled": False,
+        "generate_enabled": True,
+    }
+
+
 def test_stale_audio_probe_result_is_ignored_after_dialog_close():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"

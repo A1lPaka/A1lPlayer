@@ -77,7 +77,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
                 media_path,
                 cached_error,
             )
-            self._apply_audio_track_probe_failure(media_path, cached_error, show_warning=True)
+            self._apply_audio_track_probe_failure(media_path, cached_error, show_warning=False)
             return
 
         player_audio_track_count = self._get_player_audio_track_count()
