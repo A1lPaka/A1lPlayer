@@ -87,7 +87,7 @@ class FakePlaybackForSubtitle(QObject):
         self._is_playing = False
         self.opened_subtitles = []
         self.open_subtitle_result = True
-        self._has_media_loaded = False
+        self._has_media_loaded = None
         self._session_snapshot = None
         self.last_open_paths = None
         self.open_paths_result = True
@@ -157,10 +157,12 @@ class FakePlaybackForSubtitle(QObject):
         return self.open_subtitle_result
 
     def has_media_loaded(self):
-        return self._has_media_loaded
+        if self._has_media_loaded is not None:
+            return self._has_media_loaded
+        return self._media_path is not None and self._request_id is not None
 
     def playback_state(self):
-        return self.STATE_STOPPED if not self._has_media_loaded else "playing"
+        return self.STATE_STOPPED if not self.has_media_loaded() else "playing"
 
     def get_session_snapshot(self):
         return self._session_snapshot

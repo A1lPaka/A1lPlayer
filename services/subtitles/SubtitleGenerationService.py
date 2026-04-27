@@ -151,6 +151,10 @@ class SubtitleGenerationService(QObject):
 
     def generate_subtitle(self) -> bool:
         self._assert_pipeline_thread()
+        if not self._player.playback.has_media_loaded():
+            logger.info("Subtitle generation requested without a loaded media item")
+            return False
+
         current_media_path = self._player.playback.current_media_path()
         if not current_media_path:
             logger.info("Subtitle generation requested without an active media item")

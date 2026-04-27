@@ -207,8 +207,6 @@ class SubtitleGenerationPreflight:
         if parent_dir.exists():
             if not parent_dir.is_dir():
                 return "The destination folder path points to a file."
-            if not os.access(parent_dir, os.W_OK):
-                return "Failed to write to the destination folder: access is denied."
             return None
 
         if parent_dir.anchor and not Path(parent_dir.anchor).exists():
@@ -219,7 +217,5 @@ class SubtitleGenerationPreflight:
             return "Failed to resolve the destination folder."
         if not existing_parent.is_dir():
             return "The destination folder path points to a file."
-        if not os.access(existing_parent, os.W_OK):
-            return "Failed to create the destination folder: access is denied."
 
         return None

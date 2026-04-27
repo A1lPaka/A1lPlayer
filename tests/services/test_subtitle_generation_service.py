@@ -366,6 +366,7 @@ def test_cancel_active_cuda_install_uses_unified_stop_path():
 def test_active_job_phase_blocks_new_generation_request(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
     service, _store = _make_service(QWidget(), player)
     already_running_calls = []
 
@@ -1165,6 +1166,7 @@ def test_generate_reuses_cached_audio_probe_failure_without_sync_probe(monkeypat
 def test_stale_audio_probe_result_is_ignored_after_dialog_close():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
     service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
@@ -1185,6 +1187,7 @@ def test_stale_audio_probe_result_is_ignored_after_dialog_close():
 def test_stale_audio_probe_result_is_ignored_after_dialog_reopen():
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
     service, _store = _make_service(QWidget(), player)
 
     service.generate_subtitle()
@@ -1918,6 +1921,18 @@ def test_real_output_path_preflight_does_not_mutate_filesystem(workspace_tmp_pat
     assert result is None
     assert output_path.parent.exists() is False
     assert list(workspace_tmp_path.rglob("*")) == []
+
+
+def test_real_output_path_preflight_ignores_os_access_for_structurally_valid_path(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_generation_preflight_access_test",
+        "services/subtitles/SubtitleGenerationPreflight.py",
+    )
+
+    preflight = module.SubtitleGenerationPreflight(QWidget())
+    monkeypatch.setattr(module.os, "access", lambda *_args, **_kwargs: False)
+
+    assert preflight._preflight_subtitle_output_path(workspace_tmp_path / "nested" / "movie.srt") is None
 
 
 def test_real_subtitle_save_creates_directory_only_during_actual_write(workspace_tmp_path):
