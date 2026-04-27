@@ -393,6 +393,24 @@ class SubtitleGenerationService(QObject):
         self._complete_shutdown_if_possible()
         return self.has_active_tasks()
 
+    def begin_emergency_shutdown(self) -> bool:
+        self._assert_pipeline_thread()
+        logger.critical("Subtitle generation service emergency shutdown escalation requested")
+
+        if self._shutdown.completed:
+            logger.debug("Subtitle generation service emergency shutdown requested after completion")
+            return False
+
+        if not self._shutdown.is_shutdown_in_progress():
+            return self.begin_force_shutdown()
+
+        self._ui.close_generation_dialog()
+        self._ui.close_progress_dialog()
+        self._request_active_task_stop(force=True)
+        self._audio_probe_flow.stop_all("emergency-shutdown", force=True)
+        self._complete_shutdown_if_possible()
+        return self.has_active_tasks()
+
     def _finalize_shutdown_lifecycle(self):
         self._assert_pipeline_thread()
         self._ui.close_progress_dialog()

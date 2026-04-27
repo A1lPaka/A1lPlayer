@@ -32,6 +32,7 @@ class AppClosePhase(Enum):
     WAITING_FOR_SHUTDOWN = auto()
     WAITING_USER_CHOICE = auto()
     FORCE_SHUTDOWN_STARTED = auto()
+    EMERGENCY_SHUTDOWN_STARTED = auto()
     SHUTDOWN_FINISHED = auto()
     FINAL_CLOSE_REQUESTED = auto()
 
@@ -62,6 +63,7 @@ class AppCloseCoordinator(QObject):
         self._final_close_requested = False
         self._force_requested = False
         self._force_timeout_warning_shown = False
+        self._emergency_shutdown_requested = False
         self._timeout_dialog: QMessageBox | None = None
         self._phase = AppClosePhase.IDLE
 
@@ -96,6 +98,7 @@ class AppCloseCoordinator(QObject):
         self._final_close_requested = False
         self._force_requested = False
         self._force_timeout_warning_shown = False
+        self._emergency_shutdown_requested = False
         self._phase = AppClosePhase.GRACEFUL_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_shutdown()
         if self._complete_shutdown_if_synchronous(
@@ -130,13 +133,7 @@ class AppCloseCoordinator(QObject):
 
         if self._force_requested:
             if self._force_timeout_warning_shown:
-                logger.critical(
-                    "Application force shutdown timed out again; proceeding with emergency local shutdown"
-                )
-                self._finish_shutdown(
-                    "Application emergency close requested after force shutdown timeout",
-                    request_final_close=True,
-                )
+                self._request_emergency_shutdown_after_force_timeout()
                 return
             logger.warning("Application force shutdown is still waiting for background tasks to terminate")
             self._force_timeout_warning_shown = True
@@ -177,6 +174,30 @@ class AppCloseCoordinator(QObject):
         if self._complete_shutdown_if_synchronous(
             has_pending_shutdown,
             "Application force close finished immediately because subtitle shutdown completed synchronously",
+            request_final_close=True,
+        ):
+            return
+
+        self._phase = AppClosePhase.WAITING_FOR_SHUTDOWN
+        self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
+
+    def _request_emergency_shutdown_after_force_timeout(self):
+        if self._emergency_shutdown_requested:
+            logger.critical(
+                "Application emergency shutdown is still waiting for background tasks to terminate"
+            )
+            self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
+            return
+
+        logger.critical(
+            "Application force shutdown timed out again; requesting emergency subtitle shutdown and waiting for completion"
+        )
+        self._emergency_shutdown_requested = True
+        self._phase = AppClosePhase.EMERGENCY_SHUTDOWN_STARTED
+        has_pending_shutdown = self._subtitle_service.begin_emergency_shutdown()
+        if self._complete_shutdown_if_synchronous(
+            has_pending_shutdown,
+            "Application emergency shutdown completed synchronously",
             request_final_close=True,
         ):
             return
@@ -233,6 +254,7 @@ class AppCloseCoordinator(QObject):
         self._closing_in_progress = False
         self._force_requested = False
         self._force_timeout_warning_shown = False
+        self._emergency_shutdown_requested = False
         self._close_allowed = True
 
     def _request_final_close(self):

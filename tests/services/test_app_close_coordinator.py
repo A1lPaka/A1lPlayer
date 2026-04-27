@@ -115,10 +115,11 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
     assert playback.shutdown_calls == 0
 
 
-def test_repeated_force_timeout_performs_emergency_close(monkeypatch):
+def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(monkeypatch):
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True
     subtitle_service.begin_force_shutdown_result = True
+    subtitle_service.begin_emergency_shutdown_result = True
     media_library = FakeMediaLibrary()
     playback = FakePlaybackShutdown()
     target = FakeCloseTarget()
@@ -146,6 +147,41 @@ def test_repeated_force_timeout_performs_emergency_close(monkeypatch):
 
     assert force_warning_calls == [True]
     assert subtitle_service.begin_force_shutdown_calls == 1
+    assert subtitle_service.begin_emergency_shutdown_calls == 1
+    assert media_library.shutdown_calls == 0
+    assert playback.shutdown_calls == 0
+    assert target.close_calls == 0
+
+
+def test_emergency_shutdown_still_requires_shutdown_finished_before_final_close():
+    subtitle_service = FakeSubtitleService()
+    subtitle_service.begin_shutdown_result = True
+    subtitle_service.begin_force_shutdown_result = True
+    subtitle_service.begin_emergency_shutdown_result = True
+    media_library = FakeMediaLibrary()
+    playback = FakePlaybackShutdown()
+    target = FakeCloseTarget()
+    coordinator = AppCloseCoordinator(
+        target,
+        subtitle_service,
+        media_library,
+        shutdown_playback=playback.shutdown,
+        is_pip_active=lambda: False,
+        teardown_pip_for_shutdown=lambda: None,
+    )
+
+    coordinator.attempt_close()
+    coordinator._on_shutdown_timeout()
+    coordinator._on_force_close_after_timeout()
+    coordinator._on_shutdown_timeout()
+    coordinator._on_shutdown_timeout()
+
+    assert target.close_calls == 0
+
+    subtitle_service.shutdown_in_progress = False
+    subtitle_service.shutdown_finished.emit()
+    QCoreApplication.processEvents()
+
     assert media_library.shutdown_calls == 1
     assert playback.shutdown_calls == 1
     assert target.close_calls == 1
