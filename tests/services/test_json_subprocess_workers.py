@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import logging
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -115,6 +116,28 @@ class _AliveProcess:
 
     def poll(self):
         return None
+
+
+class _StuckProcess:
+    def __init__(self, pid=9876):
+        self.pid = pid
+        self.returncode = None
+        self.terminate_calls = 0
+        self.sent_signals = []
+        self.wait_timeouts = []
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminate_calls += 1
+
+    def send_signal(self, signal_value):
+        self.sent_signals.append(signal_value)
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        raise subprocess.TimeoutExpired(["fake"], timeout)
 
 
 def _launch_spec():
@@ -408,6 +431,34 @@ def test_worker_stop_methods_are_direct_thread_safe_requests(monkeypatch):
     assert audio_worker._is_cancel_requested() is True
     assert audio_worker._is_force_stop_requested() is True
     assert audio_begin_calls == [True, True]
+
+
+def test_subtitle_and_cuda_cancel_timeout_kills_helper_process(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as cuda_module
+
+    monkeypatch.setattr(cuda_module, "resolve_cuda_runtime_install_target", lambda: "C:/tmp/cuda-target")
+    subtitle_module = _load_real_module(
+        "real_subtitle_generation_workers_cancel_timeout_test",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
+    )
+    workers = [
+        subtitle_module.SubtitleGenerationWorker(9, "C:/media/movie.mkv", _subtitle_options()),
+        cuda_module.CudaRuntimeInstallWorker(["pkg"]),
+    ]
+
+    for worker in workers:
+        process = _StuckProcess()
+        kill_calls = []
+        monkeypatch.setattr(worker, "_begin_termination", lambda: None)
+        monkeypatch.setattr(worker, "_kill_process_tree", lambda stopped_process: kill_calls.append(stopped_process.pid))
+
+        worker._set_active_process(process)
+        worker.cancel()
+        worker._terminate_process_lifecycle(process)
+
+        assert worker._is_cancel_requested() is True
+        assert process.wait_timeouts == [worker._graceful_cancel_timeout_seconds()]
+        assert kill_calls == [process.pid]
 
 
 def test_json_subprocess_reader_join_timeout_is_logged(caplog):
