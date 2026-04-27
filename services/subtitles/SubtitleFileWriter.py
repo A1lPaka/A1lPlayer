@@ -2,6 +2,7 @@ from collections.abc import Callable
 import logging
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import time
@@ -246,9 +247,11 @@ class SubtitleFileWriter:
                 raise RuntimeError(f"Failed to reserve fallback subtitle output path: {exc}") from exc
 
             try:
-                os.close(reserved_fd)
-                reserved_fd = None
-                os.replace(temp_path, candidate)
+                with open(temp_path, "rb") as temp_file:
+                    with os.fdopen(reserved_fd, "wb") as candidate_file:
+                        reserved_fd = None
+                        shutil.copyfileobj(temp_file, candidate_file)
+                os.remove(temp_path)
             except OSError as exc:
                 if reserved_fd is not None:
                     os.close(reserved_fd)

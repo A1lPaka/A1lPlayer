@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from services.subtitles.SubtitlePipelineState import SubtitlePipelineStateMachine, SubtitleServiceState
+from services.subtitles.SubtitlePipelineState import SubtitlePipelineStateMachine
+from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
 
 
 class SubtitleShutdownDecision(Enum):
@@ -24,8 +25,9 @@ class SubtitleShutdownAction:
 
 
 class SubtitleShutdownCoordinator:
-    def __init__(self, pipeline_state: SubtitlePipelineStateMachine):
+    def __init__(self, pipeline_state: SubtitlePipelineStateMachine, transitions: SubtitlePipelineTransitions):
         self._pipeline_state = pipeline_state
+        self._transitions = transitions
         self.completed = False
         self.force_requested = False
 
@@ -47,11 +49,7 @@ class SubtitleShutdownCoordinator:
         if self._pipeline_state.is_shutdown_in_progress():
             return SubtitleShutdownAction(SubtitleShutdownDecision.REPEATED_GRACEFUL)
 
-        self._pipeline_state.transition_dialog_lifecycle_state(
-            SubtitleServiceState.SHUTTING_DOWN,
-            "begin graceful shutdown",
-            allowed=tuple(SubtitleServiceState),
-        )
+        self._transitions.begin_shutdown("begin graceful shutdown")
         self.force_requested = False
         return SubtitleShutdownAction(
             SubtitleShutdownDecision.START_GRACEFUL,
@@ -66,11 +64,7 @@ class SubtitleShutdownCoordinator:
 
         close_generation_dialog = False
         if not self._pipeline_state.is_shutdown_in_progress():
-            self._pipeline_state.transition_dialog_lifecycle_state(
-                SubtitleServiceState.SHUTTING_DOWN,
-                "begin force shutdown",
-                allowed=tuple(SubtitleServiceState),
-            )
+            self._transitions.begin_shutdown("begin force shutdown")
             close_generation_dialog = True
 
         if self.force_requested:

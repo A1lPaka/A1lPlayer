@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
@@ -10,6 +11,22 @@ from ui.MessageBoxService import show_audio_stream_inspection_warning
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _AudioProbeCacheEntry:
+    media_path: str
+    state: AudioStreamProbeState
+    audio_streams: list | None = None
+    error: str | None = None
+
+
+@dataclass
+class _AudioProbeSession:
+    request_id: int
+    media_path: str
+    worker: AudioStreamProbeWorker
+    thread: QThread
 
 
 class SubtitleGenerationAudioProbeFlow(QObject):
@@ -34,30 +51,35 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         self._is_generation_dialog_open = is_generation_dialog_open
         self._dialog_media_path = dialog_media_path
         self._dialog_lifecycle_state_name = dialog_lifecycle_state_name
-        self._probe_media_path: str | None = None
-        self._probe_state = AudioStreamProbeState.IDLE
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error: str | None = None
+        self._cache_entry: _AudioProbeCacheEntry | None = None
         self._next_probe_request_id = 0
-        self._current_probe_request_id: int | None = None
-        self._workers: dict[int, AudioStreamProbeWorker] = {}
-        self._threads: dict[int, QThread] = {}
+        self._active_session_id: int | None = None
+        self._sessions: dict[int, _AudioProbeSession] = {}
 
     @property
     def current_probe_request_id(self) -> int | None:
-        return self._current_probe_request_id
+        if self._active_session_id is None:
+            return None
+        if self._active_session_id not in self._sessions:
+            self._active_session_id = None
+            return None
+        return self._active_session_id
 
     @property
     def probe_state(self) -> AudioStreamProbeState:
-        return self._probe_state
+        if self._cache_entry is None:
+            return AudioStreamProbeState.IDLE
+        return self._cache_entry.state
 
     @property
     def cached_audio_streams(self):
-        return self._cached_audio_streams
+        if self._cache_entry is None or self._cache_entry.state != AudioStreamProbeState.READY:
+            return None
+        return self._cache_entry.audio_streams
 
     @property
     def workers(self) -> dict[int, AudioStreamProbeWorker]:
-        return self._workers
+        return {request_id: session.worker for request_id, session in self._sessions.items()}
 
     def load_generation_audio_tracks_async(self, media_path: str):
         cached_audio_streams = self.get_cached_audio_streams_for_media(media_path)
@@ -95,11 +117,17 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         self._begin_probe(media_path)
         self._next_probe_request_id += 1
         probe_request_id = self._next_probe_request_id
-        self._current_probe_request_id = probe_request_id
 
         worker = AudioStreamProbeWorker(probe_request_id, media_path)
         thread = QThread(self._parent)
         worker.moveToThread(thread)
+        session = _AudioProbeSession(
+            request_id=probe_request_id,
+            media_path=str(media_path),
+            worker=worker,
+            thread=thread,
+        )
+        self._active_session_id = probe_request_id
 
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_probe_finished, Qt.QueuedConnection)
@@ -114,87 +142,92 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
 
-        self._workers[probe_request_id] = worker
-        self._threads[probe_request_id] = thread
+        self._sessions[probe_request_id] = session
         QTimer.singleShot(
             0,
-            lambda probe_request_id=probe_request_id, thread=thread: self._deferred_start_probe_worker(
+            lambda probe_request_id=probe_request_id: self._deferred_start_probe_worker(
                 probe_request_id,
-                thread,
             ),
         )
 
     def invalidate_active_request(self, reason: str, *, force: bool = False):
-        if self._current_probe_request_id is None:
+        session = self._active_session()
+        if session is None:
             return
-        probe_request_id = self._current_probe_request_id
         self._abandon_loading_probe()
         logger.debug(
             "Invalidating active audio stream probe request | probe_request_id=%s | reason=%s",
-            probe_request_id,
+            session.request_id,
             reason,
         )
-        self._current_probe_request_id = None
-        self._request_probe_stop(probe_request_id, force=force)
+        self._active_session_id = None
+        self._request_probe_stop(session.request_id, force=force)
 
     def is_active(self) -> bool:
-        return any(thread.isRunning() for thread in self._threads.values())
+        return any(session.thread.isRunning() for session in self._sessions.values())
 
     def stop_all(self, reason: str, *, force: bool = False):
-        if not self._threads:
+        if not self._sessions:
             return
         self._abandon_loading_probe()
-        self._current_probe_request_id = None
+        self._active_session_id = None
         logger.debug(
             "Stopping all audio stream probe requests | count=%s | reason=%s | force=%s",
-            len(self._threads),
+            len(self._sessions),
             reason,
             force,
         )
-        for probe_request_id in list(self._threads):
+        for probe_request_id in list(self._sessions):
             self._request_probe_stop(probe_request_id, force=force)
 
     def probe_state_for_media(self, media_path: str | None) -> AudioStreamProbeState:
         normalized_media_path = str(media_path or "")
-        if not normalized_media_path or self._probe_media_path != normalized_media_path:
+        if self._cache_entry is None or not normalized_media_path or self._cache_entry.media_path != normalized_media_path:
             return AudioStreamProbeState.IDLE
-        return self._probe_state
+        return self._cache_entry.state
 
     def get_cached_audio_streams_for_media(self, media_path: str | None):
         if self.probe_state_for_media(media_path) != AudioStreamProbeState.READY:
             return None
-        return self._cached_audio_streams
+        return self._cache_entry.audio_streams if self._cache_entry is not None else None
 
     def get_cached_audio_stream_error_for_media(self, media_path: str | None) -> str | None:
         if self.probe_state_for_media(media_path) != AudioStreamProbeState.FAILED:
             return None
-        return self._cached_audio_stream_error
+        return self._cache_entry.error if self._cache_entry is not None else None
 
     def _begin_probe(self, media_path: str):
-        self._probe_media_path = str(media_path)
-        self._probe_state = AudioStreamProbeState.LOADING
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = None
+        self._cache_entry = _AudioProbeCacheEntry(
+            media_path=str(media_path),
+            state=AudioStreamProbeState.LOADING,
+        )
 
     def _abandon_loading_probe(self):
-        if self._probe_state != AudioStreamProbeState.LOADING:
+        if self.probe_state != AudioStreamProbeState.LOADING:
             return
-        self._probe_media_path = None
-        self._probe_state = AudioStreamProbeState.IDLE
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = None
+        self._cache_entry = None
 
     def _cache_probe_success(self, media_path: str, audio_streams):
-        self._probe_media_path = str(media_path)
-        self._probe_state = AudioStreamProbeState.READY
-        self._cached_audio_streams = list(audio_streams)
-        self._cached_audio_stream_error = None
+        self._cache_entry = _AudioProbeCacheEntry(
+            media_path=str(media_path),
+            state=AudioStreamProbeState.READY,
+            audio_streams=list(audio_streams),
+        )
 
     def _cache_probe_failure(self, media_path: str, reason: str):
-        self._probe_media_path = str(media_path)
-        self._probe_state = AudioStreamProbeState.FAILED
-        self._cached_audio_streams = None
-        self._cached_audio_stream_error = str(reason).strip() or "Audio stream inspection failed."
+        self._cache_entry = _AudioProbeCacheEntry(
+            media_path=str(media_path),
+            state=AudioStreamProbeState.FAILED,
+            error=str(reason).strip() or "Audio stream inspection failed.",
+        )
+
+    def _active_session(self) -> _AudioProbeSession | None:
+        if self._active_session_id is None:
+            return None
+        session = self._sessions.get(self._active_session_id)
+        if session is None:
+            self._active_session_id = None
+        return session
 
     def _get_player_audio_track_count(self) -> int | None:
         try:
@@ -210,11 +243,12 @@ class SubtitleGenerationAudioProbeFlow(QObject):
             return None
 
     def _is_current_probe_result(self, probe_request_id: int, media_path: str) -> bool:
-        if self._current_probe_request_id != probe_request_id:
+        active_session = self._active_session()
+        if active_session is None or active_session.request_id != probe_request_id:
             logger.debug(
                 "Ignoring stale audio stream probe result because request ownership changed | probe_request_id=%s | active_probe_request_id=%s | media=%s",
                 probe_request_id,
-                self._current_probe_request_id,
+                self._active_session_id,
                 media_path,
             )
             return False
@@ -298,7 +332,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
             if not self._is_current_probe_result(probe_request_id, media_path):
                 return
 
-            self._current_probe_request_id = None
+            self._active_session_id = None
             self._cache_probe_success(media_path, audio_streams)
             self._apply_loaded_audio_tracks(media_path, audio_streams)
         finally:
@@ -310,7 +344,7 @@ class SubtitleGenerationAudioProbeFlow(QObject):
             if not self._is_current_probe_result(probe_request_id, media_path):
                 return
 
-            self._current_probe_request_id = None
+            self._active_session_id = None
             self._cache_probe_failure(media_path, reason)
             self._apply_audio_track_probe_failure(media_path, reason, show_warning=True)
         finally:
@@ -321,59 +355,54 @@ class SubtitleGenerationAudioProbeFlow(QObject):
         logger.debug("Audio stream probe canceled | probe_request_id=%s", probe_request_id)
 
     def _request_probe_stop(self, probe_request_id: int, *, force: bool):
-        worker = self._workers.get(probe_request_id)
-        thread = self._threads.get(probe_request_id)
-        if thread is None:
+        session = self._sessions.get(probe_request_id)
+        if session is None:
             return
-        if thread.isRunning():
-            if worker is not None:
-                if force:
-                    worker.force_stop()
-                else:
-                    worker.cancel()
+        if session.thread.isRunning():
+            if force:
+                session.worker.force_stop()
+            else:
+                session.worker.cancel()
             return
 
-        self._workers.pop(probe_request_id, None)
-        self._threads.pop(probe_request_id, None)
-        if worker is not None:
-            worker.deleteLater()
-        thread.deleteLater()
+        self._release_probe_session(probe_request_id)
 
     def _release_probe_if_thread_stopped(self, probe_request_id: int):
-        thread = self._threads.get(probe_request_id)
-        if thread is None or thread.isRunning():
+        session = self._sessions.get(probe_request_id)
+        if session is None or session.thread.isRunning():
             return
-        worker = self._workers.pop(probe_request_id, None)
-        self._threads.pop(probe_request_id, None)
-        if worker is not None:
-            worker.deleteLater()
-        thread.deleteLater()
+        self._release_probe_session(probe_request_id)
 
-    def _deferred_start_probe_worker(self, probe_request_id: int, thread: QThread):
-        if self._threads.get(probe_request_id) is not thread:
+    def _release_probe_session(self, probe_request_id: int):
+        session = self._sessions.pop(probe_request_id, None)
+        if session is None:
+            return
+        if self._active_session_id == probe_request_id:
+            self._active_session_id = None
+        session.worker.deleteLater()
+        session.thread.deleteLater()
+
+    def _deferred_start_probe_worker(self, probe_request_id: int):
+        session = self._sessions.get(probe_request_id)
+        if session is None:
             logger.debug(
                 "Skipping deferred audio stream probe start for stale request | probe_request_id=%s",
                 probe_request_id,
             )
             return
-        if probe_request_id not in self._workers:
-            logger.debug(
-                "Skipping deferred audio stream probe start because worker was released | probe_request_id=%s",
-                probe_request_id,
-            )
-            return
-        if thread.isRunning():
+        if session.thread.isRunning():
             logger.debug(
                 "Skipping deferred audio stream probe start because thread is already running | probe_request_id=%s",
                 probe_request_id,
             )
             return
 
-        thread.start()
+        session.thread.start()
 
     @Slot(int)
     def _on_probe_thread_finished(self, probe_request_id: int):
         logger.debug("Audio stream probe thread finished | probe_request_id=%s", probe_request_id)
-        self._workers.pop(probe_request_id, None)
-        self._threads.pop(probe_request_id, None)
+        self._sessions.pop(probe_request_id, None)
+        if self._active_session_id == probe_request_id:
+            self._active_session_id = None
         self.thread_finished.emit()

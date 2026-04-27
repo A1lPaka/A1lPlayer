@@ -2,6 +2,7 @@ from services.subtitles.SubtitlePipelineState import (
     SubtitlePipelineStateMachine,
     SubtitleServiceState,
 )
+from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
 from services.subtitles.SubtitleShutdownCoordinator import (
     SubtitleShutdownCoordinator,
     SubtitleShutdownDecision,
@@ -10,7 +11,7 @@ from services.subtitles.SubtitleShutdownCoordinator import (
 
 def test_graceful_shutdown_starts_once_and_repeats_without_actions():
     state = SubtitlePipelineStateMachine()
-    shutdown = SubtitleShutdownCoordinator(state)
+    shutdown = SubtitleShutdownCoordinator(state, SubtitlePipelineTransitions(state))
 
     action = shutdown.begin_graceful_shutdown()
     repeated = shutdown.begin_graceful_shutdown()
@@ -26,7 +27,7 @@ def test_graceful_shutdown_starts_once_and_repeats_without_actions():
 
 def test_force_shutdown_escalates_once():
     state = SubtitlePipelineStateMachine()
-    shutdown = SubtitleShutdownCoordinator(state)
+    shutdown = SubtitleShutdownCoordinator(state, SubtitlePipelineTransitions(state))
 
     action = shutdown.begin_force_shutdown()
     repeated = shutdown.begin_force_shutdown()
@@ -44,7 +45,7 @@ def test_force_shutdown_escalates_once():
 
 def test_active_tasks_include_background_task_or_audio_probe():
     state = SubtitlePipelineStateMachine()
-    shutdown = SubtitleShutdownCoordinator(state)
+    shutdown = SubtitleShutdownCoordinator(state, SubtitlePipelineTransitions(state))
 
     assert shutdown.has_active_tasks(
         background_task_active=True,
@@ -63,7 +64,7 @@ def test_active_tasks_include_background_task_or_audio_probe():
 
 def test_shutdown_finished_is_emitted_only_after_shutdown_has_no_active_tasks():
     state = SubtitlePipelineStateMachine()
-    shutdown = SubtitleShutdownCoordinator(state)
+    shutdown = SubtitleShutdownCoordinator(state, SubtitlePipelineTransitions(state))
 
     assert shutdown.should_emit_shutdown_finished(
         background_task_active=False,

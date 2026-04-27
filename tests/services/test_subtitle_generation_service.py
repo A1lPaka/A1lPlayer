@@ -195,12 +195,18 @@ def _seed_active_job(service: SubtitleGenerationService, media_path: str = "C:/m
 
 
 def _seed_active_audio_probe(service: SubtitleGenerationService, probe_request_id: int = 101):
+    from services.subtitles.SubtitleGenerationAudioProbeFlow import _AudioProbeSession
+
     thread = _ProbeThread()
     worker = _ProbeWorker()
     service._audio_probe_flow._begin_probe("C:/media/movie.mkv")
-    service._audio_probe_flow._current_probe_request_id = probe_request_id
-    service._audio_probe_flow._threads[probe_request_id] = thread
-    service._audio_probe_flow._workers[probe_request_id] = worker
+    service._audio_probe_flow._active_session_id = probe_request_id
+    service._audio_probe_flow._sessions[probe_request_id] = _AudioProbeSession(
+        request_id=probe_request_id,
+        media_path="C:/media/movie.mkv",
+        worker=worker,
+        thread=thread,
+    )
     return probe_request_id, thread, worker
 
 
@@ -2062,8 +2068,7 @@ def test_real_subtitle_save_keeps_fallback_output_path_behavior(monkeypatch, wor
     assert Path(saved_output_path).exists() is True
     assert output_path.read_text(encoding="utf-8") == "existing"
     assert replace_calls[0][1] == "movie.srt"
-    assert replace_calls[1][1] == "movie (1).srt"
-    assert len(replace_calls) == 2
+    assert len(replace_calls) == 1
 
 
 def test_real_subtitle_save_uses_fallback_for_unconfirmed_existing_target(workspace_tmp_path):

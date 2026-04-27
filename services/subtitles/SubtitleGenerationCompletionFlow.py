@@ -9,10 +9,10 @@ from services.subtitles.SubtitleGenerationOutcomePresenter import (
     SubtitleAutoOpenOutcome,
     SubtitleGenerationOutcomePresenter,
 )
-from services.subtitles.SubtitlePipelineState import (
-    SubtitlePipelinePhase,
-    SubtitlePipelineRun,
-    SubtitlePipelineStateMachine,
+from services.subtitles.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
+from services.subtitles.SubtitlePipelineTransitions import (
+    CudaInstallCompletionDecision,
+    SubtitlePipelineTransitions,
 )
 
 
@@ -26,7 +26,7 @@ class SubtitleGenerationCompletionFlow:
         store: MediaSettingsStore,
         media_library,
         ui,
-        pipeline_state: SubtitlePipelineStateMachine,
+        transitions: SubtitlePipelineTransitions,
         outcome_presenter: SubtitleGenerationOutcomePresenter,
         complete_run: Callable[[int, SubtitlePipelinePhase, bool], None],
         launch_subtitle_generation,
@@ -34,7 +34,7 @@ class SubtitleGenerationCompletionFlow:
         self._store = store
         self._media_library = media_library
         self._ui = ui
-        self._pipeline_state = pipeline_state
+        self._transitions = transitions
         self._outcome_presenter = outcome_presenter
         self._complete_run = complete_run
         self._launch_subtitle_generation = launch_subtitle_generation
@@ -61,7 +61,7 @@ class SubtitleGenerationCompletionFlow:
 
         self._complete_run(run_id, SubtitlePipelinePhase.SUCCEEDED, True)
 
-        if self._pipeline_state.is_shutdown_in_progress():
+        if not self._transitions.should_present_terminal_feedback():
             return
 
         auto_open_outcome = SubtitleAutoOpenOutcome.LOADED
@@ -109,7 +109,7 @@ class SubtitleGenerationCompletionFlow:
 
         self._complete_run(run_id, SubtitlePipelinePhase.FAILED, True)
 
-        if self._pipeline_state.is_shutdown_in_progress():
+        if not self._transitions.should_present_terminal_feedback():
             return
 
         self._outcome_presenter.show_generation_failed(error_text)
@@ -122,20 +122,22 @@ class SubtitleGenerationCompletionFlow:
         logger.info("Subtitle generation canceled | run_id=%s", run.run_id)
         self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, True)
 
-        if self._pipeline_state.is_shutdown_in_progress():
+        if not self._transitions.should_present_terminal_feedback():
             return
 
         self._outcome_presenter.show_generation_canceled()
 
     def handle_cuda_runtime_install_finished(self, run_id: int):
-        run = self._require_active_job(run_id, "CUDA runtime install finished")
-        if run is None:
+        plan = self._transitions.plan_cuda_install_completion(run_id)
+        if plan is None:
+            logger.debug("Ignoring CUDA runtime install finished for stale subtitle pipeline run | run_id=%s", run_id)
             return
+        run = plan.run
 
         logger.info("CUDA runtime install flow finished | run_id=%s", run.run_id)
         self._ui.close_progress_dialog()
 
-        if run.phase == SubtitlePipelinePhase.CANCELING:
+        if plan.decision == CudaInstallCompletionDecision.COMPLETE_AS_CANCELED:
             logger.info(
                 "Ignoring CUDA runtime completion because pipeline cancellation is already in progress | run_id=%s",
                 run.run_id,
@@ -143,11 +145,7 @@ class SubtitleGenerationCompletionFlow:
             self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, False)
             return
 
-        if self._pipeline_state.is_shutdown_in_progress():
-            self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, False)
-            return
-
-        if run.subtitle_options is None:
+        if plan.decision == CudaInstallCompletionDecision.FAIL_MISSING_OPTIONS:
             logger.warning("CUDA runtime install finished without pending subtitle generation options | run_id=%s", run.run_id)
             self._complete_run(run_id, SubtitlePipelinePhase.FAILED, False)
             self._outcome_presenter.show_cuda_runtime_install_failed(
@@ -155,6 +153,7 @@ class SubtitleGenerationCompletionFlow:
             )
             return
 
+        assert plan.decision == CudaInstallCompletionDecision.RELAUNCH_SUBTITLE_GENERATION
         self._launch_subtitle_generation(run, run.subtitle_options)
 
     def handle_cuda_runtime_install_failed(self, run_id: int, error_text: str):
@@ -165,7 +164,7 @@ class SubtitleGenerationCompletionFlow:
         logger.error("CUDA runtime install failed | run_id=%s | message=%s", run.run_id, error_text)
         self._complete_run(run_id, SubtitlePipelinePhase.FAILED, True)
 
-        if self._pipeline_state.is_shutdown_in_progress():
+        if not self._transitions.should_present_terminal_feedback():
             return
 
         self._outcome_presenter.show_cuda_runtime_install_failed(error_text)
@@ -178,14 +177,14 @@ class SubtitleGenerationCompletionFlow:
         logger.info("CUDA runtime install canceled | run_id=%s", run.run_id)
         self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, True)
 
-        if self._pipeline_state.is_shutdown_in_progress():
+        if not self._transitions.should_present_terminal_feedback():
             return
 
         self._outcome_presenter.show_cuda_runtime_install_canceled()
 
     def _require_active_job(self, run_id: int, event_name: str) -> SubtitlePipelineRun | None:
-        run = self._pipeline_state.active_job
-        if run is not None and run.run_id == run_id:
+        run = self._transitions.active_run_for_id(run_id)
+        if run is not None:
             return run
         logger.debug("Ignoring %s for stale subtitle pipeline run | run_id=%s", event_name, run_id)
         return None

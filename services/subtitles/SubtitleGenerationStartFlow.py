@@ -20,9 +20,8 @@ from services.subtitles.SubtitlePipelineState import (
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineStateMachine,
-    SubtitlePipelineTask,
-    SubtitleServiceState,
 )
+from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
 from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import prompt_cuda_runtime_choice
 
@@ -41,12 +40,13 @@ class SubtitleGenerationStartFlow:
         validation_presenter,
         audio_probe_flow,
         pipeline_state: SubtitlePipelineStateMachine,
+        transitions: SubtitlePipelineTransitions,
         cuda_runtime_flow,
         outcome_presenter: SubtitleGenerationOutcomePresenter,
         assert_pipeline_thread: Callable[[], None],
         log_dialog_confirm_timing: Callable[[str], None],
         launch_subtitle_generation: Callable[[SubtitlePipelineRun, SubtitleGenerationDialogResult], None],
-        complete_run: Callable[[int, SubtitlePipelinePhase], None],
+        complete_run: Callable[[int, SubtitlePipelinePhase, bool], None],
         request_active_task_stop: Callable[[], None],
     ):
         self._parent = parent
@@ -56,6 +56,7 @@ class SubtitleGenerationStartFlow:
         self._validation_presenter = validation_presenter
         self._audio_probe_flow = audio_probe_flow
         self._pipeline_state = pipeline_state
+        self._transitions = transitions
         self._cuda_runtime_flow = cuda_runtime_flow
         self._outcome_presenter = outcome_presenter
         self._assert_pipeline_thread = assert_pipeline_thread
@@ -86,7 +87,7 @@ class SubtitleGenerationStartFlow:
             self._transition_back_to_dialog("playback context unavailable before launch")
             return
 
-        run = self._pipeline_state.begin_run(generation_context, options)
+        run = self._transitions.begin_run(generation_context, options)
         preflight_started_at = time.perf_counter()
         validation_result = self._preflight.validate_generation_request(
             current_media_path,
@@ -119,7 +120,7 @@ class SubtitleGenerationStartFlow:
         latest_context = self._capture_current_generation_context()
         if latest_context is None:
             logger.warning("Subtitle generation aborted because playback context is unavailable before launch")
-            self._pipeline_state.discard_active_job()
+            self._transitions.discard_active_job()
             self._transition_back_to_dialog("playback context unavailable before launch")
             return
         if latest_context != run.context:
@@ -131,7 +132,7 @@ class SubtitleGenerationStartFlow:
                 latest_context.media_path,
                 latest_context.request_id,
             )
-            self._pipeline_state.discard_active_job()
+            self._transitions.discard_active_job()
             self._transition_back_to_dialog("playback context changed before launch")
             return
 
@@ -155,13 +156,10 @@ class SubtitleGenerationStartFlow:
             )
             return
 
-        self._pipeline_state.set_run_phase(run, SubtitlePipelinePhase.RUNNING, "start CUDA runtime install")
-        if not self._pipeline_state.is_shutdown_in_progress():
-            self._pipeline_state.transition_dialog_lifecycle_state(
-                SubtitleServiceState.IDLE,
-                "generation dialog replaced by CUDA runtime progress",
-                allowed=(SubtitleServiceState.DIALOG_OPEN, SubtitleServiceState.IDLE),
-            )
+        self._transitions.start_cuda_runtime_install(
+            run,
+            close_dialog=not self._pipeline_state.is_shutdown_in_progress(),
+        )
 
         logger.info(
             "Starting CUDA runtime install flow | run_id=%s | media=%s | request_id=%s | packages=%s",
@@ -170,14 +168,13 @@ class SubtitleGenerationStartFlow:
             run.context.request_id,
             ", ".join(missing_packages),
         )
-        run.task = SubtitlePipelineTask.CUDA_INSTALL
         self._ui.open_cuda_install_progress(
             missing_packages,
             on_cancel=self._request_active_task_stop,
         )
         if not self._cuda_runtime_flow.start(run.run_id, missing_packages):
             logger.error("CUDA runtime install flow could not be started | run_id=%s", run.run_id)
-            self._complete_run(run.run_id, SubtitlePipelinePhase.FAILED)
+            self._complete_run(run.run_id, SubtitlePipelinePhase.FAILED, True)
             if not self._pipeline_state.is_shutdown_in_progress():
                 self._outcome_presenter.show_cuda_runtime_install_failed(
                     "GPU runtime installation could not be started."
@@ -204,15 +201,14 @@ class SubtitleGenerationStartFlow:
             run.context.request_id,
             ", ".join(missing_packages),
         )
-        run.task = SubtitlePipelineTask.CUDA_PROMPT
+        self._transitions.enter_cuda_runtime_prompt(run)
         try:
             choice = prompt_cuda_runtime_choice(self._parent, missing_packages)
         finally:
-            if self._pipeline_state.active_job is run and run.task == SubtitlePipelineTask.CUDA_PROMPT:
-                run.task = SubtitlePipelineTask.NONE
-        if self._pipeline_state.is_shutdown_in_progress():
+            self._transitions.leave_cuda_runtime_prompt(run)
+        if not self._transitions.should_present_terminal_feedback():
             logger.info("CUDA runtime prompt returned after shutdown started | run_id=%s", run.run_id)
-            self._complete_run(run.run_id, SubtitlePipelinePhase.CANCELED)
+            self._complete_run(run.run_id, SubtitlePipelinePhase.CANCELED, True)
             return None
         if not self._starting_run_matches_current_context(run, "CUDA runtime prompt"):
             return None
@@ -293,8 +289,7 @@ class SubtitleGenerationStartFlow:
         if run is not None:
             logger.debug("Discarding starting subtitle pipeline run | run_id=%s | reason=%s", run.run_id, reason)
             self._clear_subtitle_runtime(run)
-        self._pipeline_state.discard_active_job()
-        self._transition_back_to_dialog(reason)
+        self._transitions.revert_start_to_dialog(reason)
 
     def _clear_subtitle_runtime(self, run: SubtitlePipelineRun):
         run.subtitle_thread = None
@@ -303,8 +298,4 @@ class SubtitleGenerationStartFlow:
 
     def _transition_back_to_dialog(self, reason: str):
         self._assert_pipeline_thread()
-        self._pipeline_state.transition_dialog_lifecycle_state(
-            SubtitleServiceState.DIALOG_OPEN,
-            reason,
-            allowed=(SubtitleServiceState.DIALOG_OPEN,),
-        )
+        self._transitions.keep_generation_dialog_open(reason)
