@@ -239,6 +239,33 @@ def test_failed_subtitle_load_restores_previous_runtime_track(monkeypatch, works
     assert service._runtime_subtitle_copy_path == str(previous_runtime)
 
 
+def test_failed_subtitle_load_schedules_cleanup_for_failed_runtime_copy(monkeypatch, workspace_tmp_path):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    service.load_media("movie.mp4")
+    previous_runtime = workspace_tmp_path / "previous.srt"
+    failed_runtime = workspace_tmp_path / "failed-runtime.srt"
+    previous_runtime.write_text("previous", encoding="utf-8")
+    failed_runtime.write_text("failed", encoding="utf-8")
+    service._runtime_subtitle_copy_path = str(previous_runtime)
+    service.player.add_slave_results = [1, 1, 0]
+    service.player.subtitle_file_results = [1, 1]
+    cleanup_callbacks = []
+
+    monkeypatch.setattr(service, "_prepare_runtime_subtitle_copy", lambda _path: str(failed_runtime))
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda _delay_ms, callback: cleanup_callbacks.append(callback))
+
+    assert service.open_subtitle_file(str(failed_runtime)) is False
+    assert service._runtime_subtitle_copy_path == str(previous_runtime)
+    assert failed_runtime.is_file()
+    assert len(cleanup_callbacks) == 1
+
+    cleanup_callbacks[0]()
+
+    assert previous_runtime.is_file()
+    assert failed_runtime.exists() is False
+
+
 def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
     module, _fake_instance = _load_real_playback_engine(monkeypatch)
     service = module.PlaybackService()

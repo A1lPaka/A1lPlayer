@@ -40,6 +40,7 @@ class _PlaybackToken:
 
 class PlaybackService(QObject):
     _AUDIO_SYNC_DELAY_MS = 150
+    _FAILED_RUNTIME_SUBTITLE_CLEANUP_DELAY_MS = 1500
 
     playing = Signal(int)
     paused = Signal(int)
@@ -483,8 +484,8 @@ class PlaybackService(QObject):
                 Path(runtime_path).is_file(),
                 self._current_media_path or "<none>",
             )
-            # Keep the failed runtime copy around until the next cleanup point.
             # libVLC can attempt to consume the file asynchronously after the initial call returns.
+            self._schedule_failed_runtime_subtitle_cleanup(runtime_path)
             self._restore_subtitle_state(previous_runtime_path, previous_track_id)
             return False
 
@@ -717,3 +718,11 @@ class PlaybackService(QObject):
 
     def _remove_subtitle_copy(self, path: str | Path):
         AppTempService.remove_file_if_exists(path, log_context="runtime subtitle cleanup")
+
+    def _schedule_failed_runtime_subtitle_cleanup(self, runtime_path: str):
+        def cleanup_failed_runtime_copy():
+            if self._runtime_subtitle_copy_path == runtime_path:
+                return
+            self._remove_subtitle_copy(runtime_path)
+
+        QTimer.singleShot(self._FAILED_RUNTIME_SUBTITLE_CLEANUP_DELAY_MS, cleanup_failed_runtime_copy)
