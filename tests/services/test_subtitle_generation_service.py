@@ -658,7 +658,7 @@ def test_begin_emergency_shutdown_reapplies_force_stop_for_active_worker():
 
     assert service.begin_shutdown() is True
     assert service.begin_force_shutdown() is True
-    assert service.begin_emergency_shutdown() is True
+    assert service._begin_emergency_shutdown() is True
 
     assert worker.cancel_calls == 1
     assert worker.force_stop_calls == 2
@@ -675,7 +675,7 @@ def test_begin_emergency_shutdown_reapplies_force_stop_for_active_cuda_flow():
 
     assert service.begin_shutdown() is True
     assert service.begin_force_shutdown() is True
-    assert service.begin_emergency_shutdown() is True
+    assert service._begin_emergency_shutdown() is True
 
     assert service._cuda_runtime_flow.request_stop_calls == [False, True, True]
     assert run.phase == SubtitlePipelinePhase.CANCELING

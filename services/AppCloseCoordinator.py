@@ -194,7 +194,7 @@ class AppCloseCoordinator(QObject):
         )
         self._emergency_shutdown_requested = True
         self._phase = AppClosePhase.EMERGENCY_SHUTDOWN_STARTED
-        has_pending_shutdown = self._subtitle_service.begin_emergency_shutdown()
+        has_pending_shutdown = self._subtitle_service._begin_emergency_shutdown()
         if self._complete_shutdown_if_synchronous(
             has_pending_shutdown,
             "Application emergency shutdown completed synchronously",

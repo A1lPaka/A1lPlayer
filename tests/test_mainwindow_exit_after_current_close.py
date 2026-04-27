@@ -122,7 +122,7 @@ class _SubtitleGenerationServiceStub(QObject):
     def begin_shutdown(self):
         return False
 
-    def begin_emergency_shutdown(self):
+    def _begin_emergency_shutdown(self):
         return False
 
     def is_shutdown_in_progress(self):
