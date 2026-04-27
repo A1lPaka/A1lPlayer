@@ -1,6 +1,6 @@
 from PySide6.QtCore import QCoreApplication
 
-from services.AppCloseCoordinator import AppCloseCoordinator
+from services.AppCloseCoordinator import AppCloseCoordinator, AppClosePhase
 
 from tests.fakes import FakeCloseTarget, FakeMediaLibrary, FakePlaybackShutdown, FakeSubtitleService
 
@@ -113,6 +113,34 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
 
     assert force_warning_calls == [True]
     assert playback.shutdown_calls == 0
+
+
+def test_dismissing_timeout_dialog_without_choice_resumes_waiting():
+    subtitle_service = FakeSubtitleService()
+    subtitle_service.begin_shutdown_result = True
+    media_library = FakeMediaLibrary()
+    playback = FakePlaybackShutdown()
+    target = FakeCloseTarget()
+    coordinator = AppCloseCoordinator(
+        target,
+        subtitle_service,
+        media_library,
+        shutdown_playback=playback.shutdown,
+        is_pip_active=lambda: False,
+        teardown_pip_for_shutdown=lambda: None,
+    )
+
+    coordinator.attempt_close()
+    coordinator._on_shutdown_timeout()
+
+    assert coordinator._timeout_dialog is not None
+    assert coordinator._phase == AppClosePhase.WAITING_USER_CHOICE
+
+    coordinator._on_timeout_dialog_destroyed()
+
+    assert coordinator._timeout_dialog is None
+    assert coordinator._phase == AppClosePhase.WAITING_FOR_SHUTDOWN
+    assert coordinator._shutdown_timeout_timer.isActive() is True
 
 
 def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(monkeypatch):

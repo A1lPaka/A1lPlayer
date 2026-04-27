@@ -207,7 +207,16 @@ class AppCloseCoordinator(QObject):
 
     @Slot()
     def _on_timeout_dialog_destroyed(self, *_args):
+        should_resume_wait = (
+            self._closing_in_progress
+            and self._phase == AppClosePhase.WAITING_USER_CHOICE
+            and not self._close_allowed
+            and self._subtitle_service.is_shutdown_in_progress()
+        )
         self._timeout_dialog = None
+        if should_resume_wait:
+            logger.info("Close timeout dialog was dismissed without a choice; resuming shutdown wait")
+            self._on_wait_after_timeout()
 
     @Slot()
     def _on_subtitle_shutdown_finished(self):
