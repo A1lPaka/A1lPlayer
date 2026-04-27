@@ -89,7 +89,8 @@ def show_audio_stream_inspection_warning(parent: QWidget, reason: str) -> None:
         "Generate Subtitle",
         "Audio streams could not be inspected for this media file.\n\n"
         f"Reason:\n{reason}\n\n"
-        "The dialog can stay open, but subtitle generation will be blocked until this is fixed.",
+        "Subtitle generation can continue with the current/default audio track, "
+        "but alternate stream selection is unavailable until this is fixed.",
     )
 
 
