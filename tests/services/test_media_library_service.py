@@ -11,6 +11,7 @@ class _PromptCalls:
         self.resume_result = resume_result
         self.resume_calls = []
         self.media_access_failed_calls = []
+        self.no_supported_media_found_calls = []
         self.open_subtitle_failed_calls = []
 
     def confirm_resume_playback(self, parent, path: str, position_ms: int) -> bool:
@@ -19,6 +20,9 @@ class _PromptCalls:
 
     def show_media_access_failed(self, parent, path: str | None) -> None:
         self.media_access_failed_calls.append((parent, path))
+
+    def show_no_supported_media_found(self, parent, path: str | None) -> None:
+        self.no_supported_media_found_calls.append((parent, path))
 
     def show_open_subtitle_failed(self, parent) -> None:
         self.open_subtitle_failed_calls.append(parent)
@@ -36,6 +40,7 @@ def _make_service_with_prompt_calls(
         store,
         confirm_resume_playback=calls.confirm_resume_playback,
         show_media_access_failed=calls.show_media_access_failed,
+        show_no_supported_media_found=calls.show_no_supported_media_found,
         show_open_subtitle_failed=calls.show_open_subtitle_failed,
     )
 
@@ -109,6 +114,17 @@ def test_open_media_paths_filters_empty_and_non_string_paths(monkeypatch, worksp
 
     assert service.open_media_paths(["", None, "   ", media_path]) is True
     assert player.playback.last_open_paths["file_paths"] == [media_path]
+
+
+def test_open_media_paths_shows_no_supported_media_message_for_empty_input():
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    prompt_calls = _PromptCalls()
+    service = _make_service_with_prompt_calls(QWidget(), player, store, prompt_calls)
+
+    assert service.open_media_paths(["", None, "   "]) is False
+    assert prompt_calls.no_supported_media_found_calls == [(player, None)]
+    assert prompt_calls.media_access_failed_calls == []
 
 
 def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):

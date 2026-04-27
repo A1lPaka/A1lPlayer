@@ -262,6 +262,9 @@ def _install_message_box_stub():
     def show_media_access_failed(_parent, _path):
         return None
 
+    def show_no_supported_media_found(_parent, _path):
+        return None
+
     def show_open_subtitle_failed(_parent):
         return None
 
@@ -287,6 +290,7 @@ def _install_message_box_stub():
     message_box.show_force_close_still_running = show_force_close_still_running
     message_box.confirm_resume_playback = confirm_resume_playback
     message_box.show_media_access_failed = show_media_access_failed
+    message_box.show_no_supported_media_found = show_no_supported_media_found
     message_box.show_open_subtitle_failed = show_open_subtitle_failed
     sys.modules["ui.MessageBoxService"] = message_box
 

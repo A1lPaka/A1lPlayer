@@ -18,6 +18,7 @@ from ui.ColorThemeDialog import ColorThemeDialog
 from ui.MessageBoxService import (
     confirm_resume_playback,
     show_media_access_failed,
+    show_no_supported_media_found,
     show_open_subtitle_failed,
     show_playback_error,
 )
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
             self.media_store,
             confirm_resume_playback=confirm_resume_playback,
             show_media_access_failed=show_media_access_failed,
+            show_no_supported_media_found=show_no_supported_media_found,
             show_open_subtitle_failed=show_open_subtitle_failed,
         )
         self.subtitle_service = SubtitleGenerationService(self, self.player_window, self.media_store, self.media_library)

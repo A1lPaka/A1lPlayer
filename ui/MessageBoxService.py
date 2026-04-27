@@ -267,6 +267,17 @@ def show_media_access_failed(parent: QWidget, path: str | None) -> None:
     )
 
 
+def show_no_supported_media_found(parent: QWidget, path: str | None) -> None:
+    message = "No supported media files were found."
+    if path:
+        message = f"{message}\n\nPath:\n{path}"
+    QMessageBox.warning(
+        parent,
+        "Open Media",
+        message,
+    )
+
+
 def confirm_resume_playback(parent: QWidget, path: str, position_ms: int) -> bool:
     message_box = QMessageBox(parent)
     message_box.setWindowTitle("Resume playback")

@@ -22,6 +22,7 @@ class SubtitleAttachResult(Enum):
 
 ConfirmResumePlayback = Callable[[object, str, int], bool]
 ShowMediaAccessFailed = Callable[[object, str | None], None]
+ShowNoSupportedMediaFound = Callable[[object, str | None], None]
 ShowOpenSubtitleFailed = Callable[[object], None]
 
 
@@ -30,6 +31,10 @@ def _decline_resume_playback(_parent, _path: str, _position_ms: int) -> bool:
 
 
 def _ignore_media_access_failed(_parent, _path: str | None) -> None:
+    return None
+
+
+def _ignore_no_supported_media_found(_parent, _path: str | None) -> None:
     return None
 
 
@@ -47,6 +52,7 @@ class MediaLibraryService(QObject):
         store: MediaSettingsStore,
         confirm_resume_playback: ConfirmResumePlayback | None = None,
         show_media_access_failed: ShowMediaAccessFailed | None = None,
+        show_no_supported_media_found: ShowNoSupportedMediaFound | None = None,
         show_open_subtitle_failed: ShowOpenSubtitleFailed | None = None,
     ):
         super().__init__(parent)
@@ -56,6 +62,7 @@ class MediaLibraryService(QObject):
         self._store = store
         self._confirm_resume_playback = confirm_resume_playback or _decline_resume_playback
         self._show_media_access_failed = show_media_access_failed or _ignore_media_access_failed
+        self._show_no_supported_media_found = show_no_supported_media_found or _ignore_no_supported_media_found
         self._show_open_subtitle_failed = show_open_subtitle_failed or _ignore_open_subtitle_failed
         self._pending_recent_request_id: int | None = None
         self._pending_recent_paths: list[str] = []
@@ -115,6 +122,10 @@ class MediaLibraryService(QObject):
             logger.exception("Failed to open media folder | folder=%s", folder_path)
             self._show_media_access_failed(self._player, folder_path)
             return
+        if not media_paths:
+            logger.info("No supported media files found in folder | folder=%s", folder_path)
+            self._show_no_supported_media_found(self._player, folder_path)
+            return
         self.open_media_paths(media_paths)
 
     def open_recent_media(self, path: str) -> bool:
@@ -137,7 +148,7 @@ class MediaLibraryService(QObject):
         normalized_paths = self._paths.deduplicate_paths(file_paths)
         if not normalized_paths:
             logger.info("Open media request ignored because no usable media paths were provided")
-            self._show_media_access_failed(self._player, None)
+            self._show_no_supported_media_found(self._player, None)
             return False
 
         logger.info("Opening media paths | count=%s | first=%s", len(normalized_paths), normalized_paths[0])
