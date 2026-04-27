@@ -4,17 +4,17 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from services.AppTempService import AppTempService
+from services.app.AppTempService import AppTempService
 from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
-from services.subtitles.AudioStreamProbe import FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS, probe_audio_streams
-from services.subtitles.CudaRuntimeDiscovery import (
+from services.subtitles.io.AudioStreamProbe import FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS, probe_audio_streams
+from services.subtitles.domain.CudaRuntimeDiscovery import (
     WINDOWS_CUDA_RUNTIME_PACKAGE_FILES,
     configure_windows_nvidia_runtime_paths,
     get_missing_windows_cuda_runtime_packages,
 )
-from services.subtitles.SubtitleFileWriter import SubtitleFileWriter
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
-from services.subtitles.SubtitleTypes import (
+from services.subtitles.io.SubtitleFileWriter import SubtitleFileWriter
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.domain.SubtitleTypes import (
     AudioStreamInfo,
     SubtitleGenerationCanceledError,
     SubtitleGenerationEmptyResultError,

@@ -5,28 +5,28 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
-from models import SubtitleGenerationDialogResult
-from services.MediaSettingsStore import MediaSettingsStore
-from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.subtitles.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
-from services.subtitles.SubtitleGenerationCompletionFlow import SubtitleGenerationCompletionFlow
-from services.subtitles.SubtitleGenerationJobRunner import SubtitleGenerationJobRunner
-from services.subtitles.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
-from services.subtitles.SubtitleGenerationPreflight import SubtitleGenerationPreflight
-from services.subtitles.SubtitleGenerationRuntimeCoordinator import SubtitleGenerationRuntimeCoordinator
-from services.subtitles.SubtitleGenerationStartFlow import SubtitleGenerationStartFlow
-from services.subtitles.SubtitlePipelineState import (
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.app.MediaSettingsStore import MediaSettingsStore
+from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
+from services.subtitles.presentation.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
+from services.subtitles.presentation.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
+from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
+from services.subtitles.workers.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
+from services.subtitles.application.SubtitleGenerationCompletionFlow import SubtitleGenerationCompletionFlow
+from services.subtitles.workers.SubtitleGenerationJobRunner import SubtitleGenerationJobRunner
+from services.subtitles.validation.SubtitleGenerationPreflight import SubtitleGenerationPreflight
+from services.subtitles.application.SubtitleGenerationRuntimeCoordinator import SubtitleGenerationRuntimeCoordinator
+from services.subtitles.application.SubtitleGenerationStartFlow import SubtitleGenerationStartFlow
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineStateMachine,
     SubtitlePipelineTask,
     SubtitleServiceState,
 )
-from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
-from services.subtitles.SubtitleShutdownCoordinator import SubtitleShutdownCoordinator
-from services.subtitles.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
-from services.subtitles.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
+from services.subtitles.state.SubtitleShutdownCoordinator import SubtitleShutdownCoordinator
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import show_subtitle_generation_already_running
 from ui.PlayerWindow import PlayerWindow
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from services.MediaLibraryService import MediaLibraryService
+    from services.media.MediaLibraryService import MediaLibraryService
 
 
 class SubtitleGenerationService(QObject):

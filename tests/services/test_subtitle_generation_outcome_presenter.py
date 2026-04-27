@@ -1,5 +1,5 @@
-from services.subtitles import SubtitleGenerationOutcomePresenter as presenter_module
-from services.subtitles.SubtitleGenerationOutcomePresenter import (
+from services.subtitles.presentation import SubtitleGenerationOutcomePresenter as presenter_module
+from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import (
     SubtitleAutoOpenOutcome,
     SubtitleGenerationOutcomePresenter,
 )

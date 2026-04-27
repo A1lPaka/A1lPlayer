@@ -1,6 +1,6 @@
 import threading
 
-from services.AppTempService import AppTempService
+from services.app.AppTempService import AppTempService
 
 
 def test_startup_cleanup_guard_is_thread_safe(monkeypatch, workspace_tmp_path):

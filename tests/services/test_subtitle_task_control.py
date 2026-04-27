@@ -1,11 +1,11 @@
-from models import SubtitleGenerationDialogResult
-from services.subtitles.SubtitlePipelineState import (
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineTask,
 )
-from services.subtitles.SubtitleTaskControl import CudaRuntimeTaskControl, SubtitleWorkerTaskControl
+from services.subtitles.application.SubtitleTaskControl import CudaRuntimeTaskControl, SubtitleWorkerTaskControl
 
 
 class _Worker:

@@ -7,10 +7,10 @@ from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 
-from services.AppCloseCoordinator import AppCloseCoordinator
-from services.MediaLibraryService import MediaLibraryService
-from services.MediaSettingsStore import MediaSettingsStore
-from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
+from services.app.AppCloseCoordinator import AppCloseCoordinator
+from services.media.MediaLibraryService import MediaLibraryService
+from services.app.MediaSettingsStore import MediaSettingsStore
+from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
 from controllers.MenuBar import MenuBarController
 from ui.PlayerWindow import PlayerWindow
 from controllers.ViewModeController import ViewModeController

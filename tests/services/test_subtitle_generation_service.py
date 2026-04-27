@@ -13,20 +13,20 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QWidget
 
-from services.MediaLibraryService import MediaLibraryService
-from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
-from services.subtitles.SubtitlePipelineState import (
+from services.media.MediaLibraryService import MediaLibraryService
+from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineTask,
     SubtitleServiceState,
 )
-from services.subtitles.SubtitleGenerationPreflight import (
+from services.subtitles.validation.SubtitleGenerationPreflight import (
     AudioStreamProbeState,
     SubtitleGenerationValidationFailure,
     SubtitleGenerationValidationResult,
 )
-from models import SubtitleGenerationDialogResult
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 
 from tests.fakes import FakePlayerWindow, FakeSubtitleWorker, FakeMediaStore
 
@@ -195,7 +195,7 @@ def _seed_active_job(service: SubtitleGenerationService, media_path: str = "C:/m
 
 
 def _seed_active_audio_probe(service: SubtitleGenerationService, probe_request_id: int = 101):
-    from services.subtitles.SubtitleGenerationAudioProbeFlow import _AudioProbeSession
+    from services.subtitles.workers.SubtitleGenerationAudioProbeFlow import _AudioProbeSession
 
     thread = _ProbeThread()
     worker = _ProbeWorker()

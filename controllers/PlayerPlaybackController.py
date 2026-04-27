@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from services.PlaybackEngine import PlaybackService
+from services.playback.PlaybackEngine import PlaybackService
 from models.PlaybackPlaylist import PlaylistState
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from models import SubtitleGenerationDialogResult
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.runtime.RuntimeExecution import RuntimeLaunchSpec
 from services.runtime.RuntimeInstallerProtocol import (
     EVENT_CANCELED as CUDA_EVENT_CANCELED,

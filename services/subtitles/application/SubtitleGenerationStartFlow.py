@@ -7,22 +7,22 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
-from models import SubtitleGenerationDialogResult
-from services.subtitles.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
-from services.subtitles.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
-from services.subtitles.SubtitleGenerationPreflight import (
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.subtitles.domain.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
+from services.subtitles.validation.SubtitleGenerationPreflight import (
     SubtitleGenerationPreflight,
     SubtitleGenerationValidationFailure,
     SubtitleGenerationValidationResult,
 )
-from services.subtitles.SubtitlePipelineState import (
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineStateMachine,
 )
-from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
 from ui.MessageBoxService import prompt_cuda_runtime_choice
 
 

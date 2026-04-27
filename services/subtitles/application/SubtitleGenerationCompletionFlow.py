@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from services.MediaLibraryService import SubtitleAttachResult
-from services.MediaSettingsStore import MediaSettingsStore
-from services.subtitles.SubtitleGenerationOutcomePresenter import (
+from services.media.MediaLibraryService import SubtitleAttachResult
+from services.app.MediaSettingsStore import MediaSettingsStore
+from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import (
     SubtitleAutoOpenOutcome,
     SubtitleGenerationOutcomePresenter,
 )
-from services.subtitles.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
-from services.subtitles.SubtitlePipelineTransitions import (
+from services.subtitles.state.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
+from services.subtitles.state.SubtitlePipelineTransitions import (
     CudaInstallCompletionDecision,
     SubtitlePipelineTransitions,
 )

@@ -2,8 +2,8 @@ import logging
 from collections.abc import Collection
 from typing import Protocol
 
-from services.subtitles.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.subtitles.SubtitlePipelineState import SubtitlePipelineRun
+from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
+from services.subtitles.state.SubtitlePipelineState import SubtitlePipelineRun
 
 
 logger = logging.getLogger(__name__)

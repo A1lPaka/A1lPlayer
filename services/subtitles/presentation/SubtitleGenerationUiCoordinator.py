@@ -5,7 +5,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QWidget
 
-from models import SubtitleGenerationDialogResult
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from models.ThemeColor import ThemeState
 from ui.SubtitleGenerationDialog import SubtitleGenerationDialog
 from ui.SubtitleProgressDialog import SubtitleProgressDialog

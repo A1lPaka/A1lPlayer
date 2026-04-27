@@ -2,7 +2,7 @@ import logging
 
 from PySide6.QtWidgets import QWidget
 
-from services.subtitles.SubtitleGenerationPreflight import (
+from services.subtitles.validation.SubtitleGenerationPreflight import (
     SubtitleGenerationValidationFailure,
     SubtitleGenerationValidationResult,
 )

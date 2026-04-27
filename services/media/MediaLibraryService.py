@@ -5,9 +5,9 @@ from typing import Callable
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
-from services.MediaDialogs import MediaDialogs
-from services.MediaPathService import MediaPathService
-from services.MediaSettingsStore import MediaSettingsStore
+from services.media.MediaDialogs import MediaDialogs
+from services.media.MediaPathService import MediaPathService
+from services.app.MediaSettingsStore import MediaSettingsStore
 from ui.PlayerWindow import PlayerWindow
 
 

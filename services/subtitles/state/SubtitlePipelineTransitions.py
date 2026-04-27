@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from models import SubtitleGenerationDialogResult
-from services.subtitles.SubtitlePipelineState import (
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineRun,

@@ -5,10 +5,10 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
-from models import SubtitleGenerationDialogResult
-from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
-from services.subtitles.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.subtitles.workers.SubtitleGenerationWorkers import SubtitleGenerationWorker
+from services.subtitles.state.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 
 
 logger = logging.getLogger(__name__)

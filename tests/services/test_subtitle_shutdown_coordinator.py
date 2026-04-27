@@ -1,9 +1,9 @@
-from services.subtitles.SubtitlePipelineState import (
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelineStateMachine,
     SubtitleServiceState,
 )
-from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
-from services.subtitles.SubtitleShutdownCoordinator import (
+from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
+from services.subtitles.state.SubtitleShutdownCoordinator import (
     SubtitleShutdownCoordinator,
     SubtitleShutdownDecision,
 )

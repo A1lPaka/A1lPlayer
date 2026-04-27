@@ -1,10 +1,10 @@
-from models import SubtitleGenerationDialogResult
-from services.subtitles import SubtitleGenerationJobRunner as runner_module
-from services.subtitles.SubtitleGenerationJobRunner import (
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.subtitles.workers import SubtitleGenerationJobRunner as runner_module
+from services.subtitles.workers.SubtitleGenerationJobRunner import (
     SubtitleGenerationJobRunner,
     can_launch_subtitle_worker_run,
 )
-from services.subtitles.SubtitlePipelineState import (
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitleGenerationContext,
     SubtitlePipelinePhase,
     SubtitlePipelineRun,

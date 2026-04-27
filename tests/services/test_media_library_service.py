@@ -1,7 +1,7 @@
 from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QWidget
 
-from services.MediaLibraryService import MediaLibraryService, SubtitleAttachResult
+from services.media.MediaLibraryService import MediaLibraryService, SubtitleAttachResult
 
 from tests.fakes import FakeMediaStore, FakePlayerWindow
 

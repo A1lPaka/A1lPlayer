@@ -2,7 +2,7 @@ import json
 import logging
 import subprocess
 
-from services.subtitles.SubtitleTypes import AudioStreamInfo
+from services.subtitles.domain.SubtitleTypes import AudioStreamInfo
 
 
 logger = logging.getLogger(__name__)

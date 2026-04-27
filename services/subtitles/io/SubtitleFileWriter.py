@@ -7,9 +7,9 @@ import tempfile
 import threading
 import time
 
-from services.AppTempService import AppTempService
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
-from services.subtitles.SubtitleTypes import SubtitleGenerationCanceledError, SubtitleSegment
+from services.app.AppTempService import AppTempService
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.domain.SubtitleTypes import SubtitleGenerationCanceledError, SubtitleSegment
 
 
 logger = logging.getLogger(__name__)

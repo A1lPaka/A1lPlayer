@@ -17,12 +17,12 @@ from services.runtime.RuntimeHelperProtocol import (
     build_finished_event,
     build_progress_event,
 )
-from services.subtitles.SubtitleMaker import SubtitleMaker
-from services.subtitles.SubtitleTypes import (
+from services.subtitles.io.SubtitleMaker import SubtitleMaker
+from services.subtitles.domain.SubtitleTypes import (
     SubtitleGenerationCanceledError,
     SubtitleGenerationEmptyResultError,
 )
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from utils.LoggingSetup import configure_logging
 
 

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from services.subtitles.SubtitlePipelineState import SubtitlePipelineStateMachine
-from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
+from services.subtitles.state.SubtitlePipelineState import SubtitlePipelineStateMachine
+from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
 
 
 class SubtitleShutdownDecision(Enum):

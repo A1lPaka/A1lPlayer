@@ -1,6 +1,6 @@
 import json
 
-from services.MediaSettingsStore import MediaSettingsStore
+from services.app.MediaSettingsStore import MediaSettingsStore
 
 
 class _FakeSettings:

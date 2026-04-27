@@ -8,8 +8,8 @@ from models.ThemeColor import ThemeState
 from utils import Metrics
 
 if TYPE_CHECKING:
-    from services.MediaLibraryService import MediaLibraryService
-    from services.subtitles.SubtitleGenerationService import SubtitleGenerationService
+    from services.media.MediaLibraryService import MediaLibraryService
+    from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
     from ui.PlayerWindow import PlayerWindow
 
 class MenuBarController:

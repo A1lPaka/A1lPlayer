@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from PySide6.QtCore import QThread
 
-    from models import SubtitleGenerationDialogResult
-    from services.subtitles.SubtitleGenerationWorkers import SubtitleGenerationWorker
+    from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+    from services.subtitles.workers.SubtitleGenerationWorkers import SubtitleGenerationWorker
 
 
 logger = logging.getLogger(__name__)

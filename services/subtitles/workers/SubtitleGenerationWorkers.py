@@ -6,7 +6,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from models import SubtitleGenerationDialogResult
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.runtime.RuntimeExecution import build_runtime_helper_launch
 from services.runtime.RuntimeHelperProtocol import (
     EVENT_CANCELED,
@@ -18,12 +18,12 @@ from services.runtime.RuntimeHelperProtocol import (
 )
 from services.runtime.JsonSubprocessWorker import JsonSubprocessWorkerBase
 from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
-from services.subtitles.AudioStreamProbe import (
+from services.subtitles.io.AudioStreamProbe import (
     FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS,
     build_audio_stream_probe_command,
     parse_audio_stream_probe_output,
 )
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from services.runtime.SubprocessWorkerSupport import (
     BoundedLineBuffer,
     build_exception_diagnostics,

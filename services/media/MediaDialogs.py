@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QFileDialog, QWidget
 
-from services.MediaPathService import (
+from services.media.MediaPathService import (
     MEDIA_EXTENSIONS,
     SUBTITLE_EXTENSIONS,
     build_file_dialog_filter,

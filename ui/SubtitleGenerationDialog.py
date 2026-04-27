@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from models.ThemeColor import ThemeState
-from models import SubtitleGenerationDialogResult
-from services.MediaPathService import build_file_dialog_filter
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
+from services.media.MediaPathService import build_file_dialog_filter
 from utils import Metrics, compact_path_for_display, res_path
 
 

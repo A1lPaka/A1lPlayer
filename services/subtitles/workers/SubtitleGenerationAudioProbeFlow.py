@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
-from services.subtitles.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
-from services.subtitles.SubtitleGenerationWorkers import AudioStreamProbeWorker
+from services.subtitles.validation.SubtitleGenerationPreflight import AudioStreamProbeState, SubtitleGenerationPreflight
+from services.subtitles.workers.SubtitleGenerationWorkers import AudioStreamProbeWorker
 from ui.MessageBoxService import show_audio_stream_inspection_warning
 
 

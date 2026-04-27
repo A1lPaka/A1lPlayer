@@ -1,4 +1,4 @@
-from services.MediaPathService import (
+from services.media.MediaPathService import (
     MEDIA_EXTENSIONS,
     SUBTITLE_EXTENSIONS,
     MediaPathService,

@@ -5,7 +5,7 @@ import types
 from PySide6.QtCore import QObject, QSettings, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
-from services.AppCloseCoordinator import AppCloseResult
+from services.app.AppCloseCoordinator import AppCloseResult
 
 
 class _PlaybackStub(QObject):

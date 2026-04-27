@@ -16,7 +16,7 @@ else:
     _VLC_IMPORT_ERROR = None
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
-from services.AppTempService import AppTempService
+from services.app.AppTempService import AppTempService
 
 VLC_AUDIO_CHANNEL_MONO = 7
 AUDIO_DEVICE_DEFAULT_ID = "__default__"

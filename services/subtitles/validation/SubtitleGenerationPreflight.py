@@ -9,7 +9,7 @@ import tempfile
 
 from PySide6.QtWidgets import QWidget
 
-from models import SubtitleGenerationDialogResult
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
 from PySide6.QtCore import QCoreApplication
 
-from services.AppCloseCoordinator import AppCloseCoordinator, AppClosePhase
+from services.app.AppCloseCoordinator import AppCloseCoordinator, AppClosePhase
 
 from tests.fakes import FakeCloseTarget, FakeMediaLibrary, FakePlaybackShutdown, FakeSubtitleService
 

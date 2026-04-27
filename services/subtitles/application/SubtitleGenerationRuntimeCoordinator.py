@@ -3,24 +3,24 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from services.subtitles.SubtitleGenerationJobRunner import (
+from services.subtitles.workers.SubtitleGenerationJobRunner import (
     SubtitleGenerationJobRunner,
     can_launch_subtitle_worker_run,
 )
-from services.subtitles.SubtitlePipelineState import (
+from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
     SubtitlePipelineStateMachine,
     SubtitlePipelineTask,
 )
-from services.subtitles.SubtitlePipelineTransitions import SubtitlePipelineTransitions
-from services.subtitles.SubtitleShutdownCoordinator import (
+from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
+from services.subtitles.state.SubtitleShutdownCoordinator import (
     SubtitleShutdownAction,
     SubtitleShutdownCoordinator,
     SubtitleShutdownDecision,
 )
-from services.subtitles.SubtitleTaskControl import CudaRuntimeTaskControl, SubtitleTaskControl, SubtitleWorkerTaskControl
-from services.subtitles.SubtitleTiming import elapsed_ms_since, log_timing
+from services.subtitles.application.SubtitleTaskControl import CudaRuntimeTaskControl, SubtitleTaskControl, SubtitleWorkerTaskControl
+from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 
 
 logger = logging.getLogger(__name__)
