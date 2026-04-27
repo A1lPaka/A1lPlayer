@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
+import tempfile
 
 from PySide6.QtWidgets import QWidget
 
@@ -207,7 +208,7 @@ class SubtitleGenerationPreflight:
         if parent_dir.exists():
             if not parent_dir.is_dir():
                 return "The destination folder path points to a file."
-            return None
+            return self._probe_output_parent_write_access(parent_dir, creating_parent=False)
 
         if parent_dir.anchor and not Path(parent_dir.anchor).exists():
             return "Failed to resolve the destination drive or root folder."
@@ -217,5 +218,27 @@ class SubtitleGenerationPreflight:
             return "Failed to resolve the destination folder."
         if not existing_parent.is_dir():
             return "The destination folder path points to a file."
+        return self._probe_output_parent_write_access(existing_parent, creating_parent=True)
+
+    def _probe_output_parent_write_access(self, probe_dir: Path, *, creating_parent: bool) -> str | None:
+        try:
+            probe = tempfile.NamedTemporaryFile(
+                dir=probe_dir,
+                prefix=".a1lplayer-write-probe-",
+                suffix=".tmp",
+                delete=True,
+            )
+        except OSError as exc:
+            action = "create the destination folder" if creating_parent else "write to the destination folder"
+            return f"Failed to {action}: {exc}"
+
+        try:
+            probe.write(b"")
+            probe.flush()
+        except OSError as exc:
+            action = "create the destination folder" if creating_parent else "write to the destination folder"
+            return f"Failed to {action}: {exc}"
+        finally:
+            probe.close()
 
         return None

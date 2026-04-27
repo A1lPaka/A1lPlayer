@@ -1970,6 +1970,24 @@ def test_real_output_path_preflight_ignores_os_access_for_structurally_valid_pat
     assert preflight._preflight_subtitle_output_path(workspace_tmp_path / "nested" / "movie.srt") is None
 
 
+def test_real_output_path_preflight_reports_write_probe_failure(monkeypatch, workspace_tmp_path):
+    module = _load_real_module(
+        "real_subtitle_generation_preflight_write_probe_test",
+        "services/subtitles/SubtitleGenerationPreflight.py",
+    )
+
+    preflight = module.SubtitleGenerationPreflight(QWidget())
+
+    def fail_probe(*_args, **_kwargs):
+        raise PermissionError("access is denied")
+
+    monkeypatch.setattr(module.tempfile, "NamedTemporaryFile", fail_probe)
+
+    result = preflight._preflight_subtitle_output_path(workspace_tmp_path / "movie.srt")
+
+    assert result == "Failed to write to the destination folder: access is denied"
+
+
 def test_real_subtitle_save_creates_directory_only_during_actual_write(workspace_tmp_path):
     module = _load_real_module(
         "real_subtitle_maker_save_dir_test",
