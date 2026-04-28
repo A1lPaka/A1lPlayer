@@ -8,7 +8,6 @@ from services.app.AppTempService import AppTempService
 from services.runtime.SubprocessLifecycle import SubprocessLifecycleMixin
 from services.subtitles.io.AudioStreamProbe import FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS, probe_audio_streams
 from services.subtitles.domain.CudaRuntimeDiscovery import (
-    WINDOWS_CUDA_RUNTIME_PACKAGE_FILES,
     configure_windows_nvidia_runtime_paths,
     get_missing_windows_cuda_runtime_packages,
 )

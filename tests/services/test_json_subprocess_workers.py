@@ -234,7 +234,7 @@ def test_cuda_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
     _install_fake_popen(monkeypatch, process)
     monkeypatch.setattr(module, "build_runtime_installer_launch", lambda _installer: _launch_spec())
 
-    worker = module.CudaRuntimeInstallWorker(["nvidia-cuda-runtime-cu12"])
+    worker = module.CudaRuntimeInstallWorker(["nvidia-cuda-nvrtc-cu12==12.9.86"])
     finished = []
     failed = []
     worker.finished.connect(lambda: finished.append(True))

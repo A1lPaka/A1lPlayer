@@ -1,7 +1,6 @@
 import logging
 import os
 from pathlib import Path
-import site
 
 from utils.runtime_assets import managed_cuda_runtime_root
 
@@ -10,40 +9,45 @@ logger = logging.getLogger(__name__)
 
 
 WINDOWS_CUDA_RUNTIME_PACKAGE_FILES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("nvidia-cublas-cu12", ("nvidia/cublas/bin/cublas64_12.dll",)),
-    ("nvidia-cudnn-cu12", ("nvidia/cudnn/bin/cudnn64_9.dll",)),
-    ("nvidia-cuda-nvrtc-cu12", ("nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll",)),
+    (
+        "nvidia-cublas-cu12==12.9.2.10",
+        (
+            "nvidia/cublas/bin/cublas64_12.dll",
+            "nvidia_cublas_cu12-12.9.2.10.dist-info/METADATA",
+        ),
+    ),
+    (
+        "nvidia-cudnn-cu12==9.20.0.48",
+        (
+            "nvidia/cudnn/bin/cudnn64_9.dll",
+            "nvidia_cudnn_cu12-9.20.0.48.dist-info/METADATA",
+        ),
+    ),
+    (
+        "nvidia-cuda-nvrtc-cu12==12.9.86",
+        (
+            "nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll",
+            "nvidia_cuda_nvrtc_cu12-12.9.86.dist-info/METADATA",
+        ),
+    ),
 )
 
 
-def _get_site_package_roots() -> list[Path]:
-    candidate_roots: list[Path] = []
-    try:
-        candidate_roots.append(Path(site.getusersitepackages()))
-    except (AttributeError, OSError, TypeError):
-        logger.debug("Unable to resolve user site-packages path", exc_info=True)
-
-    try:
-        candidate_roots.extend(Path(path) for path in site.getsitepackages())
-    except (AttributeError, OSError, TypeError):
-        logger.debug("Unable to resolve global site-packages paths", exc_info=True)
-
-    candidate_roots.append(managed_cuda_runtime_root())
-
-    return candidate_roots
+def _get_cuda_runtime_roots(runtime_roots: list[Path] | None = None) -> list[Path]:
+    return runtime_roots or [managed_cuda_runtime_root()]
 
 
-def get_missing_windows_cuda_runtime_packages() -> list[str]:
+def get_missing_windows_cuda_runtime_packages(runtime_roots: list[Path] | None = None) -> list[str]:
     if os.name != "nt":
         return []
 
-    candidate_roots = _get_site_package_roots()
+    candidate_roots = _get_cuda_runtime_roots(runtime_roots)
     missing_packages: list[str] = []
 
-    for package_name, relative_paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES:
-        package_found = any((root / relative_path).is_file() for root in candidate_roots for relative_path in relative_paths)
+    for package_requirement, relative_paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES:
+        package_found = any(all((root / relative_path).is_file() for relative_path in relative_paths) for root in candidate_roots)
         if not package_found:
-            missing_packages.append(package_name)
+            missing_packages.append(package_requirement)
 
     return missing_packages
 
@@ -52,11 +56,16 @@ def configure_windows_nvidia_runtime_paths():
     if os.name != "nt":
         return
 
-    candidate_roots = _get_site_package_roots()
+    candidate_roots = _get_cuda_runtime_roots()
 
     dll_dirs: list[Path] = []
     for root in candidate_roots:
-        for relative in {str(Path(relative_path).parent).replace("\\", "/") for _, relative_paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES for relative_path in relative_paths}:
+        for relative in {
+            str(Path(relative_path).parent).replace("\\", "/")
+            for _, relative_paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES
+            for relative_path in relative_paths
+            if Path(relative_path).suffix.lower() == ".dll"
+        }:
             dll_dir = root / relative
             if dll_dir.is_dir():
                 dll_dirs.append(dll_dir)

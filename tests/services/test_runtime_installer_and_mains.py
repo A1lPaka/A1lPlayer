@@ -1,5 +1,6 @@
 from io import StringIO
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import threading
 
@@ -8,6 +9,7 @@ import pytest
 from services.runtime import CudaRuntimeInstaller as installer
 from services.runtime import RuntimeHelperMain as helper_main
 from services.runtime import RuntimeInstallerMain as installer_main
+from services.runtime import WhisperModelInstaller as whisper_installer
 from services.runtime.RuntimeExecution import EVENT_CANCELED, EVENT_FAILED, EVENT_FINISHED
 from services.runtime.RuntimeHelperProtocol import SubtitleGenerationRequest
 from services.runtime.RuntimeInstallerProtocol import (
@@ -19,6 +21,7 @@ from services.subtitles.domain.SubtitleTypes import (
     SubtitleGenerationCanceledError,
     SubtitleSegment,
 )
+from services.subtitles.domain.CudaRuntimeDiscovery import WINDOWS_CUDA_RUNTIME_PACKAGE_FILES
 
 
 def _json_events(stdout: StringIO) -> list[dict]:
@@ -71,7 +74,7 @@ def test_cuda_runtime_installer_validates_wheelhouse(workspace_tmp_path):
 
 def test_cuda_runtime_installer_builds_install_command():
     request = CudaRuntimeInstallRequest(
-        packages=("nvidia-cublas-cu12", "nvidia-cudnn-cu12"),
+        packages=("nvidia-cublas-cu12==12.9.2.10", "nvidia-cudnn-cu12==9.20.0.48"),
         install_target="C:/runtime",
     )
     source = installer.CudaRuntimeInstallSource(
@@ -94,9 +97,99 @@ def test_cuda_runtime_installer_builds_install_command():
         "C:/runtime",
         "--index-url",
         "https://example.invalid/simple",
-        "nvidia-cublas-cu12",
-        "nvidia-cudnn-cu12",
+        "nvidia-cublas-cu12==12.9.2.10",
+        "nvidia-cudnn-cu12==9.20.0.48",
     ]
+
+
+def test_cuda_runtime_missing_packages_are_pinned_versions():
+    assert [package for package, _paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES] == [
+        "nvidia-cublas-cu12==12.9.2.10",
+        "nvidia-cudnn-cu12==9.20.0.48",
+        "nvidia-cuda-nvrtc-cu12==12.9.86",
+    ]
+
+
+def test_cuda_runtime_installer_uses_managed_runtime_target(monkeypatch, workspace_tmp_path):
+    target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    monkeypatch.setenv("A1LPLAYER_CUDA_TARGET", str(target))
+
+    resolved = installer.resolve_cuda_runtime_install_target()
+
+    assert resolved == target.resolve()
+    assert target.is_dir()
+
+
+def test_cuda_runtime_installer_replaces_target_after_partial_validation(monkeypatch, workspace_tmp_path):
+    install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    install_target.mkdir(parents=True)
+    (install_target / "old.txt").write_text("old runtime", encoding="utf-8")
+    commands = []
+    events = []
+
+    monkeypatch.setattr(
+        installer,
+        "resolve_cuda_runtime_install_source",
+        lambda: installer.CudaRuntimeInstallSource("configured-index", ("--index-url", "https://example.invalid"), "index"),
+    )
+    monkeypatch.setattr(installer, "resolve_installer_python_executable", lambda: "python.exe")
+
+    def install_to_partial(install_command, *_args, **_kwargs):
+        commands.append(install_command)
+        target = Path(install_command[install_command.index("--target") + 1])
+        for _package, relative_paths in WINDOWS_CUDA_RUNTIME_PACKAGE_FILES:
+            for relative_path in relative_paths:
+                dll_path = target / relative_path
+                dll_path.parent.mkdir(parents=True, exist_ok=True)
+                dll_path.write_text("dll", encoding="utf-8")
+
+    monkeypatch.setattr(installer, "_run_install_command", install_to_partial)
+
+    request = CudaRuntimeInstallRequest(
+        packages=("nvidia-cublas-cu12==12.9.2.10", "nvidia-cudnn-cu12==9.20.0.48", "nvidia-cuda-nvrtc-cu12==12.9.86"),
+        install_target=str(install_target),
+    )
+
+    installer.ensure_cuda_runtime_installed(request, events.append, threading.Event())
+
+    assert commands[0][commands[0].index("--target") + 1] == str(install_target.with_name("cuda.partial"))
+    assert not install_target.with_name("cuda.partial").exists()
+    assert not (install_target / "old.txt").exists()
+    assert events[-1]["event"] == EVENT_FINISHED
+
+
+def test_cuda_runtime_installer_keeps_existing_target_when_partial_validation_fails(monkeypatch, workspace_tmp_path):
+    install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    install_target.mkdir(parents=True)
+    existing_file = install_target / "old.txt"
+    existing_file.write_text("old runtime", encoding="utf-8")
+
+    monkeypatch.setattr(
+        installer,
+        "resolve_cuda_runtime_install_source",
+        lambda: installer.CudaRuntimeInstallSource("configured-index", ("--index-url", "https://example.invalid"), "index"),
+    )
+    monkeypatch.setattr(installer, "resolve_installer_python_executable", lambda: "python.exe")
+    monkeypatch.setattr(installer, "_run_install_command", lambda *_args, **_kwargs: None)
+
+    request = CudaRuntimeInstallRequest(
+        packages=("nvidia-cublas-cu12==12.9.2.10",),
+        install_target=str(install_target),
+    )
+
+    with pytest.raises(RuntimeError, match="required CUDA libraries are still missing"):
+        installer.ensure_cuda_runtime_installed(request, lambda _event: None, threading.Event())
+
+    assert existing_file.read_text(encoding="utf-8") == "old runtime"
+    assert not install_target.with_name("cuda.partial").exists()
+
+
+def test_whisper_model_install_source_uses_pinned_revision():
+    source = whisper_installer.resolve_whisper_model_install_source("small")
+
+    assert source.repo_id == "Systran/faster-whisper-small"
+    assert source.revision == "536b066"
+    assert source.location == "https://huggingface.co/Systran/faster-whisper-small/tree/536b066"
 
 
 class _FakePipe:

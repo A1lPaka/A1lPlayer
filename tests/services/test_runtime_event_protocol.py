@@ -96,12 +96,12 @@ def test_runtime_request_json_roundtrips_are_unchanged():
     assert SubtitleGenerationRequest.from_json(json.dumps(legacy_payload)).overwrite_confirmed_for_path is None
 
     installer_request = CudaRuntimeInstallRequest(
-        packages=("nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"),
+        packages=("nvidia-cuda-nvrtc-cu12==12.9.86", "nvidia-cublas-cu12==12.9.2.10"),
         install_target="C:/tmp/runtime",
     )
     installer_payload = json.loads(installer_request.to_json())
     assert installer_payload == {
-        "packages": ["nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"],
+        "packages": ["nvidia-cuda-nvrtc-cu12==12.9.86", "nvidia-cublas-cu12==12.9.2.10"],
         "install_target": "C:/tmp/runtime",
     }
     assert CudaRuntimeInstallRequest.from_json(installer_request.to_json()) == installer_request

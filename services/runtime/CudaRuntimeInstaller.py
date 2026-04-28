@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
-import site
+import shutil
 import subprocess
 import sys
 import threading
@@ -31,13 +31,9 @@ _INSTALLER_PYTHON_ENV = "A1LPLAYER_INSTALLER_PYTHON"
 _DEFAULT_CUDA_INDEX_URL = "https://pypi.org/simple"
 _DEFAULT_WHEELHOUSE_RELATIVE_PATH = Path("runtime") / "cuda-wheelhouse"
 
-# Technical debt note:
-# The CUDA runtime installer is intentionally "best effort" until the project
-# reaches the packaging/distribution stage. At that point this flow should be
-# revisited and replaced with a release-grade solution: bundled Python runtime,
-# offline wheelhouse, or a dedicated external installer/bootstrapper.
-# Until then, source-mode development and frozen-runtime probing are supported,
-# but deployment guarantees are intentionally limited.
+# Release checklist note:
+# Production CUDA installs should use a trusted wheelhouse with pinned artifacts
+# instead of falling back to the default online index.
 
 
 class CudaRuntimeInstallCanceledError(RuntimeError):
@@ -88,10 +84,7 @@ class _InstallerStatusReporter:
         self._emit_event(build_status_event(status, "\n".join(details_parts)))
 
 def resolve_cuda_runtime_install_target() -> Path:
-    if is_frozen_runtime():
-        target = managed_cuda_runtime_root()
-    else:
-        target = Path(site.getusersitepackages())
+    target = managed_cuda_runtime_root()
     target.mkdir(parents=True, exist_ok=True)
     return target
 
@@ -184,11 +177,10 @@ def ensure_cuda_runtime_installed(
     cancel_event: threading.Event,
 ) -> None:
     install_target = Path(request.install_target)
-    install_target.mkdir(parents=True, exist_ok=True)
+    install_target.parent.mkdir(parents=True, exist_ok=True)
 
     source = resolve_cuda_runtime_install_source()
     python_executable = resolve_installer_python_executable()
-    install_command = build_cuda_runtime_install_command(request, source, python_executable)
     diagnostics = BoundedLineBuffer(max_lines=200)
     reporter = _InstallerStatusReporter(request, source, diagnostics, emit_event)
 
@@ -207,21 +199,32 @@ def ensure_cuda_runtime_installed(
         raise CudaRuntimeInstallCanceledError("Installation canceled before launch.")
 
     if request.packages:
-        _run_install_command(
-            install_command=install_command,
-            reporter=reporter,
-            diagnostics=diagnostics,
-            cancel_event=cancel_event,
-        )
+        temp_target = install_target.with_name(f"{install_target.name}.partial")
+        _prepare_cuda_temp_target(temp_target)
+        try:
+            temp_request = CudaRuntimeInstallRequest(
+                packages=request.packages,
+                install_target=str(temp_target),
+            )
+            install_command = build_cuda_runtime_install_command(temp_request, source, python_executable)
+            _run_install_command(
+                install_command=install_command,
+                reporter=reporter,
+                diagnostics=diagnostics,
+                cancel_event=cancel_event,
+            )
+            if cancel_event.is_set():
+                raise CudaRuntimeInstallCanceledError("Installation canceled after download.")
+            _validate_cuda_runtime_target(temp_target)
+            _replace_cuda_runtime_target(temp_target, install_target)
+        except Exception:
+            if temp_target.exists():
+                shutil.rmtree(temp_target, ignore_errors=True)
+            raise
     else:
         logger.info("CUDA installer subsystem detected an empty package set; validating existing runtime only")
 
-    missing_packages = get_missing_windows_cuda_runtime_packages()
-    if missing_packages:
-        raise RuntimeError(
-            "GPU runtime installation finished, but required CUDA libraries are still missing:\n"
-            + "\n".join(missing_packages)
-        )
+    _validate_cuda_runtime_target(install_target)
 
     reporter.emit("GPU runtime installed.", force=True)
     emit_event(build_finished_event())
@@ -240,6 +243,40 @@ def build_cuda_runtime_failure_event(exc: BaseException, diagnostics_text: str =
     else:
         diagnostics = exc_text
     return build_failed_event("Failed to install GPU runtime.", diagnostics)
+
+
+def _prepare_cuda_temp_target(temp_target: Path) -> None:
+    if temp_target.exists():
+        shutil.rmtree(temp_target)
+    temp_target.mkdir(parents=True, exist_ok=True)
+
+
+def _replace_cuda_runtime_target(temp_target: Path, install_target: Path) -> None:
+    backup_target = install_target.with_name(f"{install_target.name}.previous")
+    if backup_target.exists():
+        shutil.rmtree(backup_target)
+
+    if install_target.exists():
+        install_target.replace(backup_target)
+
+    try:
+        temp_target.replace(install_target)
+    except Exception:
+        if backup_target.exists() and not install_target.exists():
+            backup_target.replace(install_target)
+        raise
+
+    if backup_target.exists():
+        shutil.rmtree(backup_target, ignore_errors=True)
+
+
+def _validate_cuda_runtime_target(target: Path) -> None:
+    missing_packages = get_missing_windows_cuda_runtime_packages([target])
+    if missing_packages:
+        raise RuntimeError(
+            "GPU runtime installation finished, but required CUDA libraries are still missing:\n"
+            + "\n".join(missing_packages)
+        )
 
 
 def _run_install_command(

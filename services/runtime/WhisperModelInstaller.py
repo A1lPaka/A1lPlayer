@@ -32,7 +32,17 @@ class WhisperModelInstallCanceledError(RuntimeError):
 class WhisperModelInstallSource:
     mode: str
     repo_id: str
+    revision: str
     location: str
+
+
+WHISPER_MODEL_REVISIONS = {
+    "tiny": "d90ca5f",
+    "base": "ebe41f7",
+    "small": "536b066",
+    "medium": "08e178d",
+    "large-v3": "edaa852",
+}
 
 
 def resolve_whisper_model_install_target(model_size: str) -> Path:
@@ -44,10 +54,12 @@ def resolve_whisper_model_install_target(model_size: str) -> Path:
 def resolve_whisper_model_install_source(model_size: str) -> WhisperModelInstallSource:
     normalized = normalize_whisper_model_size(model_size)
     repo_id = f"Systran/faster-whisper-{normalized}"
+    revision = WHISPER_MODEL_REVISIONS.get(normalized, "main")
     return WhisperModelInstallSource(
         mode="huggingface-snapshot",
         repo_id=repo_id,
-        location=f"https://huggingface.co/{repo_id}",
+        revision=revision,
+        location=f"https://huggingface.co/{repo_id}/tree/{revision}",
     )
 
 
@@ -84,7 +96,7 @@ def ensure_whisper_model_installed(
     temp_target.mkdir(parents=True, exist_ok=True)
 
     try:
-        _download_snapshot(source.repo_id, temp_target)
+        _download_snapshot(source.repo_id, source.revision, temp_target)
         if cancel_event.is_set():
             raise WhisperModelInstallCanceledError("Installation canceled after download.")
         if not is_valid_whisper_model_dir(temp_target):
@@ -115,7 +127,7 @@ def build_whisper_model_failure_event(exc: BaseException) -> dict:
     )
 
 
-def _download_snapshot(repo_id: str, target: Path) -> None:
+def _download_snapshot(repo_id: str, revision: str, target: Path) -> None:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
@@ -125,6 +137,7 @@ def _download_snapshot(repo_id: str, target: Path) -> None:
 
     snapshot_download(
         repo_id=repo_id,
+        revision=revision,
         local_dir=str(target),
         local_dir_use_symlinks=False,
     )
@@ -142,6 +155,7 @@ def _emit_status(
             f"Model: {normalize_whisper_model_size(request.model_size)}",
             f"Install source: {source.mode}",
             f"Source location: {source.location}",
+            f"Source revision: {source.revision}",
             f"Install target: {request.install_target}",
         ]
     )

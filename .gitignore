@@ -10,10 +10,8 @@ Plan.txt
 # Local experiments and sample media
 fw_test.py
 assets/svg_minify.py
-assets/test.mp4
-assets/test2.mp4
-assets/test3.mp4
-assets/test3.srt
+assets/*.mp4
+assets/*.srt
 
 # Build and release artifacts
 .build/
@@ -23,5 +21,8 @@ release/
 
 # Downloaded/bundled third-party runtime payloads
 vendor/runtime/
+runtime/components/*
+!runtime/components/.gitkeep
+runtime/huggingface/
 runtime/models/*
 !runtime/models/.gitkeep
