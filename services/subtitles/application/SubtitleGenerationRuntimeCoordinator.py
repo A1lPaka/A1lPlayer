@@ -19,7 +19,12 @@ from services.subtitles.state.SubtitleShutdownCoordinator import (
     SubtitleShutdownCoordinator,
     SubtitleShutdownDecision,
 )
-from services.subtitles.application.SubtitleTaskControl import CudaRuntimeTaskControl, SubtitleTaskControl, SubtitleWorkerTaskControl
+from services.subtitles.application.SubtitleTaskControl import (
+    CudaRuntimeTaskControl,
+    SubtitleTaskControl,
+    SubtitleWorkerTaskControl,
+    WhisperModelTaskControl,
+)
 from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 
 
@@ -37,6 +42,7 @@ class SubtitleGenerationRuntimeCoordinator:
         shutdown: SubtitleShutdownCoordinator,
         audio_probe_flow,
         cuda_runtime_flow,
+        whisper_model_flow,
         subtitle_job_runner: SubtitleGenerationJobRunner,
         assert_pipeline_thread: Callable[[], None],
         on_shutdown_finished: Callable[[], None],
@@ -48,6 +54,7 @@ class SubtitleGenerationRuntimeCoordinator:
         self._shutdown = shutdown
         self._audio_probe_flow = audio_probe_flow
         self._cuda_runtime_flow = cuda_runtime_flow
+        self._whisper_model_flow = whisper_model_flow
         self._subtitle_job_runner = subtitle_job_runner
         self._assert_pipeline_thread = assert_pipeline_thread
         self._on_shutdown_finished = on_shutdown_finished
@@ -138,7 +145,7 @@ class SubtitleGenerationRuntimeCoordinator:
             )
             return
 
-        if run.task in (SubtitlePipelineTask.NONE, SubtitlePipelineTask.CUDA_PROMPT):
+        if run.task in (SubtitlePipelineTask.NONE, SubtitlePipelineTask.CUDA_PROMPT, SubtitlePipelineTask.MODEL_PROMPT):
             logger.debug("Active task stop ignored because no pipeline task is active | force=%s", force)
             return
 
@@ -345,11 +352,16 @@ class SubtitleGenerationRuntimeCoordinator:
     def _cuda_runtime_task_control(self, run: SubtitlePipelineRun) -> SubtitleTaskControl:
         return CudaRuntimeTaskControl(run, self._cuda_runtime_flow)
 
+    def _whisper_model_task_control(self, run: SubtitlePipelineRun) -> SubtitleTaskControl:
+        return WhisperModelTaskControl(run, self._whisper_model_flow)
+
     def _task_control_for_run(self, run: SubtitlePipelineRun) -> SubtitleTaskControl | None:
         if run.task == SubtitlePipelineTask.SUBTITLE_GENERATION:
             return self._subtitle_worker_task_control(run)
         if run.task == SubtitlePipelineTask.CUDA_INSTALL:
             return self._cuda_runtime_task_control(run)
+        if run.task == SubtitlePipelineTask.MODEL_INSTALL:
+            return self._whisper_model_task_control(run)
         return None
 
     def _background_task_is_active(self) -> bool:
@@ -365,6 +377,8 @@ class SubtitleGenerationRuntimeCoordinator:
             self._ui.show_subtitle_cancel_pending()
         elif task == SubtitlePipelineTask.CUDA_INSTALL:
             self._ui.show_cuda_install_cancel_pending()
+        elif task == SubtitlePipelineTask.MODEL_INSTALL:
+            self._ui.show_model_install_cancel_pending()
 
     def _clear_subtitle_runtime(self, run: SubtitlePipelineRun) -> None:
         self._assert_pipeline_thread()

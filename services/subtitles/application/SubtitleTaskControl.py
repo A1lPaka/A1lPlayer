@@ -3,6 +3,7 @@ from collections.abc import Collection
 from typing import Protocol
 
 from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
+from services.subtitles.workers.SubtitleWhisperModelFlow import SubtitleWhisperModelFlow
 from services.subtitles.state.SubtitlePipelineState import SubtitlePipelineRun
 
 
@@ -56,3 +57,15 @@ class CudaRuntimeTaskControl:
 
     def is_active(self) -> bool:
         return self._cuda_runtime_flow.is_active() or self._run.keeps_shutdown_pending()
+
+
+class WhisperModelTaskControl:
+    def __init__(self, run: SubtitlePipelineRun, whisper_model_flow: SubtitleWhisperModelFlow):
+        self._run = run
+        self._whisper_model_flow = whisper_model_flow
+
+    def request_stop(self, *, force: bool) -> bool:
+        return self._whisper_model_flow.request_stop(force=force)
+
+    def is_active(self) -> bool:
+        return self._whisper_model_flow.is_active() or self._run.keeps_shutdown_pending()

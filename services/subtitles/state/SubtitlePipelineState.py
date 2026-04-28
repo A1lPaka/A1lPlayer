@@ -47,6 +47,8 @@ class SubtitlePipelineTask(Enum):
     NONE = auto()
     CUDA_PROMPT = auto()
     CUDA_INSTALL = auto()
+    MODEL_PROMPT = auto()
+    MODEL_INSTALL = auto()
     SUBTITLE_GENERATION = auto()
 
 
@@ -77,7 +79,7 @@ class SubtitlePipelineRun:
         )
 
     def keeps_shutdown_pending(self) -> bool:
-        if self.task == SubtitlePipelineTask.CUDA_PROMPT:
+        if self.task in (SubtitlePipelineTask.CUDA_PROMPT, SubtitlePipelineTask.MODEL_PROMPT):
             return self.phase == SubtitlePipelinePhase.STARTING
 
         return self.task != SubtitlePipelineTask.NONE and self.phase in (

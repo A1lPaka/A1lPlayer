@@ -64,7 +64,7 @@ def test_installer_specific_finished_event_payload_is_unchanged():
 
 def test_runtime_request_json_roundtrips_are_unchanged():
     from services.runtime.RuntimeHelperProtocol import SubtitleGenerationRequest
-    from services.runtime.RuntimeInstallerProtocol import CudaRuntimeInstallRequest
+    from services.runtime.RuntimeInstallerProtocol import CudaRuntimeInstallRequest, WhisperModelInstallRequest
 
     subtitle_request = SubtitleGenerationRequest(
         media_path="C:/media/movie.mkv",
@@ -105,3 +105,14 @@ def test_runtime_request_json_roundtrips_are_unchanged():
         "install_target": "C:/tmp/runtime",
     }
     assert CudaRuntimeInstallRequest.from_json(installer_request.to_json()) == installer_request
+
+    model_request = WhisperModelInstallRequest(
+        model_size="large-v3",
+        install_target="C:/tmp/runtime/models/faster-whisper-large-v3",
+    )
+    model_payload = json.loads(model_request.to_json())
+    assert model_payload == {
+        "model_size": "large-v3",
+        "install_target": "C:/tmp/runtime/models/faster-whisper-large-v3",
+    }
+    assert WhisperModelInstallRequest.from_json(model_request.to_json()) == model_request

@@ -13,6 +13,7 @@ from services.runtime.RuntimeExecution import (
 
 
 INSTALLER_CUDA_RUNTIME = "cuda-runtime"
+INSTALLER_WHISPER_MODEL = "whisper-model"
 
 EVENT_STATUS = "status"
 
@@ -31,6 +32,23 @@ class CudaRuntimeInstallRequest:
         packages = tuple(str(item).strip() for item in data.get("packages") or [] if str(item).strip())
         return cls(
             packages=packages,
+            install_target=str(data["install_target"]),
+        )
+
+
+@dataclass(frozen=True)
+class WhisperModelInstallRequest:
+    model_size: str
+    install_target: str
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, payload: str) -> "WhisperModelInstallRequest":
+        data = json.loads(payload)
+        return cls(
+            model_size=str(data["model_size"]).strip(),
             install_target=str(data["install_target"]),
         )
 

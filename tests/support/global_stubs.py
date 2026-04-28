@@ -184,8 +184,18 @@ def _install_message_box_stub():
     message_box.subtitle_generation_canceled_calls = 0
     message_box.cuda_runtime_install_failures = []
     message_box.cuda_runtime_install_canceled_calls = 0
+    message_box.whisper_model_install_canceled_calls = 0
 
     def prompt_cuda_runtime_choice(_parent, _packages):
+        return "cancel"
+
+    def prompt_whisper_model_install_choice(_parent, _model_size):
+        return "cancel"
+
+    def prompt_whisper_model_fallback_choice(_parent, _requested_model_size, _fallback_model_size):
+        return "cancel"
+
+    def prompt_whisper_model_install_retry(_parent, _model_size, _error_text):
         return "cancel"
 
     def show_subtitle_generation_already_running(_parent):
@@ -239,6 +249,9 @@ def _install_message_box_stub():
     def show_cuda_runtime_install_canceled(_parent):
         message_box.cuda_runtime_install_canceled_calls += 1
 
+    def show_whisper_model_install_canceled(_parent):
+        message_box.whisper_model_install_canceled_calls += 1
+
     def prompt_force_close_background_tasks(_parent, on_wait, on_force_close):
         class _Dialog(QObject):
             destroyed = Signal(object)
@@ -267,6 +280,9 @@ def _install_message_box_stub():
         return None
 
     message_box.prompt_cuda_runtime_choice = prompt_cuda_runtime_choice
+    message_box.prompt_whisper_model_install_choice = prompt_whisper_model_install_choice
+    message_box.prompt_whisper_model_fallback_choice = prompt_whisper_model_fallback_choice
+    message_box.prompt_whisper_model_install_retry = prompt_whisper_model_install_retry
     message_box.show_subtitle_generation_already_running = show_subtitle_generation_already_running
     message_box.show_audio_streams_still_loading = show_audio_streams_still_loading
     message_box.show_audio_stream_inspection_failed = show_audio_stream_inspection_failed
@@ -284,6 +300,7 @@ def _install_message_box_stub():
     message_box.show_subtitle_generation_canceled = show_subtitle_generation_canceled
     message_box.show_cuda_runtime_install_failed = show_cuda_runtime_install_failed
     message_box.show_cuda_runtime_install_canceled = show_cuda_runtime_install_canceled
+    message_box.show_whisper_model_install_canceled = show_whisper_model_install_canceled
     message_box.prompt_force_close_background_tasks = prompt_force_close_background_tasks
     message_box.show_force_close_still_running = show_force_close_still_running
     message_box.confirm_resume_playback = confirm_resume_playback
@@ -309,6 +326,7 @@ def _install_subtitle_service_stubs():
                 self.detail_updates = []
                 self.cancel_pending_calls = 0
                 self.cuda_cancel_pending_calls = 0
+                self.model_cancel_pending_calls = 0
                 self.closed_generation_dialogs = 0
                 self.closed_progress_dialogs = 0
                 self.audio_tracks_loading_calls = 0
@@ -357,6 +375,9 @@ def _install_subtitle_service_stubs():
             def open_cuda_install_progress(self, missing_packages, on_cancel):
                 self.progress_requests.append({"options": list(missing_packages), "on_cancel": on_cancel})
 
+            def open_model_install_progress(self, model_size, on_cancel):
+                self.progress_requests.append({"options": model_size, "on_cancel": on_cancel})
+
             def update_progress_status(self, text):
                 self.status_updates.append(text)
 
@@ -378,6 +399,9 @@ def _install_subtitle_service_stubs():
 
             def show_cuda_install_cancel_pending(self):
                 self.cuda_cancel_pending_calls += 1
+
+            def show_model_install_cancel_pending(self):
+                self.model_cancel_pending_calls += 1
 
         ui_module.SubtitleGenerationUiCoordinator = SubtitleGenerationUiCoordinator
         sys.modules["services.subtitles.SubtitleGenerationUiCoordinator"] = ui_module

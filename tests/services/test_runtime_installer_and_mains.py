@@ -13,6 +13,7 @@ from services.runtime.RuntimeHelperProtocol import SubtitleGenerationRequest
 from services.runtime.RuntimeInstallerProtocol import (
     CudaRuntimeInstallRequest,
     EVENT_STATUS,
+    WhisperModelInstallRequest,
 )
 from services.subtitles.domain.SubtitleTypes import (
     SubtitleGenerationCanceledError,
@@ -322,4 +323,50 @@ def test_runtime_installer_main_success_failed_and_canceled_events(monkeypatch, 
     monkeypatch.setattr(installer_main.sys, "stdout", stdout)
 
     assert installer_main.run_cuda_runtime_installer() == 2
+    assert _json_events(stdout)[-1]["event"] == EVENT_CANCELED
+
+
+def test_whisper_model_installer_main_success_failed_and_canceled_events(monkeypatch, workspace_tmp_path):
+    request = WhisperModelInstallRequest(
+        model_size="small",
+        install_target=str(workspace_tmp_path / "runtime" / "models" / "faster-whisper-small"),
+    )
+    monkeypatch.setattr(installer_main, "_install_signal_handlers", lambda *_args, **_kwargs: None)
+
+    def succeed(request, emit_event, cancel_event):
+        emit_event({"event": EVENT_STATUS, "status": "Installing", "details": request.install_target})
+        emit_event({"event": EVENT_FINISHED})
+
+    stdout = StringIO()
+    monkeypatch.setattr(installer_main, "ensure_whisper_model_installed", succeed)
+    monkeypatch.setattr(installer_main.sys, "stdin", StringIO(request.to_json()))
+    monkeypatch.setattr(installer_main.sys, "stdout", stdout)
+
+    assert installer_main.run_whisper_model_installer() == 0
+    events = _json_events(stdout)
+    assert events[0]["event"] == EVENT_STATUS
+    assert events[-1]["event"] == EVENT_FINISHED
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("model install failed")
+
+    stdout = StringIO()
+    monkeypatch.setattr(installer_main, "ensure_whisper_model_installed", fail)
+    monkeypatch.setattr(installer_main.sys, "stdin", StringIO(request.to_json()))
+    monkeypatch.setattr(installer_main.sys, "stdout", stdout)
+
+    assert installer_main.run_whisper_model_installer() == 1
+    failed = _json_events(stdout)[-1]
+    assert failed["event"] == EVENT_FAILED
+    assert "model install failed" in failed["diagnostics"]
+
+    def cancel(*_args, **_kwargs):
+        raise installer_main.WhisperModelInstallCanceledError("stop")
+
+    stdout = StringIO()
+    monkeypatch.setattr(installer_main, "ensure_whisper_model_installed", cancel)
+    monkeypatch.setattr(installer_main.sys, "stdin", StringIO(request.to_json()))
+    monkeypatch.setattr(installer_main.sys, "stdout", stdout)
+
+    assert installer_main.run_whisper_model_installer() == 2
     assert _json_events(stdout)[-1]["event"] == EVENT_CANCELED

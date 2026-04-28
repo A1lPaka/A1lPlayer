@@ -11,10 +11,17 @@ from services.runtime.CudaRuntimeInstaller import (
     build_cuda_runtime_failure_event,
     ensure_cuda_runtime_installed,
 )
+from services.runtime.WhisperModelInstaller import (
+    WhisperModelInstallCanceledError,
+    build_whisper_model_failure_event,
+    ensure_whisper_model_installed,
+)
 from services.runtime.RuntimeExecution import get_runtime_mode_label
 from services.runtime.RuntimeInstallerProtocol import (
     CudaRuntimeInstallRequest,
     INSTALLER_CUDA_RUNTIME,
+    INSTALLER_WHISPER_MODEL,
+    WhisperModelInstallRequest,
     build_canceled_event,
 )
 from utils.LoggingSetup import configure_logging
@@ -50,6 +57,8 @@ def try_run_runtime_installer(argv: list[str] | None = None) -> int | None:
 
     if installer_name == INSTALLER_CUDA_RUNTIME:
         return run_cuda_runtime_installer()
+    if installer_name == INSTALLER_WHISPER_MODEL:
+        return run_whisper_model_installer()
 
     logger.error("Unknown runtime installer requested | installer=%s", installer_name)
     sys.stderr.write(f"Unknown installer: {installer_name}\n")
@@ -59,7 +68,7 @@ def try_run_runtime_installer(argv: list[str] | None = None) -> int | None:
 
 def run_cuda_runtime_installer() -> int:
     cancel_event = threading.Event()
-    _install_signal_handlers(cancel_event)
+    _install_signal_handlers(cancel_event, CudaRuntimeInstallCanceledError)
 
     request: CudaRuntimeInstallRequest | None = None
     try:
@@ -84,6 +93,33 @@ def run_cuda_runtime_installer() -> int:
         return 1
 
 
+def run_whisper_model_installer() -> int:
+    cancel_event = threading.Event()
+    _install_signal_handlers(cancel_event, WhisperModelInstallCanceledError)
+
+    request: WhisperModelInstallRequest | None = None
+    try:
+        request = WhisperModelInstallRequest.from_json(_read_stdin_payload())
+        ensure_whisper_model_installed(
+            request=request,
+            emit_event=_emit_event,
+            cancel_event=cancel_event,
+        )
+        return 0
+    except (WhisperModelInstallCanceledError, KeyboardInterrupt):
+        logger.info("Whisper model installer subsystem canceled")
+        _emit_event(build_canceled_event())
+        return 2
+    except Exception as exc:
+        logger.exception(
+            "Whisper model installer subsystem failed | model=%s | target=%s",
+            request.model_size if request is not None else "<unknown>",
+            request.install_target if request is not None else "<unknown>",
+        )
+        _emit_event(build_whisper_model_failure_event(exc))
+        return 1
+
+
 def _emit_event(event: dict):
     sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -96,11 +132,11 @@ def _read_stdin_payload() -> str:
     return payload
 
 
-def _install_signal_handlers(cancel_event: threading.Event):
+def _install_signal_handlers(cancel_event: threading.Event, canceled_error_type=RuntimeError):
     def _handle_signal(signum, _frame):
-        logger.warning("CUDA installer subsystem received termination signal | signal=%s", signum)
+        logger.warning("Runtime installer subsystem received termination signal | signal=%s", signum)
         cancel_event.set()
-        raise CudaRuntimeInstallCanceledError(f"Interrupted by signal {signum}")
+        raise canceled_error_type(f"Interrupted by signal {signum}")
 
     for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
         signal_value = getattr(signal, signal_name, None)

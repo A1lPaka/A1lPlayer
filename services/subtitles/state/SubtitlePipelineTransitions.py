@@ -20,9 +20,21 @@ class CudaInstallCompletionDecision(Enum):
     FAIL_MISSING_OPTIONS = auto()
 
 
+class ModelInstallCompletionDecision(Enum):
+    RELAUNCH_SUBTITLE_GENERATION = auto()
+    COMPLETE_AS_CANCELED = auto()
+    FAIL_MISSING_OPTIONS = auto()
+
+
 @dataclass(frozen=True)
 class CudaInstallCompletionPlan:
     decision: CudaInstallCompletionDecision
+    run: SubtitlePipelineRun
+
+
+@dataclass(frozen=True)
+class ModelInstallCompletionPlan:
+    decision: ModelInstallCompletionDecision
     run: SubtitlePipelineRun
 
 
@@ -100,11 +112,24 @@ class SubtitlePipelineTransitions:
         if close_dialog:
             self.close_dialog_for_background_task("generation dialog replaced by CUDA runtime progress")
 
+    def start_model_install(self, run: SubtitlePipelineRun, *, close_dialog: bool) -> None:
+        self._pipeline_state.set_run_phase(run, SubtitlePipelinePhase.RUNNING, "start Whisper model install")
+        run.task = SubtitlePipelineTask.MODEL_INSTALL
+        if close_dialog:
+            self.close_dialog_for_background_task("generation dialog replaced by Whisper model progress")
+
     def enter_cuda_runtime_prompt(self, run: SubtitlePipelineRun) -> None:
         run.task = SubtitlePipelineTask.CUDA_PROMPT
 
     def leave_cuda_runtime_prompt(self, run: SubtitlePipelineRun) -> None:
         if self.active_run_for_id(run.run_id) is run and run.task == SubtitlePipelineTask.CUDA_PROMPT:
+            run.task = SubtitlePipelineTask.NONE
+
+    def enter_model_prompt(self, run: SubtitlePipelineRun) -> None:
+        run.task = SubtitlePipelineTask.MODEL_PROMPT
+
+    def leave_model_prompt(self, run: SubtitlePipelineRun) -> None:
+        if self.active_run_for_id(run.run_id) is run and run.task == SubtitlePipelineTask.MODEL_PROMPT:
             run.task = SubtitlePipelineTask.NONE
 
     def mark_run_canceling(self, run: SubtitlePipelineRun) -> None:
@@ -150,3 +175,13 @@ class SubtitlePipelineTransitions:
         if run.subtitle_options is None:
             return CudaInstallCompletionPlan(CudaInstallCompletionDecision.FAIL_MISSING_OPTIONS, run)
         return CudaInstallCompletionPlan(CudaInstallCompletionDecision.RELAUNCH_SUBTITLE_GENERATION, run)
+
+    def plan_model_install_completion(self, run_id: int) -> ModelInstallCompletionPlan | None:
+        run = self.active_run_for_id(run_id)
+        if run is None:
+            return None
+        if run.phase == SubtitlePipelinePhase.CANCELING or self._pipeline_state.is_shutdown_in_progress():
+            return ModelInstallCompletionPlan(ModelInstallCompletionDecision.COMPLETE_AS_CANCELED, run)
+        if run.subtitle_options is None:
+            return ModelInstallCompletionPlan(ModelInstallCompletionDecision.FAIL_MISSING_OPTIONS, run)
+        return ModelInstallCompletionPlan(ModelInstallCompletionDecision.RELAUNCH_SUBTITLE_GENERATION, run)

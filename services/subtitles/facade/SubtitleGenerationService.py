@@ -11,6 +11,7 @@ from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import S
 from services.subtitles.presentation.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
 from services.subtitles.presentation.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
 from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
+from services.subtitles.workers.SubtitleWhisperModelFlow import SubtitleWhisperModelFlow
 from services.subtitles.workers.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
 from services.subtitles.application.SubtitleGenerationCompletionFlow import SubtitleGenerationCompletionFlow
 from services.subtitles.workers.SubtitleGenerationJobRunner import SubtitleGenerationJobRunner
@@ -76,6 +77,7 @@ class SubtitleGenerationService(QObject):
         )
         self._audio_probe_flow.thread_finished.connect(self._complete_shutdown_if_possible)
         self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
+        self._whisper_model_flow = SubtitleWhisperModelFlow(parent)
         self._completion_flow = SubtitleGenerationCompletionFlow(
             store=self._store,
             media_library=self._media_library,
@@ -84,6 +86,7 @@ class SubtitleGenerationService(QObject):
             outcome_presenter=self._outcome_presenter,
             complete_run=self._dispatch_complete_run,
             launch_subtitle_generation=self._dispatch_launch_subtitle_generation,
+            retry_model_install=lambda run, model_size: self._start_flow.retry_whisper_model_install(run, model_size),
         )
         self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
         self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
@@ -91,6 +94,12 @@ class SubtitleGenerationService(QObject):
         self._cuda_runtime_flow.failed.connect(self._completion_flow.handle_cuda_runtime_install_failed)
         self._cuda_runtime_flow.canceled.connect(self._completion_flow.handle_cuda_runtime_install_canceled)
         self._cuda_runtime_flow.thread_finished.connect(self._on_cuda_runtime_flow_thread_finished)
+        self._whisper_model_flow.status_changed.connect(self._on_worker_status_changed)
+        self._whisper_model_flow.details_changed.connect(self._on_worker_details_changed)
+        self._whisper_model_flow.finished.connect(self._completion_flow.handle_model_install_finished)
+        self._whisper_model_flow.failed.connect(self._completion_flow.handle_model_install_failed)
+        self._whisper_model_flow.canceled.connect(self._completion_flow.handle_model_install_canceled)
+        self._whisper_model_flow.thread_finished.connect(self._on_whisper_model_flow_thread_finished)
         self._subtitle_job_runner = SubtitleGenerationJobRunner(
             parent,
             can_start_worker=self._can_start_subtitle_worker,
@@ -112,6 +121,7 @@ class SubtitleGenerationService(QObject):
             shutdown=self._shutdown,
             audio_probe_flow=self._audio_probe_flow,
             cuda_runtime_flow=self._cuda_runtime_flow,
+            whisper_model_flow=self._whisper_model_flow,
             subtitle_job_runner=self._subtitle_job_runner,
             assert_pipeline_thread=self._assert_pipeline_thread,
             on_shutdown_finished=self.shutdown_finished.emit,
@@ -126,6 +136,7 @@ class SubtitleGenerationService(QObject):
             pipeline_state=self._pipeline_state,
             transitions=self._transitions,
             cuda_runtime_flow=self._cuda_runtime_flow,
+            whisper_model_flow=self._whisper_model_flow,
             outcome_presenter=self._outcome_presenter,
             assert_pipeline_thread=self._assert_pipeline_thread,
             log_dialog_confirm_timing=self._log_dialog_confirm_timing,
@@ -253,6 +264,9 @@ class SubtitleGenerationService(QObject):
 
     def _on_cuda_runtime_flow_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.CUDA_INSTALL)
+
+    def _on_whisper_model_flow_thread_finished(self, run_id: int):
+        self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.MODEL_INSTALL)
 
     def _on_subtitle_worker_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
