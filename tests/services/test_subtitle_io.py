@@ -170,12 +170,13 @@ def test_subtitle_maker_load_model_passes_model_device_and_compute_type(monkeypa
     fake_module = SimpleNamespace(WhisperModel=_WhisperModel)
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
     monkeypatch.setattr("services.subtitles.io.SubtitleMaker.configure_windows_nvidia_runtime_paths", lambda: None)
+    monkeypatch.setattr("services.subtitles.io.SubtitleMaker.resolve_whisper_model_reference", lambda model: f"C:/runtime/{model}")
     monkeypatch.setattr(SubtitleMaker, "_detect_device", lambda self: "cuda")
 
     model = SubtitleMaker(model_size="medium", device="cuda").load_model()
 
     assert isinstance(model, _WhisperModel)
-    assert calls == [("medium", "cuda", "float16")]
+    assert calls == [("C:/runtime/medium", "cuda", "float16")]
 
 
 def test_subtitle_maker_extracts_selected_audio_stream_and_transcribes_extracted_file(monkeypatch):
