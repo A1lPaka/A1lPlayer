@@ -1,14 +1,16 @@
 import logging
+import os
 import sys
 from functools import partial
 from services.runtime.RuntimeInstallerMain import try_run_runtime_installer
 from services.runtime.RuntimeHelperMain import try_run_runtime_helper
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 
 from services.app.AppCloseCoordinator import AppCloseCoordinator
 from services.media.MediaLibraryService import MediaLibraryService
+from services.media.MediaPathService import MEDIA_EXTENSIONS
 from services.app.MediaSettingsStore import MediaSettingsStore
 from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
 from controllers.MenuBar import MenuBarController
@@ -301,10 +303,27 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow(settings=settings)
     window.show()
+    startup_media_paths = _startup_media_paths_from_args(args)
+    if startup_media_paths:
+        QTimer.singleShot(0, lambda paths=startup_media_paths: window.media_library.open_media_paths(paths))
 
     exit_code = app.exec()
     logger.info("Application event loop finished | exit_code=%s", exit_code)
     return exit_code
+
+
+def _startup_media_paths_from_args(args: list[str]) -> list[str]:
+    media_paths: list[str] = []
+    for raw_arg in args:
+        candidate = str(raw_arg or "").strip()
+        if not candidate or candidate.startswith("--"):
+            continue
+        _, extension = os.path.splitext(candidate)
+        if extension.lower() not in MEDIA_EXTENSIONS:
+            continue
+        if os.path.isfile(candidate):
+            media_paths.append(candidate)
+    return media_paths
 
 
 if __name__ == "__main__":

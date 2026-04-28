@@ -34,3 +34,21 @@ def test_import_mainwindow_has_no_runtime_side_effects(monkeypatch):
     assert module.main is not None
     assert installer_calls == []
     assert helper_calls == []
+
+
+def test_startup_media_paths_from_args_filters_supported_files(workspace_tmp_path):
+    import MainWindow
+
+    media_path = workspace_tmp_path / "movie.mkv"
+    ignored_text = workspace_tmp_path / "notes.txt"
+    media_path.write_text("media", encoding="utf-8")
+    ignored_text.write_text("notes", encoding="utf-8")
+
+    assert MainWindow._startup_media_paths_from_args(
+        [
+            "--installer",
+            "missing.mp4",
+            str(ignored_text),
+            str(media_path),
+        ]
+    ) == [str(media_path)]
