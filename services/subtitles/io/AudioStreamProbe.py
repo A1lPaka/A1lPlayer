@@ -3,6 +3,7 @@ import logging
 import subprocess
 
 from services.subtitles.domain.SubtitleTypes import AudioStreamInfo
+from utils.runtime_assets import resolve_runtime_executable
 
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ FFPROBE_AUDIO_STREAM_TIMEOUT_SECONDS = 15.0
 
 def build_audio_stream_probe_command(media_path: str) -> list[str]:
     return [
-        "ffprobe",
+        resolve_runtime_executable("ffprobe"),
         "-v",
         "error",
         "-select_streams",

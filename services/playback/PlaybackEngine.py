@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
+from utils.runtime_assets import configure_bundled_runtime_paths
+
+configure_bundled_runtime_paths()
+
 try:
     import vlc
 except (ImportError, OSError) as exc:

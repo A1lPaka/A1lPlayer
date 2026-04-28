@@ -19,6 +19,7 @@ from services.runtime.RuntimeInstallerProtocol import (
 )
 from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
 from services.subtitles.domain.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
+from utils.runtime_assets import managed_cuda_runtime_root
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,10 @@ class _InstallerStatusReporter:
         self._emit_event(build_status_event(status, "\n".join(details_parts)))
 
 def resolve_cuda_runtime_install_target() -> Path:
-    target = Path(site.getusersitepackages())
+    if is_frozen_runtime():
+        target = managed_cuda_runtime_root()
+    else:
+        target = Path(site.getusersitepackages())
     target.mkdir(parents=True, exist_ok=True)
     return target
 

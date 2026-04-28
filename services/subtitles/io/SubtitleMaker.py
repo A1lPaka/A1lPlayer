@@ -21,6 +21,7 @@ from services.subtitles.domain.SubtitleTypes import (
     SubtitleSegment,
 )
 from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
+from utils.runtime_assets import resolve_runtime_executable, resolve_whisper_model_reference
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,8 @@ class SubtitleMaker(SubprocessLifecycleMixin):
             compute_type,
         )
         model_init_started_at = time.perf_counter()
-        self._model = WhisperModel(self.model_size, device=self.device, compute_type=compute_type)
+        model_reference = resolve_whisper_model_reference(self.model_size)
+        self._model = WhisperModel(model_reference, device=self.device, compute_type=compute_type)
         log_timing(
             logger,
             "Subtitle helper timing",
@@ -326,7 +328,7 @@ class SubtitleMaker(SubprocessLifecycleMixin):
         )
 
         command = [
-            "ffmpeg",
+            resolve_runtime_executable("ffmpeg"),
             "-y",
             "-i",
             str(media_path),

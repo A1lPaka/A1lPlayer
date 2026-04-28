@@ -1,10 +1,25 @@
+# Python caches
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# Local OS/editor noise
+desktop.ini
+Plan.txt
+
+# Local experiments and sample media
+fw_test.py
+assets/svg_minify.py
 assets/test.mp4
 assets/test2.mp4
 assets/test3.mp4
-assets/svg_minify.py
-desktop.ini
-Plan.txt
-fw_test.py
 assets/test3.srt
+
+# Build and release artifacts
+.build/
+build/
+dist/
+release/
+
+# Downloaded/bundled third-party runtime payloads
+vendor/runtime/

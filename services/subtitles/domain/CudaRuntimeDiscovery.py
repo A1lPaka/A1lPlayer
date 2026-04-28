@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import site
 
+from utils.runtime_assets import managed_cuda_runtime_root
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,8 @@ def _get_site_package_roots() -> list[Path]:
         candidate_roots.extend(Path(path) for path in site.getsitepackages())
     except (AttributeError, OSError, TypeError):
         logger.debug("Unable to resolve global site-packages paths", exc_info=True)
+
+    candidate_roots.append(managed_cuda_runtime_root())
 
     return candidate_roots
 
