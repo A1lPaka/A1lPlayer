@@ -98,6 +98,8 @@ def resolve_runtime_app_root() -> Path:
 def resolve_cuda_runtime_install_source() -> CudaRuntimeInstallSource:
     app_root = resolve_runtime_app_root()
     configured_wheelhouse = _read_optional_env_path(_CUDA_WHEELHOUSE_ENV)
+    # Optional offline/corporate override. A1lPlayer does not bundle this by
+    # default; normal installs fall back to the pinned online package index.
     wheelhouse_path = configured_wheelhouse or (app_root / _DEFAULT_WHEELHOUSE_RELATIVE_PATH)
     if _is_valid_wheelhouse(wheelhouse_path):
         return CudaRuntimeInstallSource(
