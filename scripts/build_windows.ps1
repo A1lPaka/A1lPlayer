@@ -90,7 +90,7 @@ function Optimize-VlcRuntime {
     Copy-LibVlcRuntime -SourceRoot $PrunedRoot -DestinationRoot $VlcRoot
 }
 
-function Prepare-VlcRuntime {
+function Initialize-VlcRuntime {
     $VlcRoot = Join-Path $VendorRuntime "vlc"
     if (Test-Path -LiteralPath (Join-Path $VlcRoot "libvlc.dll") -PathType Leaf) {
         Optimize-VlcRuntime
@@ -111,7 +111,7 @@ function Prepare-VlcRuntime {
     Copy-LibVlcRuntime -SourceRoot $ExtractedRoot.FullName -DestinationRoot $VlcRoot
 }
 
-function Prepare-FfmpegRuntime {
+function Initialize-FfmpegRuntime {
     $FfmpegRoot = Join-Path $VendorRuntime "ffmpeg"
     if ((Test-Path -LiteralPath (Join-Path $FfmpegRoot "bin\ffmpeg.exe") -PathType Leaf) -and
         (Test-Path -LiteralPath (Join-Path $FfmpegRoot "bin\ffprobe.exe") -PathType Leaf)) {
@@ -138,15 +138,25 @@ function Prepare-FfmpegRuntime {
     Copy-Item -LiteralPath (Join-Path $BinRoot.FullName "ffprobe.exe") -Destination (Join-Path $FfmpegRoot "bin\ffprobe.exe")
 }
 
-function Prepare-SmallModel {
+function Initialize-SmallModel {
     $ModelTarget = Join-Path $VendorRuntime "models\faster-whisper-small"
     if (Test-Path -LiteralPath (Join-Path $ModelTarget "model.bin") -PathType Leaf) {
         return
     }
 
+    $ProjectRuntimeModel = Join-Path $Root "runtime\models\faster-whisper-small"
+    if (Test-Path -LiteralPath (Join-Path $ProjectRuntimeModel "model.bin") -PathType Leaf) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ModelTarget) | Out-Null
+        if (Test-Path -LiteralPath $ModelTarget) {
+            Remove-Item -LiteralPath $ModelTarget -Recurse -Force
+        }
+        Copy-Item -LiteralPath $ProjectRuntimeModel -Destination $ModelTarget -Recurse
+        return
+    }
+
     $CacheRoot = Join-Path $env:USERPROFILE ".cache\huggingface\hub\models--Systran--faster-whisper-small\snapshots"
     if (-not (Test-Path -LiteralPath $CacheRoot -PathType Container)) {
-        throw "faster-whisper small is not in Hugging Face cache. Run the app once with model=small or download the model before building."
+        throw "faster-whisper small was not found in runtime\models or Hugging Face cache. Run the app once with model=small or download the model before building."
     }
 
     $Snapshot = Get-ChildItem -LiteralPath $CacheRoot -Directory |
@@ -162,6 +172,17 @@ function Prepare-SmallModel {
         Remove-Item -LiteralPath $ModelTarget -Recurse -Force
     }
     Copy-Item -LiteralPath $Snapshot.FullName -Destination $ModelTarget -Recurse
+}
+
+function Optimize-BundledWhisperModels {
+    $ModelsRoot = Join-Path $VendorRuntime "models"
+    if (-not (Test-Path -LiteralPath $ModelsRoot -PathType Container)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $ModelsRoot -Directory |
+        Where-Object { $_.Name -ne "faster-whisper-small" } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
 }
 
 function Find-InnoCompiler {
@@ -189,9 +210,10 @@ try {
         py -m pip install -r requirements-build.txt
     }
 
-    Prepare-VlcRuntime
-    Prepare-FfmpegRuntime
-    Prepare-SmallModel
+    Initialize-VlcRuntime
+    Initialize-FfmpegRuntime
+    Initialize-SmallModel
+    Optimize-BundledWhisperModels
 
     Assert-File -Path (Join-Path $VendorRuntime "vlc\libvlc.dll") -Message "Missing vendor\runtime\vlc\libvlc.dll. Rerun with -DownloadRuntime or add portable VLC manually."
     Assert-File -Path (Join-Path $VendorRuntime "ffmpeg\bin\ffmpeg.exe") -Message "Missing vendor\runtime\ffmpeg\bin\ffmpeg.exe. Rerun with -DownloadRuntime or add FFmpeg manually."
