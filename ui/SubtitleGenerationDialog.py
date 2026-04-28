@@ -18,6 +18,8 @@ from models.ThemeColor import ThemeState
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.media.MediaPathService import build_file_dialog_filter
 from utils import Metrics, compact_path_for_display, res_path
+from utils.runtime_assets import WHISPER_MODEL_SIZES, find_installed_whisper_model
+from services.subtitles.domain.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 
 
 class ArrowComboBox(QComboBox):
@@ -70,7 +72,7 @@ class SubtitleGenerationDialog(QWidget):
         ("cpu", "CPU"),
         ("cuda", "CUDA"),
     ]
-    MODEL_OPTIONS = ["tiny", "base", "small", "medium", "large-v3"]
+    MODEL_OPTIONS = list(WHISPER_MODEL_SIZES)
     FORMAT_OPTIONS = ["srt", "vtt"]
 
     def __init__(
@@ -150,12 +152,18 @@ class SubtitleGenerationDialog(QWidget):
         for language_code, language_label in self.AUDIO_LANGUAGE_OPTIONS:
             self.audio_language_combo.addItem(language_label, language_code)
 
+        cuda_installed = not get_missing_windows_cuda_runtime_packages()
         for device_code, device_label in self.DEVICE_OPTIONS:
-            self.device_combo.addItem(device_label, device_code)
+            label = device_label
+            if device_code == "cuda":
+                label = f"CUDA ({'installed' if cuda_installed else 'not installed'})"
+            self.device_combo.addItem(label, device_code)
 
         for model in self.MODEL_OPTIONS:
-            self.model_combo.addItem(model, model)
+            status = "installed" if find_installed_whisper_model(model) is not None else "not installed"
+            self.model_combo.addItem(f"{model} ({status})", model)
         self.model_combo.setCurrentText("small")
+        self._select_model("small")
 
         for subtitle_format in self.FORMAT_OPTIONS:
             self.output_format_combo.addItem(subtitle_format.upper(), subtitle_format)
@@ -199,6 +207,12 @@ class SubtitleGenerationDialog(QWidget):
         for index in range(self.audio_track_combo.count()):
             if self.audio_track_combo.itemData(index) == int(track_id):
                 self.audio_track_combo.setCurrentIndex(index)
+                return
+
+    def _select_model(self, model_size: str):
+        for index in range(self.model_combo.count()):
+            if self.model_combo.itemData(index) == model_size:
+                self.model_combo.setCurrentIndex(index)
                 return
 
     def apply_metrics(self, metrics: Metrics):

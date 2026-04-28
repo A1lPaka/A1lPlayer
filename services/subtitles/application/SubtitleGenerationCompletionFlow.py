@@ -12,7 +12,12 @@ from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import (
 from services.subtitles.state.SubtitlePipelineState import SubtitlePipelinePhase, SubtitlePipelineRun
 from services.subtitles.state.SubtitlePipelineTransitions import (
     CudaInstallCompletionDecision,
+    ModelInstallCompletionDecision,
     SubtitlePipelineTransitions,
+)
+from ui.MessageBoxService import (
+    prompt_whisper_model_install_retry,
+    show_whisper_model_install_canceled,
 )
 
 
@@ -30,6 +35,7 @@ class SubtitleGenerationCompletionFlow:
         outcome_presenter: SubtitleGenerationOutcomePresenter,
         complete_run: Callable[[int, SubtitlePipelinePhase, bool], None],
         launch_subtitle_generation,
+        retry_model_install,
     ):
         self._store = store
         self._media_library = media_library
@@ -38,6 +44,7 @@ class SubtitleGenerationCompletionFlow:
         self._outcome_presenter = outcome_presenter
         self._complete_run = complete_run
         self._launch_subtitle_generation = launch_subtitle_generation
+        self._retry_model_install = retry_model_install
 
     def handle_subtitle_generation_finished(
         self,
@@ -181,6 +188,63 @@ class SubtitleGenerationCompletionFlow:
             return
 
         self._outcome_presenter.show_cuda_runtime_install_canceled()
+
+    def handle_model_install_finished(self, run_id: int):
+        plan = self._transitions.plan_model_install_completion(run_id)
+        if plan is None:
+            logger.debug("Ignoring Whisper model install finished for stale subtitle pipeline run | run_id=%s", run_id)
+            return
+        run = plan.run
+
+        logger.info("Whisper model install flow finished | run_id=%s", run.run_id)
+        self._ui.close_progress_dialog()
+
+        if plan.decision == ModelInstallCompletionDecision.COMPLETE_AS_CANCELED:
+            self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, False)
+            return
+
+        if plan.decision == ModelInstallCompletionDecision.FAIL_MISSING_OPTIONS:
+            self._complete_run(run_id, SubtitlePipelinePhase.FAILED, False)
+            self._outcome_presenter.show_generation_failed(
+                "Whisper model installation finished without subtitle options.",
+            )
+            return
+
+        assert plan.decision == ModelInstallCompletionDecision.RELAUNCH_SUBTITLE_GENERATION
+        self._launch_subtitle_generation(run, run.subtitle_options)
+
+    def handle_model_install_failed(self, run_id: int, error_text: str):
+        run = self._require_active_job(run_id, "Whisper model install failed")
+        if run is None:
+            return
+
+        logger.error("Whisper model install failed | run_id=%s | message=%s", run.run_id, error_text)
+        self._ui.close_progress_dialog()
+
+        if not self._transitions.should_present_terminal_feedback():
+            self._complete_run(run_id, SubtitlePipelinePhase.FAILED, False)
+            return
+
+        model_size = (run.subtitle_options or run.requested_options).model_size
+        choice = prompt_whisper_model_install_retry(self._ui.parent(), model_size, error_text)
+        if choice == "retry":
+            self._retry_model_install(run, model_size)
+            return
+
+        self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, False)
+
+    def handle_model_install_canceled(self, run_id: int):
+        run = self._require_active_job(run_id, "Whisper model install canceled")
+        if run is None:
+            return
+
+        logger.info("Whisper model install canceled | run_id=%s", run.run_id)
+        self._complete_run(run_id, SubtitlePipelinePhase.CANCELED, True)
+
+        if not self._transitions.should_present_terminal_feedback():
+            return
+
+        show_whisper_model_install_canceled(self._ui.parent())
 
     def _require_active_job(self, run_id: int, event_name: str) -> SubtitlePipelineRun | None:
         run = self._transitions.active_run_for_id(run_id)

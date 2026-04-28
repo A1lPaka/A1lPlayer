@@ -123,6 +123,10 @@ def test_subtitle_generation_service_flow_without_real_worker_or_vlc(
     service = SubtitleGenerationService(parent, player, store, media_library)
     runner_calls = []
 
+    monkeypatch.setattr(
+        "services.subtitles.application.SubtitleGenerationStartFlow.find_installed_whisper_model",
+        lambda _model: object(),
+    )
     monkeypatch.setattr(service._audio_probe_flow, "load_generation_audio_tracks_async", lambda _media_path: None)
     monkeypatch.setattr(service._audio_probe_flow, "probe_state_for_media", lambda _media_path: AudioStreamProbeState.READY)
     monkeypatch.setattr(

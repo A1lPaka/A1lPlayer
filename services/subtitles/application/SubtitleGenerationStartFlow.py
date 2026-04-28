@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
+from PySide6.QtCore import QTimer
+
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.subtitles.domain.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
 from services.subtitles.validation.SubtitleGenerationPreflight import (
@@ -24,6 +26,14 @@ from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelin
 from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
 from ui.MessageBoxService import prompt_cuda_runtime_choice
+from ui.MessageBoxService import (
+    prompt_whisper_model_fallback_choice,
+    prompt_whisper_model_install_choice,
+)
+from utils.runtime_assets import (
+    closest_installed_weaker_whisper_model,
+    find_installed_whisper_model,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +52,7 @@ class SubtitleGenerationStartFlow:
         pipeline_state: SubtitlePipelineStateMachine,
         transitions: SubtitlePipelineTransitions,
         cuda_runtime_flow,
+        whisper_model_flow,
         outcome_presenter: SubtitleGenerationOutcomePresenter,
         assert_pipeline_thread: Callable[[], None],
         log_dialog_confirm_timing: Callable[[str], None],
@@ -58,6 +69,7 @@ class SubtitleGenerationStartFlow:
         self._pipeline_state = pipeline_state
         self._transitions = transitions
         self._cuda_runtime_flow = cuda_runtime_flow
+        self._whisper_model_flow = whisper_model_flow
         self._outcome_presenter = outcome_presenter
         self._assert_pipeline_thread = assert_pipeline_thread
         self._log_dialog_confirm_timing = log_dialog_confirm_timing
@@ -111,7 +123,13 @@ class SubtitleGenerationStartFlow:
         options = self._apply_overwrite_confirmation(options, validation_result)
         run.requested_options = options
 
-        resolved_options = self._resolve_cuda_runtime_options(options, run)
+        resolved_options = self._resolve_whisper_model_options(options, run)
+        if resolved_options is None:
+            if self._pipeline_state.active_job is run and run.phase == SubtitlePipelinePhase.STARTING:
+                self._discard_starting_run("subtitle launch postponed or canceled during Whisper model resolution")
+            return
+
+        resolved_options = self._resolve_cuda_runtime_options(resolved_options, run)
         if resolved_options is None:
             if self._pipeline_state.active_job is run and run.phase == SubtitlePipelinePhase.STARTING:
                 self._discard_starting_run("subtitle launch postponed or canceled during CUDA resolution")
@@ -180,6 +198,139 @@ class SubtitleGenerationStartFlow:
                     "GPU runtime installation could not be started."
                 )
             return
+
+    def start_whisper_model_install(
+        self,
+        run: SubtitlePipelineRun,
+        model_size: str,
+    ):
+        self._assert_pipeline_thread()
+        if run is not self._pipeline_state.active_job:
+            logger.debug("Ignoring Whisper model install start for stale run | run_id=%s", run.run_id)
+            return
+        if run.phase != SubtitlePipelinePhase.STARTING:
+            logger.warning(
+                "Rejected Whisper model install start because run phase is not launchable | run_id=%s | phase=%s",
+                run.run_id,
+                run.phase.name,
+            )
+            return
+
+        self._transitions.start_model_install(
+            run,
+            close_dialog=not self._pipeline_state.is_shutdown_in_progress(),
+        )
+
+        logger.info(
+            "Starting Whisper model install flow | run_id=%s | model=%s | media=%s | request_id=%s",
+            run.run_id,
+            model_size,
+            run.context.media_path,
+            run.context.request_id,
+        )
+        self._ui.open_model_install_progress(
+            model_size,
+            on_cancel=self._request_active_task_stop,
+        )
+        if not self._whisper_model_flow.start(run.run_id, model_size):
+            logger.error("Whisper model install flow could not be started | run_id=%s", run.run_id)
+            self._complete_run(run.run_id, SubtitlePipelinePhase.FAILED, True)
+            if not self._pipeline_state.is_shutdown_in_progress():
+                self._outcome_presenter.show_generation_failed(
+                    "Whisper model installation could not be started."
+                )
+            return
+
+    def retry_whisper_model_install(self, run: SubtitlePipelineRun, model_size: str):
+        self._assert_pipeline_thread()
+        if run is not self._pipeline_state.active_job:
+            logger.debug("Ignoring Whisper model install retry for stale run | run_id=%s", run.run_id)
+            return
+        if run.task.name != "MODEL_INSTALL":
+            logger.warning(
+                "Rejected Whisper model install retry because active task is not MODEL_INSTALL | run_id=%s | task=%s",
+                run.run_id,
+                run.task.name,
+            )
+            return
+
+        self._ui.open_model_install_progress(
+            model_size,
+            on_cancel=self._request_active_task_stop,
+        )
+        self._retry_whisper_model_install_when_idle(run, model_size)
+
+    def _retry_whisper_model_install_when_idle(self, run: SubtitlePipelineRun, model_size: str):
+        self._assert_pipeline_thread()
+        if run is not self._pipeline_state.active_job:
+            return
+        if self._whisper_model_flow.is_active():
+            QTimer.singleShot(
+                100,
+                lambda run=run, model_size=model_size: self._retry_whisper_model_install_when_idle(run, model_size),
+            )
+            return
+        if not self._whisper_model_flow.start(run.run_id, model_size):
+            logger.error("Whisper model install retry could not be started | run_id=%s", run.run_id)
+            self._complete_run(run.run_id, SubtitlePipelinePhase.FAILED, True)
+            if not self._pipeline_state.is_shutdown_in_progress():
+                self._outcome_presenter.show_generation_failed(
+                    "Whisper model installation could not be restarted."
+                )
+
+    def _resolve_whisper_model_options(
+        self,
+        options: SubtitleGenerationDialogResult,
+        run: SubtitlePipelineRun,
+    ) -> SubtitleGenerationDialogResult | None:
+        self._assert_pipeline_thread()
+        if find_installed_whisper_model(options.model_size) is not None:
+            return options
+
+        model_size = str(options.model_size)
+        fallback_model = closest_installed_weaker_whisper_model(model_size)
+        logger.info(
+            "Whisper model missing for subtitle generation | run_id=%s | model=%s | fallback=%s",
+            run.run_id,
+            model_size,
+            fallback_model or "<none>",
+        )
+        self._transitions.enter_model_prompt(run)
+        try:
+            choice = prompt_whisper_model_install_choice(self._parent, model_size)
+            if choice == "fallback":
+                fallback_choice = prompt_whisper_model_fallback_choice(
+                    self._parent,
+                    model_size,
+                    fallback_model,
+                )
+                choice = "fallback" if fallback_choice == "fallback" else "cancel"
+        finally:
+            self._transitions.leave_model_prompt(run)
+        if not self._transitions.should_present_terminal_feedback():
+            self._complete_run(run.run_id, SubtitlePipelinePhase.CANCELED, True)
+            return None
+        if not self._starting_run_matches_current_context(run, "Whisper model prompt"):
+            return None
+
+        if choice == "cancel":
+            logger.info("User canceled subtitle generation after Whisper model prompt | run_id=%s", run.run_id)
+            return None
+
+        if choice == "fallback":
+            if not fallback_model:
+                return None
+            logger.info(
+                "User switched subtitle generation from missing model to installed fallback | run_id=%s | requested=%s | fallback=%s",
+                run.run_id,
+                model_size,
+                fallback_model,
+            )
+            return replace(options, model_size=fallback_model)
+
+        run.subtitle_options = options
+        self.start_whisper_model_install(run, model_size)
+        return None
 
     def _resolve_cuda_runtime_options(
         self,

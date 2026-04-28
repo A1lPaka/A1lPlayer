@@ -63,15 +63,31 @@ class _AudioProbeFlowStub:
         return None
 
 
+class _WhisperModelFlowStub:
+    def __init__(self):
+        self.start_calls = []
+
+    def start(self, run_id, model_size):
+        self.start_calls.append((run_id, model_size))
+        return True
+
+
 class _UiStub:
     def __init__(self):
         self.cuda_progress_requests = []
+        self.model_progress_requests = []
 
     def open_cuda_install_progress(self, missing_packages, on_cancel):
         self.cuda_progress_requests.append((list(missing_packages), on_cancel))
 
+    def open_model_install_progress(self, model_size, on_cancel):
+        self.model_progress_requests.append((model_size, on_cancel))
+
     def close_progress_dialog(self):
         return None
+
+    def parent(self):
+        return QWidget()
 
 
 class _ValidationResult:
@@ -89,7 +105,11 @@ class _OutcomePresenterStub:
         self.success_calls.append((output_path, auto_open_outcome, kwargs))
 
 
-def _make_start_flow(player, *, preflight=None, validation_presenter=None):
+def _make_start_flow(monkeypatch, player, *, preflight=None, validation_presenter=None, model_installed=True):
+    monkeypatch.setattr(
+        "services.subtitles.application.SubtitleGenerationStartFlow.find_installed_whisper_model",
+        lambda _model: object() if model_installed else None,
+    )
     pipeline_state = SubtitlePipelineStateMachine()
     transitions = SubtitlePipelineTransitions(pipeline_state)
     assert transitions.open_generation_dialog() is True
@@ -105,6 +125,7 @@ def _make_start_flow(player, *, preflight=None, validation_presenter=None):
         pipeline_state=pipeline_state,
         transitions=transitions,
         cuda_runtime_flow=object(),
+        whisper_model_flow=_WhisperModelFlowStub(),
         outcome_presenter=object(),
         assert_pipeline_thread=lambda: None,
         log_dialog_confirm_timing=lambda _output: None,
@@ -115,7 +136,7 @@ def _make_start_flow(player, *, preflight=None, validation_presenter=None):
     return flow, pipeline_state, launch_calls, complete_calls
 
 
-def test_start_flow_reopens_dialog_when_playback_context_changes_before_launch():
+def test_start_flow_reopens_dialog_when_playback_context_changes_before_launch(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie-a.mkv"
     player.playback._request_id = 7
@@ -125,6 +146,7 @@ def test_start_flow_reopens_dialog_when_playback_context_changes_before_launch()
         player.playback._request_id = 8
 
     flow, pipeline_state, launch_calls, complete_calls = _make_start_flow(
+        monkeypatch,
         player,
         preflight=_PreflightStub(_ValidationResult(), on_validate=_change_context),
     )
@@ -141,7 +163,7 @@ def test_start_flow_cuda_cpu_fallback_launches_generation_with_cpu(monkeypatch):
     player = FakePlayerWindow()
     player.playback._media_path = "C:/media/movie.mkv"
     player.playback._request_id = 7
-    flow, pipeline_state, launch_calls, complete_calls = _make_start_flow(player)
+    flow, pipeline_state, launch_calls, complete_calls = _make_start_flow(monkeypatch, player)
 
     monkeypatch.setattr(
         "services.subtitles.application.SubtitleGenerationStartFlow.get_missing_windows_cuda_runtime_packages",
@@ -159,6 +181,29 @@ def test_start_flow_cuda_cpu_fallback_launches_generation_with_cpu(monkeypatch):
     assert launch_calls[0][1].device == "cpu"
     assert pipeline_state.active_job is not None
     assert pipeline_state.active_job.requested_options.device == "cuda"
+
+
+def test_start_flow_missing_model_starts_model_install(monkeypatch):
+    player = FakePlayerWindow()
+    player.playback._media_path = "C:/media/movie.mkv"
+    player.playback._request_id = 7
+    flow, pipeline_state, launch_calls, complete_calls = _make_start_flow(
+        monkeypatch,
+        player,
+        model_installed=False,
+    )
+    monkeypatch.setattr(
+        "services.subtitles.application.SubtitleGenerationStartFlow.prompt_whisper_model_install_choice",
+        lambda _parent, _model: "download",
+    )
+
+    flow.start(_options(model_size="medium"))
+
+    run = pipeline_state.active_job
+    assert run is not None
+    assert launch_calls == []
+    assert complete_calls == []
+    assert flow._whisper_model_flow.start_calls == [(run.run_id, "medium")]
 
 
 def test_completion_flow_reports_context_change_without_auto_loading_subtitle():
@@ -185,6 +230,7 @@ def test_completion_flow_reports_context_change_without_auto_loading_subtitle():
         outcome_presenter=outcome_presenter,
         complete_run=lambda run_id, phase, close_progress: complete_calls.append((run_id, phase, close_progress)),
         launch_subtitle_generation=lambda run, options: None,
+        retry_model_install=lambda run, model_size: None,
     )
 
     flow.handle_subtitle_generation_finished(run.run_id, "C:/media/movie.srt", True, False)

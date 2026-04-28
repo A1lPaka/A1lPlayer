@@ -147,6 +147,80 @@ def prompt_cuda_runtime_choice(
     return "cancel"
 
 
+def prompt_whisper_model_install_choice(
+    parent: QWidget,
+    model_size: str,
+) -> Literal["download", "fallback", "cancel"]:
+    message_box = QMessageBox(parent)
+    message_box.setWindowTitle("Whisper Model Required")
+    message_box.setIcon(QMessageBox.Icon.Question)
+    message_box.setText(f"Whisper model '{model_size}' is not installed.")
+    message_box.setInformativeText(
+        "Download and install this model from the internet now?\n\n"
+        "This is usually needed only once."
+    )
+    download_button = message_box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+    fallback_button = message_box.addButton("Use installed smaller model", QMessageBox.ButtonRole.ActionRole)
+    cancel_button = message_box.addButton(QMessageBox.StandardButton.Cancel)
+    message_box.setDefaultButton(download_button)
+    message_box.exec()
+
+    clicked_button = message_box.clickedButton()
+    if clicked_button == download_button:
+        return "download"
+    if clicked_button == fallback_button:
+        return "fallback"
+    if clicked_button == cancel_button:
+        return "cancel"
+    return "cancel"
+
+
+def prompt_whisper_model_fallback_choice(
+    parent: QWidget,
+    requested_model_size: str,
+    fallback_model_size: str | None,
+) -> Literal["fallback", "cancel"]:
+    if not fallback_model_size:
+        QMessageBox.information(
+            parent,
+            "Whisper Model Required",
+            f"Model '{requested_model_size}' is not installed and no smaller installed model is available.",
+        )
+        return "cancel"
+
+    answer = QMessageBox.question(
+        parent,
+        "Use Installed Model",
+        f"Use installed smaller model '{fallback_model_size}' instead of '{requested_model_size}'?",
+    )
+    if answer == QMessageBox.StandardButton.Yes:
+        return "fallback"
+    return "cancel"
+
+
+def prompt_whisper_model_install_retry(
+    parent: QWidget,
+    model_size: str,
+    error_text: str,
+) -> Literal["retry", "cancel"]:
+    message_box = QMessageBox(parent)
+    message_box.setWindowTitle("Whisper Model")
+    message_box.setIcon(QMessageBox.Icon.Warning)
+    message_box.setText(f"Failed to install Whisper model '{model_size}'.")
+    message_box.setInformativeText("Try downloading it again?")
+    if error_text:
+        message_box.setDetailedText(error_text)
+    retry_button = message_box.addButton("Retry", QMessageBox.ButtonRole.AcceptRole)
+    cancel_button = message_box.addButton(QMessageBox.StandardButton.Cancel)
+    message_box.setDefaultButton(retry_button)
+    message_box.exec()
+    if message_box.clickedButton() == retry_button:
+        return "retry"
+    if message_box.clickedButton() == cancel_button:
+        return "cancel"
+    return "cancel"
+
+
 def show_choose_output_path_first(parent: QWidget) -> None:
     QMessageBox.warning(
         parent,
@@ -243,6 +317,14 @@ def show_cuda_runtime_install_canceled(parent: QWidget) -> None:
         parent,
         "CUDA Runtime",
         "GPU runtime installation was canceled.",
+    )
+
+
+def show_whisper_model_install_canceled(parent: QWidget) -> None:
+    QMessageBox.information(
+        parent,
+        "Whisper Model",
+        "Whisper model installation was canceled.",
     )
 
 

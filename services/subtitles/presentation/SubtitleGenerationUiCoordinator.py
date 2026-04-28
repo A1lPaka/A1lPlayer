@@ -22,6 +22,10 @@ class SubtitleGenerationUiCoordinator(QObject):
         "Stopping the GPU runtime installation.\n"
         "If the installer subsystem is already finishing a step, this may take a moment."
     )
+    _MODEL_CANCEL_PENDING_DETAILS = (
+        "Stopping the Whisper model installation.\n"
+        "If the installer subsystem is already finishing a step, this may take a moment."
+    )
 
     def __init__(
         self,
@@ -115,6 +119,20 @@ class SubtitleGenerationUiCoordinator(QObject):
             ),
         )
 
+    def open_model_install_progress(
+        self,
+        model_size: str,
+        *,
+        on_cancel: Callable[[], None],
+    ):
+        self._replace_generation_dialog_with_progress(
+            on_cancel=on_cancel,
+            configure_progress_dialog=lambda progress_dialog: self._configure_model_install_progress_dialog(
+                progress_dialog,
+                model_size,
+            ),
+        )
+
     def show_subtitle_cancel_pending(self):
         if self._progress_dialog is None:
             return
@@ -129,6 +147,14 @@ class SubtitleGenerationUiCoordinator(QObject):
         self._progress_dialog.set_indeterminate(True)
         self._progress_dialog.set_status(self._SUBTITLE_CANCEL_PENDING_STATUS)
         self._progress_dialog.set_details(self._CUDA_CANCEL_PENDING_DETAILS)
+        self._progress_dialog.set_cancel_enabled(False, "Cancelling...")
+
+    def show_model_install_cancel_pending(self):
+        if self._progress_dialog is None:
+            return
+        self._progress_dialog.set_indeterminate(True)
+        self._progress_dialog.set_status(self._SUBTITLE_CANCEL_PENDING_STATUS)
+        self._progress_dialog.set_details(self._MODEL_CANCEL_PENDING_DETAILS)
         self._progress_dialog.set_cancel_enabled(False, "Cancelling...")
 
     def close_generation_dialog(self):
@@ -216,6 +242,18 @@ class SubtitleGenerationUiCoordinator(QObject):
             "The installer subsystem will resolve the configured source automatically.\n\n"
             "Packages:\n"
             + "\n".join(missing_packages)
+        )
+        progress_dialog.set_cancel_enabled(True, "Cancel")
+
+    def _configure_model_install_progress_dialog(
+        self,
+        progress_dialog: SubtitleProgressDialog,
+        model_size: str,
+    ):
+        progress_dialog.set_status("Installing Whisper model...")
+        progress_dialog.set_indeterminate(True)
+        progress_dialog.set_details(
+            f"Preparing Whisper model download...\n\nModel: {model_size}"
         )
         progress_dialog.set_cancel_enabled(True, "Cancel")
 
