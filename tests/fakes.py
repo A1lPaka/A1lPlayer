@@ -241,7 +241,7 @@ class FakeSubtitleService(QObject):
         self.shutdown_in_progress = self.begin_force_shutdown_result
         return self.begin_force_shutdown_result
 
-    def _begin_emergency_shutdown(self) -> bool:
+    def begin_emergency_shutdown(self) -> bool:
         self.begin_emergency_shutdown_calls += 1
         self.shutdown_in_progress = self.begin_emergency_shutdown_result
         return self.begin_emergency_shutdown_result

@@ -241,7 +241,7 @@ class SubtitleGenerationService(QObject):
     def begin_force_shutdown(self) -> bool:
         return self._runtime.begin_force_shutdown()
 
-    def _begin_emergency_shutdown(self) -> bool:
+    def begin_emergency_shutdown(self) -> bool:
         return self._runtime.begin_emergency_shutdown()
 
     def _complete_shutdown_if_possible(self):

@@ -17,6 +17,7 @@ def test_service_public_facade_is_stable():
     }
 
     assert public_methods == {
+        "begin_emergency_shutdown",
         "begin_force_shutdown",
         "begin_shutdown",
         "generate_subtitle",
