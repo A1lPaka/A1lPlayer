@@ -281,7 +281,10 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
                 self._request.media_path,
                 self._request.output_path,
             )
-            self._emit_failed("Subtitle generation failed to start.", diagnostics)
+            if self._is_cancel_requested():
+                self._emit_canceled()
+            else:
+                self._emit_failed("Subtitle generation failed to start.", diagnostics)
 
     def cancel(self):
         if not self._request_graceful_subprocess_stop(self._on_cancel_requested):
@@ -329,7 +332,7 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
         self._log_first_helper_event(event_type)
         if event_type == EVENT_PROGRESS:
             self.status_changed.emit(str(event.get("status") or "Working..."))
-            self.progress_changed.emit(int(event.get("progress") or 0))
+            self.progress_changed.emit(self._coerce_progress(event.get("progress"), line))
             self.details_changed.emit(str(event.get("details") or ""))
             return
         if event_type == EVENT_FINISHED:
@@ -355,6 +358,19 @@ class SubtitleGenerationWorker(QObject, JsonSubprocessWorkerBase):
             event_type or "<missing>",
         )
         self._stderr_buffer.append(f"Unknown stdout event: {line}")
+
+    def _coerce_progress(self, value, line: str) -> int:
+        try:
+            progress = int(value or 0)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Subtitle generation subprocess emitted invalid progress value | media=%s | value=%s",
+                self._request.media_path,
+                value,
+            )
+            self._stderr_buffer.append(f"Invalid progress event: {line}")
+            return 0
+        return max(0, min(100, progress))
 
     def _after_json_subprocess_spawned(self, process: subprocess.Popen[str], launch_spec):
         log_timing(

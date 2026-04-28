@@ -285,6 +285,22 @@ def test_known_terminal_events_emit_worker_signals(monkeypatch):
     assert canceled == [True]
 
 
+def test_subtitle_progress_event_invalid_value_is_diagnostic(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_progress_payload_test",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
+    )
+    worker = module.SubtitleGenerationWorker(4, "C:/media/movie.mkv", _subtitle_options())
+    progress_values = []
+    worker.progress_changed.connect(progress_values.append)
+
+    worker._handle_event_line(json.dumps({"event": module.EVENT_PROGRESS, "progress": "not-a-number"}))
+    worker._handle_event_line(json.dumps({"event": module.EVENT_PROGRESS, "progress": 250}))
+
+    assert progress_values == [0, 100]
+    assert "Invalid progress event" in worker._stderr_buffer.consume_text()
+
+
 def test_subtitle_exit_without_terminal_event_fails_or_cancels(monkeypatch):
     module = _load_real_module(
         "real_subtitle_generation_workers_missing_terminal_test",
@@ -314,6 +330,27 @@ def test_subtitle_exit_without_terminal_event_fails_or_cancels(monkeypatch):
     _install_fake_popen(monkeypatch, canceling_process)
     canceled_worker.run()
 
+    assert canceled == [True]
+
+
+def test_subtitle_subprocess_exception_after_cancel_emits_canceled(monkeypatch):
+    module = _load_real_module(
+        "real_subtitle_generation_workers_exception_cancel_test",
+        "services/subtitles/workers/SubtitleGenerationWorkers.py",
+    )
+    monkeypatch.setattr(module, "build_runtime_helper_launch", lambda _helper: _launch_spec())
+
+    worker = module.SubtitleGenerationWorker(6, "C:/media/movie.mkv", _subtitle_options())
+    failed = []
+    canceled = []
+    worker.failed.connect(lambda message, diagnostics: failed.append((message, diagnostics)))
+    worker.canceled.connect(lambda: canceled.append(True))
+    worker._request_cancel()
+    monkeypatch.setattr(worker, "_run_json_subprocess", lambda **_kwargs: (_ for _ in ()).throw(OSError("closed")))
+
+    worker.run()
+
+    assert failed == []
     assert canceled == [True]
 
 
