@@ -138,15 +138,15 @@ function Prepare-FfmpegRuntime {
     Copy-Item -LiteralPath (Join-Path $BinRoot.FullName "ffprobe.exe") -Destination (Join-Path $FfmpegRoot "bin\ffprobe.exe")
 }
 
-function Prepare-MediumModel {
-    $ModelTarget = Join-Path $VendorRuntime "models\faster-whisper-medium"
+function Prepare-SmallModel {
+    $ModelTarget = Join-Path $VendorRuntime "models\faster-whisper-small"
     if (Test-Path -LiteralPath (Join-Path $ModelTarget "model.bin") -PathType Leaf) {
         return
     }
 
-    $CacheRoot = Join-Path $env:USERPROFILE ".cache\huggingface\hub\models--Systran--faster-whisper-medium\snapshots"
+    $CacheRoot = Join-Path $env:USERPROFILE ".cache\huggingface\hub\models--Systran--faster-whisper-small\snapshots"
     if (-not (Test-Path -LiteralPath $CacheRoot -PathType Container)) {
-        throw "faster-whisper medium is not in Hugging Face cache. Run the app once with model=medium or download the model before building."
+        throw "faster-whisper small is not in Hugging Face cache. Run the app once with model=small or download the model before building."
     }
 
     $Snapshot = Get-ChildItem -LiteralPath $CacheRoot -Directory |
@@ -154,7 +154,7 @@ function Prepare-MediumModel {
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($null -eq $Snapshot) {
-        throw "Hugging Face cache exists, but no complete faster-whisper medium snapshot with model.bin was found."
+        throw "Hugging Face cache exists, but no complete faster-whisper small snapshot with model.bin was found."
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ModelTarget) | Out-Null
@@ -191,12 +191,12 @@ try {
 
     Prepare-VlcRuntime
     Prepare-FfmpegRuntime
-    Prepare-MediumModel
+    Prepare-SmallModel
 
     Assert-File -Path (Join-Path $VendorRuntime "vlc\libvlc.dll") -Message "Missing vendor\runtime\vlc\libvlc.dll. Rerun with -DownloadRuntime or add portable VLC manually."
     Assert-File -Path (Join-Path $VendorRuntime "ffmpeg\bin\ffmpeg.exe") -Message "Missing vendor\runtime\ffmpeg\bin\ffmpeg.exe. Rerun with -DownloadRuntime or add FFmpeg manually."
     Assert-File -Path (Join-Path $VendorRuntime "ffmpeg\bin\ffprobe.exe") -Message "Missing vendor\runtime\ffmpeg\bin\ffprobe.exe. Rerun with -DownloadRuntime or add FFprobe manually."
-    Assert-File -Path (Join-Path $VendorRuntime "models\faster-whisper-medium\model.bin") -Message "Missing bundled faster-whisper medium model."
+    Assert-File -Path (Join-Path $VendorRuntime "models\faster-whisper-small\model.bin") -Message "Missing bundled faster-whisper small model."
 
     py -m PyInstaller A1lPlayer.spec --clean --noconfirm
 
