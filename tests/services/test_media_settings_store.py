@@ -49,6 +49,21 @@ def test_get_saved_position_uses_cached_session_positions():
     ) == 1
 
 
+def test_load_theme_ignores_rgb_channels_outside_qcolor_range():
+    settings = _FakeSettings({
+        MediaSettingsStore._THEME_SETTINGS_KEY: json.dumps({
+            "text_color": [300, 2, 3],
+            "panel_bg_color": [10, 20, 30],
+        }),
+    })
+    store = MediaSettingsStore(settings=settings)
+
+    theme = store.load_theme()
+
+    assert theme.get("text_color") == theme.DEFAULTS["text_color"]
+    assert theme.get("panel_bg_color") == (10, 20, 30)
+
+
 def test_save_position_updates_session_position_cache():
     settings = _FakeSettings({
         MediaSettingsStore._SESSION_POSITIONS_KEY: json.dumps({

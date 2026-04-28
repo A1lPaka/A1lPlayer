@@ -43,7 +43,10 @@ class MediaSettingsStore:
                 continue
             if not all(isinstance(channel, (int, float)) for channel in value):
                 continue
-            base_colors[key] = tuple(int(channel) for channel in value)
+            channels = tuple(int(channel) for channel in value)
+            if not all(0 <= channel <= 255 for channel in channels):
+                continue
+            base_colors[key] = channels
 
         return ThemeState(base_colors)
 
