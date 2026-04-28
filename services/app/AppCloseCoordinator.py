@@ -184,9 +184,12 @@ class AppCloseCoordinator(QObject):
     def _request_emergency_shutdown_after_force_timeout(self):
         if self._emergency_shutdown_requested:
             logger.critical(
-                "Application emergency shutdown is still waiting for background tasks to terminate"
+                "Application emergency shutdown timed out; forcing final close without waiting for subtitle shutdown"
             )
-            self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
+            self._finish_shutdown(
+                "Application final close forced after emergency shutdown timeout",
+                request_final_close=True,
+            )
             return
 
         logger.critical(

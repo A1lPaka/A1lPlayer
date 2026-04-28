@@ -181,7 +181,7 @@ def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(mo
     assert target.close_calls == 0
 
 
-def test_emergency_shutdown_still_requires_shutdown_finished_before_final_close():
+def test_repeated_emergency_timeout_forces_final_close():
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True
     subtitle_service.begin_force_shutdown_result = True
@@ -203,11 +203,7 @@ def test_emergency_shutdown_still_requires_shutdown_finished_before_final_close(
     coordinator._on_force_close_after_timeout()
     coordinator._on_shutdown_timeout()
     coordinator._on_shutdown_timeout()
-
-    assert target.close_calls == 0
-
-    subtitle_service.shutdown_in_progress = False
-    subtitle_service.shutdown_finished.emit()
+    coordinator._on_shutdown_timeout()
     QCoreApplication.processEvents()
 
     assert media_library.shutdown_calls == 1
