@@ -23,3 +23,5 @@ release/
 
 # Downloaded/bundled third-party runtime payloads
 vendor/runtime/
+runtime/models/*
+!runtime/models/.gitkeep
