@@ -21,6 +21,7 @@ from services.runtime.RuntimeInstallerProtocol import (
 )
 from services.runtime.SubprocessWorkerSupport import BoundedLineBuffer
 from services.subtitles.domain.CudaRuntimeDiscovery import get_missing_windows_cuda_runtime_packages
+from utils.runtime_assets import app_root
 from utils.runtime_assets import managed_cuda_runtime_root
 
 
@@ -94,7 +95,7 @@ def resolve_cuda_runtime_install_target() -> Path:
 def resolve_runtime_app_root() -> Path:
     if is_frozen_runtime():
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
+    return app_root()
 
 
 def resolve_cuda_runtime_install_source() -> CudaRuntimeInstallSource:

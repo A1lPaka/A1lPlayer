@@ -59,6 +59,21 @@ def test_cuda_runtime_installer_reads_env_paths_and_index_urls(monkeypatch, work
     )
 
 
+def test_cuda_runtime_installer_source_mode_uses_project_runtime_wheelhouse(monkeypatch, workspace_tmp_path):
+    wheelhouse = workspace_tmp_path / "runtime" / "cuda-wheelhouse"
+    wheelhouse.mkdir(parents=True)
+    (wheelhouse / "nvidia_runtime.whl").write_text("wheel", encoding="utf-8")
+
+    monkeypatch.delenv("A1LPLAYER_CUDA_WHEELHOUSE", raising=False)
+    monkeypatch.setattr(installer, "is_frozen_runtime", lambda: False)
+    monkeypatch.setattr(installer, "app_root", lambda: workspace_tmp_path)
+
+    source = installer.resolve_cuda_runtime_install_source()
+
+    assert source.mode == "bundled-wheelhouse"
+    assert source.location == str(wheelhouse)
+
+
 def test_cuda_runtime_installer_validates_wheelhouse(workspace_tmp_path):
     empty_dir = workspace_tmp_path / "empty"
     empty_dir.mkdir()
