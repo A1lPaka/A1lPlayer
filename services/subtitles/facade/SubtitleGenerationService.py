@@ -7,26 +7,12 @@ from PySide6.QtWidgets import QWidget
 
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.app.MediaSettingsStore import MediaSettingsStore
-from services.subtitles.presentation.SubtitleGenerationOutcomePresenter import SubtitleGenerationOutcomePresenter
-from services.subtitles.presentation.SubtitleGenerationUiCoordinator import SubtitleGenerationUiCoordinator
-from services.subtitles.presentation.SubtitleGenerationValidationPresenter import SubtitleGenerationValidationPresenter
-from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
-from services.subtitles.workers.SubtitleWhisperModelFlow import SubtitleWhisperModelFlow
-from services.subtitles.workers.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
-from services.subtitles.application.SubtitleGenerationCompletionFlow import SubtitleGenerationCompletionFlow
-from services.subtitles.workers.SubtitleGenerationJobRunner import SubtitleGenerationJobRunner
-from services.subtitles.validation.SubtitleGenerationPreflight import SubtitleGenerationPreflight
-from services.subtitles.application.SubtitleGenerationRuntimeCoordinator import SubtitleGenerationRuntimeCoordinator
-from services.subtitles.application.SubtitleGenerationStartFlow import SubtitleGenerationStartFlow
+from services.subtitles.composition.SubtitleGenerationComposition import SubtitleGenerationComposition
 from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelinePhase,
     SubtitlePipelineRun,
-    SubtitlePipelineStateMachine,
     SubtitlePipelineTask,
-    SubtitleServiceState,
 )
-from services.subtitles.state.SubtitlePipelineTransitions import SubtitlePipelineTransitions
-from services.subtitles.state.SubtitleShutdownCoordinator import SubtitleShutdownCoordinator
 from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import show_subtitle_generation_already_running
 from ui.PlayerWindow import PlayerWindow
@@ -54,96 +40,29 @@ class SubtitleGenerationService(QObject):
         self._player = player_window
         self._store = store
         self._media_library = media_library
-        self._ui = SubtitleGenerationUiCoordinator(
-            parent,
-            theme_color_getter=self._current_theme_color,
-        )
-        self._outcome_presenter = SubtitleGenerationOutcomePresenter(parent)
-        self._preflight = SubtitleGenerationPreflight(parent)
-        self._validation_presenter = SubtitleGenerationValidationPresenter(parent)
-        self._pipeline_state = SubtitlePipelineStateMachine()
-        self._transitions = SubtitlePipelineTransitions(self._pipeline_state)
-        self._shutdown = SubtitleShutdownCoordinator(self._pipeline_state, self._transitions)
         self._dialog_request_started_at: float | None = None
         self._dialog_request_media_path: str | None = None
-        self._audio_probe_flow = SubtitleGenerationAudioProbeFlow(
-            parent,
-            self._player,
-            self._ui,
-            self._preflight,
-            is_generation_dialog_open=self._pipeline_state.has_dialog_open,
-            dialog_media_path=self._dialog_media_path_for_audio_probe,
-            dialog_lifecycle_state_name=self._dialog_lifecycle_state_name,
-        )
-        self._audio_probe_flow.thread_finished.connect(self._complete_shutdown_if_possible)
-        self._cuda_runtime_flow = SubtitleCudaRuntimeFlow(parent)
-        self._whisper_model_flow = SubtitleWhisperModelFlow(parent)
-        self._completion_flow = SubtitleGenerationCompletionFlow(
-            store=self._store,
-            media_library=self._media_library,
-            ui=self._ui,
-            transitions=self._transitions,
-            outcome_presenter=self._outcome_presenter,
-            complete_run=self._dispatch_complete_run,
-            launch_subtitle_generation=self._dispatch_launch_subtitle_generation,
-            retry_model_install=lambda run, model_size: self._start_flow.retry_whisper_model_install(run, model_size),
-        )
-        self._cuda_runtime_flow.status_changed.connect(self._on_worker_status_changed)
-        self._cuda_runtime_flow.details_changed.connect(self._on_worker_details_changed)
-        self._cuda_runtime_flow.finished.connect(self._completion_flow.handle_cuda_runtime_install_finished)
-        self._cuda_runtime_flow.failed.connect(self._completion_flow.handle_cuda_runtime_install_failed)
-        self._cuda_runtime_flow.canceled.connect(self._completion_flow.handle_cuda_runtime_install_canceled)
-        self._cuda_runtime_flow.thread_finished.connect(self._on_cuda_runtime_flow_thread_finished)
-        self._whisper_model_flow.status_changed.connect(self._on_worker_status_changed)
-        self._whisper_model_flow.details_changed.connect(self._on_worker_details_changed)
-        self._whisper_model_flow.finished.connect(self._completion_flow.handle_model_install_finished)
-        self._whisper_model_flow.failed.connect(self._completion_flow.handle_model_install_failed)
-        self._whisper_model_flow.canceled.connect(self._completion_flow.handle_model_install_canceled)
-        self._whisper_model_flow.thread_finished.connect(self._on_whisper_model_flow_thread_finished)
-        self._subtitle_job_runner = SubtitleGenerationJobRunner(
-            parent,
-            can_start_worker=self._can_start_subtitle_worker,
-            on_start_aborted=self._on_subtitle_worker_start_aborted,
-            suspend_before_start=self._suspend_player_ui_for_generation,
-            on_status_changed=self._on_worker_status_changed_from_worker,
-            on_progress_changed=self._on_worker_progress_changed_from_worker,
-            on_details_changed=self._on_worker_details_changed_from_worker,
-            on_finished=self._on_subtitle_generation_finished_from_worker,
-            on_failed=self._on_subtitle_generation_failed_from_worker,
-            on_canceled=self._on_subtitle_generation_canceled_from_worker,
-        )
-        self._subtitle_job_runner.thread_finished.connect(self._on_subtitle_worker_thread_finished)
-        self._runtime = SubtitleGenerationRuntimeCoordinator(
-            player=self._player,
-            ui=self._ui,
-            pipeline_state=self._pipeline_state,
-            transitions=self._transitions,
-            shutdown=self._shutdown,
-            audio_probe_flow=self._audio_probe_flow,
-            cuda_runtime_flow=self._cuda_runtime_flow,
-            whisper_model_flow=self._whisper_model_flow,
-            subtitle_job_runner=self._subtitle_job_runner,
-            assert_pipeline_thread=self._assert_pipeline_thread,
-            on_shutdown_finished=self.shutdown_finished.emit,
-        )
-        self._start_flow = SubtitleGenerationStartFlow(
+        composition = SubtitleGenerationComposition.create(
             parent=parent,
             player=self._player,
-            ui=self._ui,
-            preflight=self._preflight,
-            validation_presenter=self._validation_presenter,
-            audio_probe_flow=self._audio_probe_flow,
-            pipeline_state=self._pipeline_state,
-            transitions=self._transitions,
-            cuda_runtime_flow=self._cuda_runtime_flow,
-            whisper_model_flow=self._whisper_model_flow,
-            outcome_presenter=self._outcome_presenter,
-            assert_pipeline_thread=self._assert_pipeline_thread,
-            log_dialog_confirm_timing=self._log_dialog_confirm_timing,
-            launch_subtitle_generation=self._dispatch_launch_subtitle_generation,
-            complete_run=self._dispatch_complete_run,
-            request_active_task_stop=self._request_active_task_stop,
+            store=self._store,
+            media_library=self._media_library,
+            service=self,
         )
+        self._ui = composition.ui
+        self._outcome_presenter = composition.outcome_presenter
+        self._preflight = composition.preflight
+        self._validation_presenter = composition.validation_presenter
+        self._pipeline_state = composition.pipeline_state
+        self._transitions = composition.transitions
+        self._shutdown = composition.shutdown
+        self._audio_probe_flow = composition.audio_probe_flow
+        self._cuda_runtime_flow = composition.cuda_runtime_flow
+        self._whisper_model_flow = composition.whisper_model_flow
+        self._completion_flow = composition.completion_flow
+        self._subtitle_job_runner = composition.subtitle_job_runner
+        self._runtime = composition.runtime
+        self._start_flow = composition.start_flow
 
     def generate_subtitle(self) -> bool:
         self._assert_pipeline_thread()
