@@ -210,15 +210,24 @@ class PlaybackService(QObject):
         self._current_media_event_manager = event_manager
 
     def _detach_current_media_event_handlers(self):
+        media = self._current_media
         event_manager = self._current_media_event_manager
-        if event_manager is None:
-            return
-        try:
-            event_manager.event_detach(vlc.EventType.MediaStateChanged)
-        except _VLC_ERRORS:
-            logger.debug("Failed to detach VLC media event handler", exc_info=True)
+        if event_manager is not None:
+            try:
+                event_manager.event_detach(vlc.EventType.MediaStateChanged)
+            except _VLC_ERRORS:
+                logger.debug("Failed to detach VLC media event handler", exc_info=True)
         self._current_media_event_manager = None
         self._current_media = None
+        self._release_media(media)
+
+    def _release_media(self, media):
+        if media is None or not hasattr(media, "release"):
+            return
+        try:
+            media.release()
+        except _VLC_ERRORS:
+            logger.debug("Failed to release VLC media object", exc_info=True)
 
     def _get_runtime_audio_channel(self, mode: str) -> int | None:
         return self._audio_modes[mode]["channel"]

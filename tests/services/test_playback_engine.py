@@ -23,9 +23,13 @@ class _FakeMedia:
     def __init__(self, path):
         self.path = path
         self._event_manager = _FakeEventManager()
+        self.release_calls = 0
 
     def event_manager(self):
         return self._event_manager
+
+    def release(self):
+        self.release_calls += 1
 
 
 class _FakePlayer:
@@ -169,6 +173,18 @@ def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
 
     assert second_request_id != first_request_id
     assert errors.calls == []
+
+
+def test_previous_media_is_released_when_replaced(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+
+    service.load_media("A.mp4")
+    first_media = fake_instance.media[-1]
+    service.load_media("B.mp4")
+
+    assert first_media.release_calls == 1
+    assert _FakeVlc.EventType.MediaStateChanged not in first_media.event_manager().callbacks
 
 
 def test_backend_creation_failure_emits_playback_error(monkeypatch):
