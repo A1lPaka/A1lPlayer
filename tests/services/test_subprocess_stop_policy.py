@@ -54,6 +54,21 @@ class _LifecycleHarness(SubprocessLifecycleMixin):
         self.terminated_processes.append(process)
 
 
+class _FailingKillLifecycleHarness(_LifecycleHarness):
+    def __init__(self, process=None):
+        super().__init__(process)
+        self.kill_failed_processes = []
+
+    def _request_graceful_stop(self, _process):
+        raise RuntimeError("graceful stop failed")
+
+    def _kill_process_tree(self, _process):
+        raise RuntimeError("kill failed")
+
+    def kill_failed_hook(self, process):
+        self.kill_failed_processes.append(process)
+
+
 def test_graceful_subprocess_stop_is_idempotent():
     worker = _StopPolicyHarness()
 
@@ -103,6 +118,32 @@ def test_repeated_force_subprocess_stop_only_runs_repeated_hook():
     assert worker.repeated_force_hooks == 1
     assert worker.kill_calls == 0
     assert worker.begin_calls == 2
+
+
+def test_force_subprocess_stop_registers_kill_failed_hook():
+    worker = _StopPolicyHarness(_AliveProcess())
+
+    worker._request_force_subprocess_stop(
+        worker.force_hook,
+        worker.repeated_force_hook,
+        worker.kill_failed_hook,
+    )
+
+    assert worker._kill_failed_callback is not None
+
+
+def test_subprocess_lifecycle_invokes_kill_failed_hook_when_hard_kill_fails():
+    process = _AliveProcess()
+    worker = _FailingKillLifecycleHarness(process)
+    worker._set_kill_failed_callback(worker.kill_failed_hook)
+    worker._mark_force_stop_requested()
+    worker._terminating_process = process
+    worker._termination_started = True
+
+    worker._terminate_process_lifecycle(process)
+
+    assert worker.kill_failed_processes == [process]
+    assert worker._kill_failed_callback is None
 
 
 def test_subprocess_lifecycle_terminates_process_snapshot_only():

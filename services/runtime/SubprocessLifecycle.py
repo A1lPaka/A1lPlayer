@@ -4,6 +4,7 @@ import signal
 import subprocess
 import threading
 from typing import IO
+from typing import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ class SubprocessLifecycleMixin:
         self._termination_started = False
         self._terminating_process: subprocess.Popen[str] | None = None
         self._force_stop_requested = False
+        self._kill_failed_callback: Callable[[subprocess.Popen[str]], None] | None = None
 
     def _set_active_process(self, process: subprocess.Popen[str] | None):
         with self._termination_lock:
@@ -56,13 +58,17 @@ class SubprocessLifecycleMixin:
             daemon=True,
         ).start()
 
+    def _set_kill_failed_callback(self, callback: Callable[[subprocess.Popen[str]], None] | None):
+        with self._termination_lock:
+            self._kill_failed_callback = callback
+
     def _terminate_process_lifecycle(self, process: subprocess.Popen[str] | None):
         try:
             if process is None or process.poll() is not None:
                 return
 
             if self._is_force_stop_requested():
-                self._kill_process_tree(process)
+                self._kill_process_tree_with_callback(process)
                 return
 
             try:
@@ -79,7 +85,7 @@ class SubprocessLifecycleMixin:
                     return
                 except subprocess.TimeoutExpired:
                     if self._is_force_stop_requested():
-                        self._kill_process_tree(process)
+                        self._kill_process_tree_with_callback(process)
                         return
                     logger.warning(
                         "%s did not stop gracefully in time; escalating to hard kill | pid=%s",
@@ -88,7 +94,7 @@ class SubprocessLifecycleMixin:
                     )
 
             if process.poll() is None:
-                self._kill_process_tree(process)
+                self._kill_process_tree_with_callback(process)
         except Exception:
             logger.exception(
                 "Failed to terminate %s cleanly | pid=%s",
@@ -100,6 +106,7 @@ class SubprocessLifecycleMixin:
                 if self._terminating_process is process:
                     self._termination_started = False
                     self._terminating_process = None
+                    self._kill_failed_callback = None
 
     def _graceful_cancel_timeout_seconds(self) -> float:
         return float(self._GRACEFUL_CANCEL_TIMEOUT_SECONDS)
@@ -121,6 +128,15 @@ class SubprocessLifecycleMixin:
             return
 
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+
+    def _kill_process_tree_with_callback(self, process: subprocess.Popen[str]):
+        try:
+            self._kill_process_tree(process)
+        except Exception:
+            callback = self._kill_failed_callback
+            if callback is not None:
+                callback(process)
+            raise
 
     def _subprocess_spawn_options(self) -> dict:
         if os.name == "nt":
