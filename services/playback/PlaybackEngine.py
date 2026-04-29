@@ -239,6 +239,13 @@ class PlaybackService(QObject):
             return value.decode(errors="ignore")
         return str(value)
 
+    def _safe_vlc_call(self, context: str, fallback, callback):
+        try:
+            return callback()
+        except _VLC_ERRORS:
+            logger.debug("VLC call failed | context=%s", context, exc_info=True)
+            return fallback
+
     def _iter_vlc_linked_list(self, head):
         node = head
         while node:
@@ -284,9 +291,22 @@ class PlaybackService(QObject):
         self._last_video_geometry = None
         logger.info("Loading media into VLC | request_id=%s | media=%s", self._current_request_id, media_path)
         self._detach_current_media_event_handlers()
-        media = self.instance.media_new(media_path)
-        self._attach_media_event_handlers(media, self._current_playback_token)
-        self.player.set_media(media)
+        media = None
+        try:
+            media = self.instance.media_new(media_path)
+            self._attach_media_event_handlers(media, self._current_playback_token)
+            self.player.set_media(media)
+        except _VLC_ERRORS:
+            logger.exception(
+                "Failed to load media into VLC | request_id=%s | media=%s",
+                self._current_request_id,
+                media_path,
+            )
+            if self._current_media is media:
+                self._detach_current_media_event_handlers()
+            else:
+                self._release_media(media)
+            self._queue_player_event("error", self._current_request_id, media_path)
         return self._current_request_id
 
     def _emit_backend_unavailable_error(self, request_id: int, media_path: str, message: str):
@@ -300,7 +320,7 @@ class PlaybackService(QObject):
     def get_media(self):
         if not self._has_backend():
             return None
-        return self.player.get_media()
+        return self._safe_vlc_call("get media", None, self.player.get_media)
 
     def is_playing(self) -> bool:
         if not self._has_backend():
@@ -380,24 +400,24 @@ class PlaybackService(QObject):
     def get_audio_tracks(self):
         if not self._has_backend():
             return []
-        return self.player.audio_get_track_description() or []
+        return self._safe_vlc_call("get audio tracks", [], lambda: self.player.audio_get_track_description() or [])
 
     def get_current_audio_track(self) -> int:
         if not self._has_backend():
             return -1
-        return int(self.player.audio_get_track())
+        return self._safe_vlc_call("get current audio track", -1, lambda: int(self.player.audio_get_track()))
 
     def set_audio_track(self, track_id: int) -> bool:
         if not self._has_backend():
             return False
-        return self.player.audio_set_track(int(track_id)) == 0
+        return self._safe_vlc_call("set audio track", False, lambda: self.player.audio_set_track(int(track_id)) == 0)
 
     def get_audio_devices(self) -> list[tuple[str, str]]:
         if not self._has_backend():
             return [(AUDIO_DEVICE_DEFAULT_ID, "Default Device")]
         devices: list[tuple[str, str]] = []
         seen_device_ids: set[str] = set()
-        device_list = self.player.audio_output_device_enum()
+        device_list = self._safe_vlc_call("enumerate audio devices", None, self.player.audio_output_device_enum)
         try:
             for device_item in self._iter_vlc_linked_list(device_list):
                 raw_device_id = self._decode_vlc_text(device_item.device)
@@ -412,7 +432,11 @@ class PlaybackService(QObject):
                 seen_device_ids.add(normalized_device_id)
         finally:
             if device_list:
-                vlc.libvlc_audio_output_device_list_release(device_list)
+                self._safe_vlc_call(
+                    "release audio device list",
+                    None,
+                    lambda: vlc.libvlc_audio_output_device_list_release(device_list),
+                )
 
         if AUDIO_DEVICE_DEFAULT_ID not in seen_device_ids:
             devices.insert(0, (AUDIO_DEVICE_DEFAULT_ID, "Default Device"))
@@ -422,7 +446,11 @@ class PlaybackService(QObject):
     def get_current_audio_device(self) -> str:
         if not self._has_backend():
             return AUDIO_DEVICE_DEFAULT_ID
-        current_device_id = self._decode_vlc_text(self.player.audio_output_device_get())
+        current_device_id = self._safe_vlc_call(
+            "get current audio device",
+            None,
+            lambda: self._decode_vlc_text(self.player.audio_output_device_get()),
+        )
         return current_device_id or AUDIO_DEVICE_DEFAULT_ID
 
     def set_audio_device(self, device_id: str) -> bool:
@@ -430,8 +458,11 @@ class PlaybackService(QObject):
         self._desired_audio_device_id = normalized_device_id
         if not self._has_backend():
             return False
-        self.player.audio_output_device_set(None, normalized_device_id)
-        return True
+        return self._safe_vlc_call(
+            "set audio device",
+            False,
+            lambda: self.player.audio_output_device_set(None, normalized_device_id) is None,
+        )
 
     def get_current_audio_mode(self) -> str:
         return self._desired_audio_mode
@@ -450,24 +481,24 @@ class PlaybackService(QObject):
         if not self._has_backend():
             return False
         if runtime_channel is not None:
-            return self.player.audio_set_channel(runtime_channel) == 0
+            return self._safe_vlc_call("set audio mode", False, lambda: self.player.audio_set_channel(runtime_channel) == 0)
 
         return True
 
     def get_subtitle_tracks(self):
         if not self._has_backend():
             return []
-        return self.player.video_get_spu_description() or []
+        return self._safe_vlc_call("get subtitle tracks", [], lambda: self.player.video_get_spu_description() or [])
 
     def get_current_subtitle_track(self) -> int:
         if not self._has_backend():
             return -1
-        return int(self.player.video_get_spu())
+        return self._safe_vlc_call("get current subtitle track", -1, lambda: int(self.player.video_get_spu()))
 
     def set_subtitle_track(self, track_id: int) -> bool:
         if not self._has_backend():
             return False
-        return self.player.video_set_spu(int(track_id)) == 0
+        return self._safe_vlc_call("set subtitle track", False, lambda: self.player.video_set_spu(int(track_id)) == 0)
 
     def open_subtitle_file(self, subtitle_path: str) -> bool:
         if not self._has_backend():
@@ -696,8 +727,13 @@ class PlaybackService(QObject):
         runtime_uri = self._build_vlc_file_uri(subtitle_runtime_path)
 
         # Reset the active SPU track before attaching a fresh external subtitle file.
-        self.player.video_set_spu(-1)
-        subtitle_load_result = self.player.add_slave(vlc.MediaSlaveType.subtitle, runtime_uri, True)
+        if not self.set_subtitle_track(-1):
+            return False
+        subtitle_load_result = self._safe_vlc_call(
+            "attach subtitle file",
+            1,
+            lambda: self.player.add_slave(vlc.MediaSlaveType.subtitle, runtime_uri, True),
+        )
         if subtitle_load_result == 0:
             return True
 
@@ -708,7 +744,11 @@ class PlaybackService(QObject):
             runtime_uri,
             self._current_media_path or "<none>",
         )
-        return self.player.video_set_subtitle_file(subtitle_runtime_path) == 0
+        return self._safe_vlc_call(
+            "attach subtitle file fallback",
+            False,
+            lambda: self.player.video_set_subtitle_file(subtitle_runtime_path) == 0,
+        )
 
     def _cleanup_runtime_subtitle_copy(self):
         if not self._runtime_subtitle_copy_path:
@@ -732,7 +772,7 @@ class PlaybackService(QObject):
                 )
 
         if previous_track_id >= -1:
-            self.player.video_set_spu(int(previous_track_id))
+            self.set_subtitle_track(previous_track_id)
 
     def _remove_subtitle_copy(self, path: str | Path):
         AppTempService.remove_file_if_exists(path, log_context="runtime subtitle cleanup")
