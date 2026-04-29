@@ -2,52 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from utils import format_ms
-
-
-def prompt_force_close_background_tasks(
-    parent: QWidget,
-    *,
-    on_wait,
-    on_force_close,
-) -> QMessageBox:
-    message_box = QMessageBox(parent)
-    message_box.setWindowTitle("Closing Application")
-    message_box.setIcon(QMessageBox.Icon.Warning)
-    message_box.setText("Background subtitle tasks are still stopping.")
-    message_box.setInformativeText(
-        "Wait for them to finish, or force close the application now."
-    )
-    wait_button = message_box.addButton("Wait", QMessageBox.ButtonRole.RejectRole)
-    force_close_button = message_box.addButton(
-        "Force close",
-        QMessageBox.ButtonRole.DestructiveRole,
-    )
-    message_box.setDefaultButton(wait_button)
-    message_box.setWindowModality(Qt.WindowModality.ApplicationModal)
-    message_box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-
-    def _handle_button_clicked(clicked_button):
-        if clicked_button is force_close_button:
-            on_force_close()
-            return
-        on_wait()
-
-    message_box.buttonClicked.connect(_handle_button_clicked)
-    message_box.open()
-    return message_box
-
-
-def show_force_close_still_running(parent: QWidget) -> None:
-    QMessageBox.warning(
-        parent,
-        "Closing Application",
-        "Background subtitle tasks are still stopping.\n\n"
-        "The application cannot close safely yet. Please wait a moment and try again.",
-    )
 
 
 def show_playback_error(parent: QWidget, message: str, path: str) -> None:

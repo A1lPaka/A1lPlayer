@@ -6,15 +6,10 @@ from enum import Enum, auto
 from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Slot
-from PySide6.QtWidgets import QMessageBox, QWidget
+from PySide6.QtWidgets import QWidget
 
 from services.media.MediaLibraryService import MediaLibraryService
 from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
-from ui.MessageBoxService import (
-    prompt_force_close_background_tasks,
-    show_force_close_still_running,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +25,6 @@ class AppClosePhase(Enum):
     CLOSE_REQUESTED = auto()
     GRACEFUL_SHUTDOWN_STARTED = auto()
     WAITING_FOR_SHUTDOWN = auto()
-    WAITING_USER_CHOICE = auto()
     FORCE_SHUTDOWN_STARTED = auto()
     EMERGENCY_SHUTDOWN_STARTED = auto()
     SHUTDOWN_FINISHED = auto()
@@ -38,8 +32,8 @@ class AppClosePhase(Enum):
 
 
 class AppCloseCoordinator(QObject):
-    _GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5000
-    _FORCE_SHUTDOWN_TIMEOUT_MS = 1500
+    _GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2000
+    _FORCE_SHUTDOWN_TIMEOUT_MS = 2000
 
     def __init__(
         self,
@@ -62,9 +56,7 @@ class AppCloseCoordinator(QObject):
         self._close_allowed = False
         self._final_close_requested = False
         self._force_requested = False
-        self._force_timeout_warning_shown = False
         self._emergency_shutdown_requested = False
-        self._timeout_dialog: QMessageBox | None = None
         self._phase = AppClosePhase.IDLE
 
         self._shutdown_timeout_timer = QTimer(parent)
@@ -97,7 +89,6 @@ class AppCloseCoordinator(QObject):
         self._close_allowed = False
         self._final_close_requested = False
         self._force_requested = False
-        self._force_timeout_warning_shown = False
         self._emergency_shutdown_requested = False
         self._phase = AppClosePhase.GRACEFUL_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_shutdown()
@@ -119,56 +110,26 @@ class AppCloseCoordinator(QObject):
         if self._closing_in_progress:
             self._shutdown_timeout_timer.start(timeout_ms)
 
-    def _close_timeout_dialog(self):
-        if self._timeout_dialog is None:
-            return
-        dialog = self._timeout_dialog
-        self._timeout_dialog = None
-        dialog.close()
-
     @Slot()
     def _on_shutdown_timeout(self):
         if not self._closing_in_progress or not self._subtitle_service.is_shutdown_in_progress():
             return
 
         if self._force_requested:
-            if self._force_timeout_warning_shown:
-                self._request_emergency_shutdown_after_force_timeout()
-                return
-            logger.warning("Application force shutdown is still waiting for background tasks to terminate")
-            self._force_timeout_warning_shown = True
-            self._close_timeout_dialog()
-            show_force_close_still_running(self._parent)
-            self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
+            self._request_emergency_shutdown_after_force_timeout()
             return
 
-        if self._timeout_dialog is not None:
-            return
-
-        logger.warning("Application close timeout reached while waiting for subtitle background tasks")
-        self._phase = AppClosePhase.WAITING_USER_CHOICE
-        self._timeout_dialog = prompt_force_close_background_tasks(
-            self._parent,
-            on_wait=self._on_wait_after_timeout,
-            on_force_close=self._on_force_close_after_timeout,
-        )
-        self._timeout_dialog.destroyed.connect(self._on_timeout_dialog_destroyed)
+        logger.warning("Application close timeout reached; force-stopping background subtitle tasks")
+        self._begin_force_shutdown_after_timeout()
 
     @Slot()
-    def _on_wait_after_timeout(self):
-        logger.info("User chose to keep waiting for background subtitle tasks during application close")
-        self._phase = AppClosePhase.WAITING_FOR_SHUTDOWN
-        self._arm_shutdown_timeout(self._GRACEFUL_SHUTDOWN_TIMEOUT_MS)
-
-    @Slot()
-    def _on_force_close_after_timeout(self):
+    def _begin_force_shutdown_after_timeout(self):
         if self._force_requested:
-            logger.info("Repeated force-close choice ignored while async force shutdown is already in progress")
+            logger.info("Repeated force shutdown timeout ignored while async force shutdown is already in progress")
             return
 
-        logger.warning("User requested async force close while background subtitle tasks are still stopping")
+        logger.warning("Application requested async force shutdown while background subtitle tasks are still stopping")
         self._force_requested = True
-        self._force_timeout_warning_shown = False
         self._phase = AppClosePhase.FORCE_SHUTDOWN_STARTED
         has_pending_shutdown = self._subtitle_service.begin_force_shutdown()
         if self._complete_shutdown_if_synchronous(
@@ -184,42 +145,20 @@ class AppCloseCoordinator(QObject):
     def _request_emergency_shutdown_after_force_timeout(self):
         if self._emergency_shutdown_requested:
             logger.critical(
-                "Application emergency shutdown timed out; forcing final close without waiting for subtitle shutdown"
-            )
-            self._finish_shutdown(
-                "Application final close forced after emergency shutdown timeout",
-                request_final_close=True,
+                "Repeated application emergency shutdown timeout; final close is already being forced"
             )
             return
 
         logger.critical(
-            "Application force shutdown timed out again; requesting emergency subtitle shutdown and waiting for completion"
+            "Application force shutdown timed out; requesting emergency subtitle shutdown and final close"
         )
         self._emergency_shutdown_requested = True
         self._phase = AppClosePhase.EMERGENCY_SHUTDOWN_STARTED
-        has_pending_shutdown = self._subtitle_service.begin_emergency_shutdown()
-        if self._complete_shutdown_if_synchronous(
-            has_pending_shutdown,
-            "Application emergency shutdown completed synchronously",
+        self._subtitle_service.begin_emergency_shutdown()
+        self._finish_shutdown(
+            "Application final close forced after emergency subtitle shutdown request",
             request_final_close=True,
-        ):
-            return
-
-        self._phase = AppClosePhase.WAITING_FOR_SHUTDOWN
-        self._arm_shutdown_timeout(self._FORCE_SHUTDOWN_TIMEOUT_MS)
-
-    @Slot()
-    def _on_timeout_dialog_destroyed(self, *_args):
-        should_resume_wait = (
-            self._closing_in_progress
-            and self._phase == AppClosePhase.WAITING_USER_CHOICE
-            and not self._close_allowed
-            and self._subtitle_service.is_shutdown_in_progress()
         )
-        self._timeout_dialog = None
-        if should_resume_wait:
-            logger.info("Close timeout dialog was dismissed without a choice; resuming shutdown wait")
-            self._on_wait_after_timeout()
 
     @Slot()
     def _on_subtitle_shutdown_finished(self):
@@ -254,7 +193,6 @@ class AppCloseCoordinator(QObject):
 
         logger.info(completion_log_message)
         self._shutdown_timeout_timer.stop()
-        self._close_timeout_dialog()
         self._phase = AppClosePhase.SHUTDOWN_FINISHED
         self._complete_local_shutdown()
         if request_final_close:
@@ -265,7 +203,6 @@ class AppCloseCoordinator(QObject):
         self._shutdown_playback()
         self._closing_in_progress = False
         self._force_requested = False
-        self._force_timeout_warning_shown = False
         self._emergency_shutdown_requested = False
         self._close_allowed = True
 

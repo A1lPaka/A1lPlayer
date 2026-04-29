@@ -252,21 +252,6 @@ def _install_message_box_stub():
     def show_whisper_model_install_canceled(_parent):
         message_box.whisper_model_install_canceled_calls += 1
 
-    def prompt_force_close_background_tasks(_parent, on_wait, on_force_close):
-        class _Dialog(QObject):
-            destroyed = Signal(object)
-
-            def close(self):
-                self.destroyed.emit(None)
-
-        dialog = _Dialog()
-        dialog.on_wait = on_wait
-        dialog.on_force_close = on_force_close
-        return dialog
-
-    def show_force_close_still_running(_parent):
-        return None
-
     def confirm_resume_playback(_parent, _path, _position_ms):
         return False
 
@@ -301,8 +286,6 @@ def _install_message_box_stub():
     message_box.show_cuda_runtime_install_failed = show_cuda_runtime_install_failed
     message_box.show_cuda_runtime_install_canceled = show_cuda_runtime_install_canceled
     message_box.show_whisper_model_install_canceled = show_whisper_model_install_canceled
-    message_box.prompt_force_close_background_tasks = prompt_force_close_background_tasks
-    message_box.show_force_close_still_running = show_force_close_still_running
     message_box.confirm_resume_playback = confirm_resume_playback
     message_box.show_media_access_failed = show_media_access_failed
     message_box.show_no_supported_media_found = show_no_supported_media_found

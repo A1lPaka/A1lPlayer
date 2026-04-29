@@ -1,6 +1,6 @@
 from PySide6.QtCore import QCoreApplication
 
-from services.app.AppCloseCoordinator import AppCloseCoordinator, AppClosePhase
+from services.app.AppCloseCoordinator import AppCloseCoordinator
 
 from tests.fakes import FakeCloseTarget, FakeMediaLibrary, FakePlaybackShutdown, FakeSubtitleService
 
@@ -78,14 +78,13 @@ def test_shutdown_finished_schedules_final_close():
     assert target.close_calls == 1
 
 
-def test_timeout_can_escalate_to_force_close(monkeypatch):
+def test_timeout_escalates_to_force_stop():
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True
     subtitle_service.begin_force_shutdown_result = True
     media_library = FakeMediaLibrary()
     playback = FakePlaybackShutdown()
     target = FakeCloseTarget()
-    force_warning_calls = []
     coordinator = AppCloseCoordinator(
         target,
         subtitle_service,
@@ -95,55 +94,14 @@ def test_timeout_can_escalate_to_force_close(monkeypatch):
         teardown_pip_for_shutdown=lambda: None,
     )
 
-    monkeypatch.setattr(
-        "services.app.AppCloseCoordinator.show_force_close_still_running",
-        lambda _parent: force_warning_calls.append(True),
-    )
-
     coordinator.attempt_close()
     coordinator._on_shutdown_timeout()
 
-    assert coordinator._timeout_dialog is not None
-
-    coordinator._on_force_close_after_timeout()
-
     assert subtitle_service.begin_force_shutdown_calls == 1
-
-    coordinator._on_shutdown_timeout()
-
-    assert force_warning_calls == [True]
     assert playback.shutdown_calls == 0
 
 
-def test_dismissing_timeout_dialog_without_choice_resumes_waiting():
-    subtitle_service = FakeSubtitleService()
-    subtitle_service.begin_shutdown_result = True
-    media_library = FakeMediaLibrary()
-    playback = FakePlaybackShutdown()
-    target = FakeCloseTarget()
-    coordinator = AppCloseCoordinator(
-        target,
-        subtitle_service,
-        media_library,
-        shutdown_playback=playback.shutdown,
-        is_pip_active=lambda: False,
-        teardown_pip_for_shutdown=lambda: None,
-    )
-
-    coordinator.attempt_close()
-    coordinator._on_shutdown_timeout()
-
-    assert coordinator._timeout_dialog is not None
-    assert coordinator._phase == AppClosePhase.WAITING_USER_CHOICE
-
-    coordinator._on_timeout_dialog_destroyed()
-
-    assert coordinator._timeout_dialog is None
-    assert coordinator._phase == AppClosePhase.WAITING_FOR_SHUTDOWN
-    assert coordinator._shutdown_timeout_timer.isActive() is True
-
-
-def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(monkeypatch):
+def test_force_timeout_requests_emergency_shutdown_and_final_close():
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True
     subtitle_service.begin_force_shutdown_result = True
@@ -151,7 +109,6 @@ def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(mo
     media_library = FakeMediaLibrary()
     playback = FakePlaybackShutdown()
     target = FakeCloseTarget()
-    force_warning_calls = []
     coordinator = AppCloseCoordinator(
         target,
         subtitle_service,
@@ -161,57 +118,19 @@ def test_repeated_force_timeout_requests_emergency_shutdown_and_keeps_waiting(mo
         teardown_pip_for_shutdown=lambda: None,
     )
 
-    monkeypatch.setattr(
-        "services.app.AppCloseCoordinator.show_force_close_still_running",
-        lambda _parent: force_warning_calls.append(True),
-    )
-
     coordinator.attempt_close()
-    coordinator._on_shutdown_timeout()
-    coordinator._on_force_close_after_timeout()
     coordinator._on_shutdown_timeout()
     coordinator._on_shutdown_timeout()
     QCoreApplication.processEvents()
 
-    assert force_warning_calls == [True]
     assert subtitle_service.begin_force_shutdown_calls == 1
     assert subtitle_service.begin_emergency_shutdown_calls == 1
-    assert media_library.shutdown_calls == 0
-    assert playback.shutdown_calls == 0
-    assert target.close_calls == 0
-
-
-def test_repeated_emergency_timeout_forces_final_close():
-    subtitle_service = FakeSubtitleService()
-    subtitle_service.begin_shutdown_result = True
-    subtitle_service.begin_force_shutdown_result = True
-    subtitle_service.begin_emergency_shutdown_result = True
-    media_library = FakeMediaLibrary()
-    playback = FakePlaybackShutdown()
-    target = FakeCloseTarget()
-    coordinator = AppCloseCoordinator(
-        target,
-        subtitle_service,
-        media_library,
-        shutdown_playback=playback.shutdown,
-        is_pip_active=lambda: False,
-        teardown_pip_for_shutdown=lambda: None,
-    )
-
-    coordinator.attempt_close()
-    coordinator._on_shutdown_timeout()
-    coordinator._on_force_close_after_timeout()
-    coordinator._on_shutdown_timeout()
-    coordinator._on_shutdown_timeout()
-    coordinator._on_shutdown_timeout()
-    QCoreApplication.processEvents()
-
     assert media_library.shutdown_calls == 1
     assert playback.shutdown_calls == 1
     assert target.close_calls == 1
 
 
-def test_repeated_force_close_choice_does_not_repeat_force_shutdown():
+def test_repeated_force_timeout_does_not_repeat_force_shutdown():
     subtitle_service = FakeSubtitleService()
     subtitle_service.begin_shutdown_result = True
     subtitle_service.begin_force_shutdown_result = True
@@ -229,12 +148,11 @@ def test_repeated_force_close_choice_does_not_repeat_force_shutdown():
 
     coordinator.attempt_close()
     coordinator._on_shutdown_timeout()
-    coordinator._on_force_close_after_timeout()
-    coordinator._on_force_close_after_timeout()
+    coordinator._on_shutdown_timeout()
+    coordinator._on_shutdown_timeout()
 
     assert subtitle_service.begin_force_shutdown_calls == 1
-    assert media_library.shutdown_calls == 0
-    assert playback.shutdown_calls == 0
+    assert subtitle_service.begin_emergency_shutdown_calls == 1
 
 
 def test_force_close_with_synchronous_shutdown_requests_final_close():
@@ -255,7 +173,6 @@ def test_force_close_with_synchronous_shutdown_requests_final_close():
 
     coordinator.attempt_close()
     coordinator._on_shutdown_timeout()
-    coordinator._on_force_close_after_timeout()
     QCoreApplication.processEvents()
 
     assert subtitle_service.begin_force_shutdown_calls == 1
