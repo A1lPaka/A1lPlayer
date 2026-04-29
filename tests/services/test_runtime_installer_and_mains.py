@@ -246,6 +246,31 @@ def test_whisper_model_installer_does_not_download_when_install_lock_is_busy(mon
     assert download_calls == []
 
 
+def test_whisper_model_replace_restores_existing_model_when_publish_fails(monkeypatch, workspace_tmp_path):
+    install_target = workspace_tmp_path / "runtime" / "models" / "faster-whisper-small"
+    temp_target = install_target.with_name("faster-whisper-small.partial")
+    install_target.mkdir(parents=True)
+    temp_target.mkdir(parents=True)
+    existing_model = install_target / "model.bin"
+    existing_model.write_text("old model", encoding="utf-8")
+    (temp_target / "model.bin").write_text("new model", encoding="utf-8")
+
+    original_replace = Path.replace
+
+    def fail_temp_publish(self, target):
+        if self == temp_target and target == install_target:
+            raise OSError("publish blocked")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_temp_publish)
+
+    with pytest.raises(OSError, match="publish blocked"):
+        whisper_installer._replace_whisper_model_target(temp_target, install_target)
+
+    assert existing_model.read_text(encoding="utf-8") == "old model"
+    assert install_target.with_name("faster-whisper-small.previous").exists() is False
+
+
 class _FakePipe:
     def __init__(self, lines=()):
         self._lines = list(lines)

@@ -105,9 +105,7 @@ def ensure_whisper_model_installed(
                 raise RuntimeError(
                     "Downloaded snapshot is incomplete: model.bin was not found."
                 )
-            if install_target.exists():
-                shutil.rmtree(install_target)
-            temp_target.replace(install_target)
+            _replace_whisper_model_target(temp_target, install_target)
         except Exception:
             if temp_target.exists():
                 shutil.rmtree(temp_target, ignore_errors=True)
@@ -127,6 +125,25 @@ def build_whisper_model_failure_event(exc: BaseException) -> dict:
         "Failed to install Whisper model.",
         f"{type(exc).__name__}: {exc}",
     )
+
+
+def _replace_whisper_model_target(temp_target: Path, install_target: Path) -> None:
+    backup_target = install_target.with_name(f"{install_target.name}.previous")
+    if backup_target.exists():
+        shutil.rmtree(backup_target)
+
+    if install_target.exists():
+        install_target.replace(backup_target)
+
+    try:
+        temp_target.replace(install_target)
+    except Exception:
+        if backup_target.exists() and not install_target.exists():
+            backup_target.replace(install_target)
+        raise
+
+    if backup_target.exists():
+        shutil.rmtree(backup_target, ignore_errors=True)
 
 
 def _download_snapshot(repo_id: str, revision: str, target: Path) -> None:
