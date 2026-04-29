@@ -139,6 +139,7 @@ def test_cuda_runtime_installer_uses_managed_runtime_target(monkeypatch, workspa
 
 def test_cuda_runtime_installer_replaces_target_after_partial_validation(monkeypatch, workspace_tmp_path):
     install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    monkeypatch.setenv("A1LPLAYER_CUDA_TARGET", str(install_target))
     install_target.mkdir(parents=True)
     (install_target / "old.txt").write_text("old runtime", encoding="utf-8")
     commands = []
@@ -177,6 +178,7 @@ def test_cuda_runtime_installer_replaces_target_after_partial_validation(monkeyp
 
 def test_cuda_runtime_installer_keeps_existing_target_when_partial_validation_fails(monkeypatch, workspace_tmp_path):
     install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    monkeypatch.setenv("A1LPLAYER_CUDA_TARGET", str(install_target))
     install_target.mkdir(parents=True)
     existing_file = install_target / "old.txt"
     existing_file.write_text("old runtime", encoding="utf-8")
@@ -203,6 +205,7 @@ def test_cuda_runtime_installer_keeps_existing_target_when_partial_validation_fa
 
 def test_cuda_runtime_installer_does_not_start_when_install_lock_is_busy(monkeypatch, workspace_tmp_path):
     install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    monkeypatch.setenv("A1LPLAYER_CUDA_TARGET", str(install_target))
     install_calls = []
 
     monkeypatch.setattr(
@@ -231,6 +234,17 @@ def test_cuda_runtime_installer_does_not_start_when_install_lock_is_busy(monkeyp
     assert install_calls == []
 
 
+def test_cuda_runtime_installer_rejects_unmanaged_install_target(monkeypatch, workspace_tmp_path):
+    monkeypatch.setenv("A1LPLAYER_CUDA_TARGET", str(workspace_tmp_path / "runtime" / "components" / "cuda"))
+    request = CudaRuntimeInstallRequest(
+        packages=("nvidia-cublas-cu12==12.9.2.10",),
+        install_target=str(workspace_tmp_path / "outside" / "cuda"),
+    )
+
+    with pytest.raises(RuntimeError, match="Refusing CUDA runtime install target outside managed runtime"):
+        installer.ensure_cuda_runtime_installed(request, lambda _event: None, threading.Event())
+
+
 def test_whisper_model_install_source_uses_pinned_revision():
     source = whisper_installer.resolve_whisper_model_install_source("small")
 
@@ -241,6 +255,7 @@ def test_whisper_model_install_source_uses_pinned_revision():
 
 def test_whisper_model_installer_does_not_download_when_install_lock_is_busy(monkeypatch, workspace_tmp_path):
     download_calls = []
+    monkeypatch.setenv("A1LPLAYER_WRITABLE_RUNTIME_DIR", str(workspace_tmp_path / "runtime"))
 
     @contextmanager
     def busy_lock(_target, _component_name):
@@ -259,6 +274,17 @@ def test_whisper_model_installer_does_not_download_when_install_lock_is_busy(mon
         whisper_installer.ensure_whisper_model_installed(request, lambda _event: None, threading.Event())
 
     assert download_calls == []
+
+
+def test_whisper_model_installer_rejects_unmanaged_install_target(monkeypatch, workspace_tmp_path):
+    monkeypatch.setenv("A1LPLAYER_WRITABLE_RUNTIME_DIR", str(workspace_tmp_path / "runtime"))
+    request = WhisperModelInstallRequest(
+        model_size="small",
+        install_target=str(workspace_tmp_path / "outside" / "faster-whisper-small"),
+    )
+
+    with pytest.raises(RuntimeError, match="Refusing Whisper model install target outside managed runtime"):
+        whisper_installer.ensure_whisper_model_installed(request, lambda _event: None, threading.Event())
 
 
 def test_whisper_model_replace_restores_existing_model_when_publish_fails(monkeypatch, workspace_tmp_path):

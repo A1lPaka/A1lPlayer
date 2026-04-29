@@ -71,7 +71,7 @@ def ensure_whisper_model_installed(
 ) -> None:
     configure_bundled_runtime_paths()
     model_size = normalize_whisper_model_size(request.model_size)
-    install_target = Path(request.install_target)
+    install_target = _validated_whisper_install_target(request.install_target, model_size)
     source = resolve_whisper_model_install_source(model_size)
 
     logger.info(
@@ -125,6 +125,14 @@ def build_whisper_model_failure_event(exc: BaseException) -> dict:
         "Failed to install Whisper model.",
         f"{type(exc).__name__}: {exc}",
     )
+
+
+def _validated_whisper_install_target(raw_target: str, model_size: str) -> Path:
+    install_target = Path(raw_target).expanduser().resolve()
+    expected_target = whisper_model_install_target(model_size).expanduser().resolve()
+    if install_target != expected_target:
+        raise RuntimeError(f"Refusing Whisper model install target outside managed runtime: {install_target}")
+    return install_target
 
 
 def _replace_whisper_model_target(temp_target: Path, install_target: Path) -> None:

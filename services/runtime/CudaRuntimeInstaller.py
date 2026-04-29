@@ -181,7 +181,7 @@ def ensure_cuda_runtime_installed(
     emit_event,
     cancel_event: threading.Event,
 ) -> None:
-    install_target = Path(request.install_target)
+    install_target = _validated_cuda_install_target(request.install_target)
     install_target.parent.mkdir(parents=True, exist_ok=True)
 
     source = resolve_cuda_runtime_install_source()
@@ -249,6 +249,14 @@ def build_cuda_runtime_failure_event(exc: BaseException, diagnostics_text: str =
     else:
         diagnostics = exc_text
     return build_failed_event("Failed to install GPU runtime.", diagnostics)
+
+
+def _validated_cuda_install_target(raw_target: str) -> Path:
+    install_target = Path(raw_target).expanduser().resolve()
+    expected_target = managed_cuda_runtime_root().expanduser().resolve()
+    if install_target != expected_target:
+        raise RuntimeError(f"Refusing CUDA runtime install target outside managed runtime: {install_target}")
+    return install_target
 
 
 def _prepare_cuda_temp_target(temp_target: Path) -> None:
