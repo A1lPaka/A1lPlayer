@@ -263,7 +263,7 @@ class PlaybackService(QObject):
             self.player.set_xwindow(win_id)
         self._disable_vout_input()
 
-    def load_media(self, media_path: str) -> int:
+    def load_media(self, media_path: str, start_position_ms: int = 0) -> int:
         if not self._has_backend():
             self._current_request_id += 1
             self._current_media_path = media_path
@@ -294,6 +294,7 @@ class PlaybackService(QObject):
         media = None
         try:
             media = self.instance.media_new(media_path)
+            self._apply_media_start_time_option(media, start_position_ms)
             self._attach_media_event_handlers(media, self._current_playback_token)
             self.player.set_media(media)
         except _VLC_ERRORS:
@@ -308,6 +309,17 @@ class PlaybackService(QObject):
                 self._release_media(media)
             self._queue_player_event("error", self._current_request_id, media_path)
         return self._current_request_id
+
+    def _apply_media_start_time_option(self, media, start_position_ms: int):
+        position_ms = max(0, int(start_position_ms))
+        if position_ms <= 0 or not hasattr(media, "add_option"):
+            return
+        start_seconds = position_ms / 1000
+        self._safe_vlc_call(
+            "set media start time",
+            None,
+            lambda: media.add_option(f":start-time={start_seconds:g}"),
+        )
 
     def _emit_backend_unavailable_error(self, request_id: int, media_path: str, message: str):
         if self._is_shutdown or request_id != self._current_request_id:

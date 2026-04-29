@@ -26,12 +26,16 @@ class _FakeMedia:
         self.path = path
         self._event_manager = _FakeEventManager()
         self.release_calls = 0
+        self.options = []
 
     def event_manager(self):
         return self._event_manager
 
     def release(self):
         self.release_calls += 1
+
+    def add_option(self, option):
+        self.options.append(option)
 
 
 class _FakePlayer:
@@ -222,6 +226,15 @@ def test_previous_media_is_released_when_replaced(monkeypatch):
 
     assert first_media.release_calls == 1
     assert _FakeVlc.EventType.MediaStateChanged not in first_media.event_manager().callbacks
+
+
+def test_load_media_applies_start_time_option_in_seconds(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+
+    service.load_media("movie.mp4", start_position_ms=25_500)
+
+    assert fake_instance.media[-1].options == [":start-time=25.5"]
 
 
 @pytest.mark.parametrize("failure", ["media_new", "set_media"])

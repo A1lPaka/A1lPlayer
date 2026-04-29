@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Signal
 
 from services.playback.PlaybackEngine import PlaybackService
 from models.PlaybackPlaylist import PlaylistState
@@ -86,7 +86,7 @@ class PlayerPlaybackController(QObject):
         self.engine = PlaybackService(self)
         self.playlist = PlaylistState()
 
-        self._pending_start_position_ms = 0
+        self._start_position_ms = 0
         self._playback_state = self.STATE_STOPPED
         self._active_request_id = 0
         self._media_assigned = False
@@ -146,23 +146,24 @@ class PlayerPlaybackController(QObject):
         return False
 
     def open_paths(self, file_paths: list[str], start_index: int = 0, start_position_ms: int = 0) -> bool:
+        self._start_position_ms = max(0, int(start_position_ms))
         logger.info(
             "Opening playback paths | count=%s | start_index=%s | start_position_ms=%s",
             len(file_paths),
             start_index,
-            start_position_ms,
+            self._start_position_ms,
         )
         if not self.load_playlist(file_paths, start_index=start_index):
+            self._start_position_ms = 0
             return False
-        self.play_loaded_media(start_position_ms=start_position_ms)
+        self.play_loaded_media()
         return True
 
-    def play_loaded_media(self, start_position_ms: int = 0):
-        self._pending_start_position_ms = max(0, int(start_position_ms))
+    def play_loaded_media(self):
         logger.info(
-            "Starting playback for loaded media | media=%s | pending_start_position_ms=%s",
+            "Starting playback for loaded media | media=%s | start_position_ms=%s",
             self.current_media_path(),
-            self._pending_start_position_ms,
+            self._start_position_ms,
         )
         self.engine.sync_audio_to_player()
         self.engine.play()
@@ -455,13 +456,18 @@ class PlayerPlaybackController(QObject):
             return False
 
         self._reset_for_new_media_load(media_path)
-        request_id = self.engine.load_media(media_path)
+        request_id = self._load_engine_media(media_path)
         self._active_request_id = request_id
         self._media_assigned = True
         logger.info("Media assigned to playback engine | request_id=%s | media=%s", request_id, media_path)
         self._set_playback_state(self.STATE_OPENING)
         self.media_assigned.emit(media_path)
         return True
+
+    def _load_engine_media(self, media_path: str) -> int:
+        start_position_ms = self._start_position_ms
+        self._start_position_ms = 0
+        return self.engine.load_media(media_path, start_position_ms=start_position_ms)
 
     def _handle_engine_playing(self, request_id: int):
         if request_id != self._active_request_id:
@@ -476,8 +482,6 @@ class PlayerPlaybackController(QObject):
             self._set_active_media_path(current_path)
             self.media_confirmed.emit(request_id, current_path)
             self.current_media_changed.emit(current_path)
-        if self._pending_start_position_ms > 0:
-            self._apply_pending_start_position(request_id)
 
     def _handle_engine_paused(self, request_id: int):
         if request_id != self._active_request_id:
@@ -505,33 +509,6 @@ class PlayerPlaybackController(QObject):
         self._set_playback_state(self.STATE_STOPPED)
         self.playback_error.emit(request_id, media_path, message)
 
-    def _apply_pending_start_position(self, request_id: int, attempts: int = 8, delay_ms: int = 100):
-        if request_id != self._active_request_id:
-            return
-        if self._pending_start_position_ms <= 0:
-            return
-        if attempts <= 0:
-            logger.warning("Timed out applying pending start position | media=%s", self.current_media_path())
-            self._pending_start_position_ms = 0
-            return
-
-        total_ms = self.engine.get_length()
-        if total_ms > 0:
-            logger.info(
-                "Applying pending start position | media=%s | position_ms=%s | total_ms=%s",
-                self.current_media_path(),
-                self._pending_start_position_ms,
-                total_ms,
-            )
-            self.engine.set_time(min(self._pending_start_position_ms, total_ms))
-            self._pending_start_position_ms = 0
-            return
-
-        QTimer.singleShot(
-            delay_ms,
-            lambda request_id=request_id: self._apply_pending_start_position(request_id, attempts - 1, delay_ms),
-        )
-
     def _set_playback_state(self, state: str):
         if self._playback_state == state:
             return
@@ -550,7 +527,7 @@ class PlayerPlaybackController(QObject):
         self._set_active_media_path(None)
 
     def _clear_stopped_playback_state(self):
-        self._pending_start_position_ms = 0
+        self._start_position_ms = 0
         self._clear_playback_interruptions()
         self._clear_confirmed_playback_state()
 
@@ -567,12 +544,12 @@ class PlayerPlaybackController(QObject):
         self._last_confirmed_media_path = None
 
     def _clear_after_fatal_playback_error(self):
-        self._pending_start_position_ms = 0
+        self._start_position_ms = 0
         self._clear_playback_interruptions()
         self._clear_assigned_media_state()
 
     def _reset_for_shutdown(self):
-        self._pending_start_position_ms = 0
+        self._start_position_ms = 0
         self._clear_playback_interruptions()
         self._clear_assigned_media_state()
         self._set_playback_state(self.STATE_STOPPED)

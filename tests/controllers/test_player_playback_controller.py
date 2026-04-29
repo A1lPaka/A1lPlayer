@@ -28,7 +28,6 @@ def test_open_paths_assigns_media_and_session_snapshot_waits_for_confirmation(wo
     assert controller.get_session_snapshot() is None
     assert assigned.calls == [(media_path,)]
 
-    controller.engine.set_time(250)
     controller.engine.set_length(1000)
     controller.engine.playing.emit(controller.current_request_id())
 
@@ -37,9 +36,44 @@ def test_open_paths_assigns_media_and_session_snapshot_waits_for_confirmation(wo
     assert confirmed.calls == [(controller.current_request_id(), media_path)]
     assert controller.get_session_snapshot() == {
         "path": media_path,
-        "position_ms": 250,
+        "position_ms": 0,
         "total_ms": 1000,
     }
+
+
+def test_open_paths_passes_start_position_to_engine_load(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    media_path = _make_media_files(workspace_tmp_path, ["movie.mp4"])[0]
+    load_calls = []
+    original_load_media = controller.engine.load_media
+
+    def track_load_media(path, start_position_ms=0):
+        load_calls.append((path, start_position_ms))
+        return original_load_media(path, start_position_ms=start_position_ms)
+
+    controller.engine.load_media = track_load_media
+
+    assert controller.open_paths([media_path], start_position_ms=250) is True
+
+    assert load_calls == [(media_path, 250)]
+
+
+def test_start_position_is_consumed_before_playlist_next_load(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, second_path = _make_media_files(workspace_tmp_path, ["first.mp4", "second.mp4"])
+    load_calls = []
+    original_load_media = controller.engine.load_media
+
+    def track_load_media(path, start_position_ms=0):
+        load_calls.append((path, start_position_ms))
+        return original_load_media(path, start_position_ms=start_position_ms)
+
+    controller.engine.load_media = track_load_media
+
+    assert controller.open_paths([first_path, second_path], start_position_ms=250) is True
+    assert controller.play_next() is True
+
+    assert load_calls == [(first_path, 250), (second_path, 0)]
 
 
 def test_fatal_playback_error_clears_assigned_media_and_emits_error(workspace_tmp_path):

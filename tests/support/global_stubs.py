@@ -39,7 +39,7 @@ def _install_playback_engine_stub():
             self._is_playing = False
             self._is_shutdown = False
 
-        def load_media(self, media_path: str) -> int:
+        def load_media(self, media_path: str, start_position_ms: int = 0) -> int:
             request_id = self._next_request_id
             self._next_request_id += 1
             self.loaded_media.append(media_path)
