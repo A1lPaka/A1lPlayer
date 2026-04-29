@@ -1,5 +1,6 @@
 import importlib.util
 import builtins
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -154,6 +155,14 @@ def test_module_import_survives_missing_vlc(monkeypatch):
             module.PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE,
         )
     ]
+
+
+def test_real_playback_engine_loader_bypasses_global_stub(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    stub_module = sys.modules.get("services.playback.PlaybackEngine")
+
+    assert module is not stub_module
+    assert Path(module.__file__).name == "PlaybackEngine.py"
 
 
 def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
