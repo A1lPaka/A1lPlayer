@@ -23,6 +23,15 @@ release/
 vendor/runtime/
 runtime/components/*
 !runtime/components/.gitkeep
+runtime/cuda-wheelhouse/*.whl
 runtime/huggingface/
 runtime/models/*
+!runtime/models/faster-whisper-tiny/
+!runtime/models/faster-whisper-base/
+!runtime/models/faster-whisper-small/
+!runtime/models/faster-whisper-medium/
+!runtime/models/faster-whisper-large-v3/
+runtime/models/faster-whisper-*/*
+!runtime/models/faster-whisper-*/.gitkeep
+!runtime/models/faster-whisper-*/README.md
 !runtime/models/.gitkeep
