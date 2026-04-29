@@ -249,6 +249,38 @@ def test_cuda_worker_buffers_invalid_json_and_still_finishes(monkeypatch):
     assert process.stdin.closed is True
 
 
+def test_cuda_worker_reports_target_resolution_failure_from_run(monkeypatch):
+    import services.runtime.CudaRuntimeInstallWorker as module
+
+    monkeypatch.setattr(module, "resolve_cuda_runtime_install_target", lambda: (_ for _ in ()).throw(PermissionError("runtime denied")))
+
+    worker = module.CudaRuntimeInstallWorker(["pkg"])
+    failed = []
+    worker.failed.connect(lambda message: failed.append(message))
+
+    worker.run()
+
+    assert len(failed) == 1
+    assert "GPU runtime installation failed to start." in failed[0]
+    assert "PermissionError: runtime denied" in failed[0]
+
+
+def test_whisper_worker_reports_target_resolution_failure_from_run(monkeypatch):
+    import services.runtime.WhisperModelInstallWorker as module
+
+    monkeypatch.setattr(module, "resolve_whisper_model_install_target", lambda _model: (_ for _ in ()).throw(PermissionError("models denied")))
+
+    worker = module.WhisperModelInstallWorker("small")
+    failed = []
+    worker.failed.connect(lambda message: failed.append(message))
+
+    worker.run()
+
+    assert len(failed) == 1
+    assert "Whisper model installation failed to start." in failed[0]
+    assert "PermissionError: models denied" in failed[0]
+
+
 def test_known_terminal_events_emit_worker_signals(monkeypatch):
     import services.runtime.CudaRuntimeInstallWorker as cuda_module
 

@@ -36,23 +36,14 @@ class WhisperModelInstallWorker(QObject, JsonSubprocessWorkerBase):
 
     def __init__(self, model_size: str):
         super().__init__()
-        self._request = WhisperModelInstallRequest(
-            model_size=str(model_size).strip(),
-            install_target=str(resolve_whisper_model_install_target(model_size)),
-        )
+        self._model_size = str(model_size).strip()
+        self._request: WhisperModelInstallRequest | None = None
         self._init_json_subprocess_worker()
         self._stderr_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
         self._stdout_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
 
     @Slot()
     def run(self):
-        launch_spec = build_runtime_installer_launch(INSTALLER_WHISPER_MODEL)
-        logger.info(
-            "Whisper model installer worker started | model=%s | target=%s | execution_mode=%s",
-            self._request.model_size,
-            self._request.install_target,
-            launch_spec.execution_mode,
-        )
         self.status_changed.emit("Preparing Whisper model download...")
         self.details_changed.emit(
             "Launching isolated installer subsystem...\n"
@@ -64,6 +55,17 @@ class WhisperModelInstallWorker(QObject, JsonSubprocessWorkerBase):
             return
 
         try:
+            self._request = WhisperModelInstallRequest(
+                model_size=self._model_size,
+                install_target=str(resolve_whisper_model_install_target(self._model_size)),
+            )
+            launch_spec = build_runtime_installer_launch(INSTALLER_WHISPER_MODEL)
+            logger.info(
+                "Whisper model installer worker started | model=%s | target=%s | execution_mode=%s",
+                self._request.model_size,
+                self._request.install_target,
+                launch_spec.execution_mode,
+            )
             result = self._run_json_subprocess(
                 launch_spec=launch_spec,
                 request_json=self._request.to_json(),
@@ -94,7 +96,7 @@ class WhisperModelInstallWorker(QObject, JsonSubprocessWorkerBase):
             return
 
     def _on_cancel_requested(self):
-        logger.info("Whisper model installer worker cancel requested | model=%s", self._request.model_size)
+        logger.info("Whisper model installer worker cancel requested | model=%s", self._model_size)
 
     def force_stop(self):
         self._request_force_subprocess_stop(

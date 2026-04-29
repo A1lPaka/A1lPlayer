@@ -36,23 +36,14 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
 
     def __init__(self, packages: list[str]):
         super().__init__()
-        self._request = CudaRuntimeInstallRequest(
-            packages=tuple(str(package).strip() for package in packages if str(package).strip()),
-            install_target=str(resolve_cuda_runtime_install_target()),
-        )
+        self._packages = tuple(str(package).strip() for package in packages if str(package).strip())
+        self._request: CudaRuntimeInstallRequest | None = None
         self._init_json_subprocess_worker()
         self._stderr_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
         self._stdout_buffer = BoundedLineBuffer(max_lines=self._MAX_DIAGNOSTIC_LINES)
 
     @Slot()
     def run(self):
-        launch_spec = build_runtime_installer_launch(INSTALLER_CUDA_RUNTIME)
-        logger.info(
-            "CUDA runtime installer worker started | packages=%s | target=%s | execution_mode=%s",
-            ", ".join(self._request.packages),
-            self._request.install_target,
-            launch_spec.execution_mode,
-        )
         self.status_changed.emit("Preparing GPU runtime installer...")
         self.details_changed.emit(
             "Launching isolated installer subsystem...\n"
@@ -65,6 +56,17 @@ class CudaRuntimeInstallWorker(QObject, JsonSubprocessWorkerBase):
             return
 
         try:
+            self._request = CudaRuntimeInstallRequest(
+                packages=self._packages,
+                install_target=str(resolve_cuda_runtime_install_target()),
+            )
+            launch_spec = build_runtime_installer_launch(INSTALLER_CUDA_RUNTIME)
+            logger.info(
+                "CUDA runtime installer worker started | packages=%s | target=%s | execution_mode=%s",
+                ", ".join(self._request.packages),
+                self._request.install_target,
+                launch_spec.execution_mode,
+            )
             result = self._run_json_subprocess(
                 launch_spec=launch_spec,
                 request_json=self._request.to_json(),
