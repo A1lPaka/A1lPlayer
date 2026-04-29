@@ -7,6 +7,7 @@ import shutil
 import threading
 
 from services.runtime.RuntimeExecution import get_runtime_mode_label
+from services.runtime.RuntimeInstallLock import runtime_install_lock
 from services.runtime.RuntimeInstallerProtocol import (
     WhisperModelInstallRequest,
     build_failed_event,
@@ -85,31 +86,32 @@ def ensure_whisper_model_installed(
     if cancel_event.is_set():
         raise WhisperModelInstallCanceledError("Installation canceled before launch.")
 
-    if is_valid_whisper_model_dir(install_target):
-        _emit_status(emit_event, "Whisper model already installed.", request, source)
-        emit_event(build_finished_event())
-        return
+    with runtime_install_lock(install_target, f"Whisper model '{model_size}'"):
+        if is_valid_whisper_model_dir(install_target):
+            _emit_status(emit_event, "Whisper model already installed.", request, source)
+            emit_event(build_finished_event())
+            return
 
-    temp_target = install_target.with_name(f"{install_target.name}.partial")
-    if temp_target.exists():
-        shutil.rmtree(temp_target)
-    temp_target.mkdir(parents=True, exist_ok=True)
-
-    try:
-        _download_snapshot(source.repo_id, source.revision, temp_target)
-        if cancel_event.is_set():
-            raise WhisperModelInstallCanceledError("Installation canceled after download.")
-        if not is_valid_whisper_model_dir(temp_target):
-            raise RuntimeError(
-                "Downloaded snapshot is incomplete: model.bin was not found."
-            )
-        if install_target.exists():
-            shutil.rmtree(install_target)
-        temp_target.replace(install_target)
-    except Exception:
+        temp_target = install_target.with_name(f"{install_target.name}.partial")
         if temp_target.exists():
-            shutil.rmtree(temp_target, ignore_errors=True)
-        raise
+            shutil.rmtree(temp_target)
+        temp_target.mkdir(parents=True, exist_ok=True)
+
+        try:
+            _download_snapshot(source.repo_id, source.revision, temp_target)
+            if cancel_event.is_set():
+                raise WhisperModelInstallCanceledError("Installation canceled after download.")
+            if not is_valid_whisper_model_dir(temp_target):
+                raise RuntimeError(
+                    "Downloaded snapshot is incomplete: model.bin was not found."
+                )
+            if install_target.exists():
+                shutil.rmtree(install_target)
+            temp_target.replace(install_target)
+        except Exception:
+            if temp_target.exists():
+                shutil.rmtree(temp_target, ignore_errors=True)
+            raise
 
     _emit_status(emit_event, "Whisper model installed.", request, source)
     emit_event(build_finished_event())

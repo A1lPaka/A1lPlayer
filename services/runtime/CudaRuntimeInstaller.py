@@ -5,12 +5,14 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import time
 
 from services.runtime.RuntimeExecution import get_runtime_mode_label, is_frozen_runtime
+from services.runtime.RuntimeInstallLock import runtime_install_lock
 from services.runtime.RuntimeInstallerProtocol import (
     CudaRuntimeInstallRequest,
     build_failed_event,
@@ -200,33 +202,34 @@ def ensure_cuda_runtime_installed(
     if cancel_event.is_set():
         raise CudaRuntimeInstallCanceledError("Installation canceled before launch.")
 
-    if request.packages:
-        temp_target = install_target.with_name(f"{install_target.name}.partial")
-        _prepare_cuda_temp_target(temp_target)
-        try:
-            temp_request = CudaRuntimeInstallRequest(
-                packages=request.packages,
-                install_target=str(temp_target),
-            )
-            install_command = build_cuda_runtime_install_command(temp_request, source, python_executable)
-            _run_install_command(
-                install_command=install_command,
-                reporter=reporter,
-                diagnostics=diagnostics,
-                cancel_event=cancel_event,
-            )
-            if cancel_event.is_set():
-                raise CudaRuntimeInstallCanceledError("Installation canceled after download.")
-            _validate_cuda_runtime_target(temp_target)
-            _replace_cuda_runtime_target(temp_target, install_target)
-        except Exception:
-            if temp_target.exists():
-                shutil.rmtree(temp_target, ignore_errors=True)
-            raise
-    else:
-        logger.info("CUDA installer subsystem detected an empty package set; validating existing runtime only")
+    with runtime_install_lock(install_target, "CUDA runtime"):
+        if request.packages:
+            temp_target = install_target.with_name(f"{install_target.name}.partial")
+            _prepare_cuda_temp_target(temp_target)
+            try:
+                temp_request = CudaRuntimeInstallRequest(
+                    packages=request.packages,
+                    install_target=str(temp_target),
+                )
+                install_command = build_cuda_runtime_install_command(temp_request, source, python_executable)
+                _run_install_command(
+                    install_command=install_command,
+                    reporter=reporter,
+                    diagnostics=diagnostics,
+                    cancel_event=cancel_event,
+                )
+                if cancel_event.is_set():
+                    raise CudaRuntimeInstallCanceledError("Installation canceled after download.")
+                _validate_cuda_runtime_target(temp_target)
+                _replace_cuda_runtime_target(temp_target, install_target)
+            except Exception:
+                if temp_target.exists():
+                    shutil.rmtree(temp_target, ignore_errors=True)
+                raise
+        else:
+            logger.info("CUDA installer subsystem detected an empty package set; validating existing runtime only")
 
-    _validate_cuda_runtime_target(install_target)
+        _validate_cuda_runtime_target(install_target)
 
     reporter.emit("GPU runtime installed.", force=True)
     emit_event(build_finished_event())
@@ -295,6 +298,7 @@ def _run_install_command(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        **_subprocess_spawn_options(),
     )
     stdout_thread = threading.Thread(
         target=_collect_process_output,
@@ -320,7 +324,15 @@ def _run_install_command(
             if return_code is not None:
                 break
             time.sleep(0.2)
+    except BaseException:
+        if process.poll() is None:
+            logger.warning("CUDA installer subsystem interrupted; terminating active installer process")
+            _terminate_install_process(process)
+        raise
     finally:
+        if cancel_event.is_set() and process.poll() is None:
+            logger.warning("CUDA installer subsystem cancel observed during cleanup; terminating active installer process")
+            _terminate_install_process(process)
         if stdout_thread.is_alive():
             stdout_thread.join(timeout=0.5)
         if stderr_thread.is_alive():
@@ -352,14 +364,45 @@ def _collect_process_output(stream, diagnostics: BoundedLineBuffer, reporter: _I
 def _terminate_install_process(process: subprocess.Popen[str]):
     if process.poll() is not None:
         return
+    if os.name == "nt":
+        _kill_install_process_tree(process)
+        process.wait(timeout=1.0)
+        return
     try:
-        process.terminate()
+        _request_graceful_install_stop(process)
         process.wait(timeout=1.5)
         return
     except subprocess.TimeoutExpired:
         logger.warning("CUDA installer subprocess did not terminate gracefully; killing it")
-    process.kill()
+    _kill_install_process_tree(process)
     process.wait(timeout=1.0)
+
+
+def _request_graceful_install_stop(process: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        process.terminate()
+        return
+    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+
+
+def _kill_install_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return
+    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+
+
+def _subprocess_spawn_options() -> dict:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 def _close_stream(stream):

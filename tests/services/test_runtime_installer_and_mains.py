@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from io import StringIO
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ from services.runtime import CudaRuntimeInstaller as installer
 from services.runtime import RuntimeHelperMain as helper_main
 from services.runtime import RuntimeInstallerMain as installer_main
 from services.runtime import WhisperModelInstaller as whisper_installer
+from services.runtime.RuntimeInstallLock import RuntimeInstallLockError
 from services.runtime.RuntimeExecution import EVENT_CANCELED, EVENT_FAILED, EVENT_FINISHED
 from services.runtime.RuntimeHelperProtocol import SubtitleGenerationRequest
 from services.runtime.RuntimeInstallerProtocol import (
@@ -184,12 +186,64 @@ def test_cuda_runtime_installer_keeps_existing_target_when_partial_validation_fa
     assert not install_target.with_name("cuda.partial").exists()
 
 
+def test_cuda_runtime_installer_does_not_start_when_install_lock_is_busy(monkeypatch, workspace_tmp_path):
+    install_target = workspace_tmp_path / "runtime" / "components" / "cuda"
+    install_calls = []
+
+    monkeypatch.setattr(
+        installer,
+        "resolve_cuda_runtime_install_source",
+        lambda: installer.CudaRuntimeInstallSource("configured-index", ("--index-url", "https://example.invalid"), "index"),
+    )
+    monkeypatch.setattr(installer, "resolve_installer_python_executable", lambda: "python.exe")
+    monkeypatch.setattr(installer, "_run_install_command", lambda *_args, **_kwargs: install_calls.append(True))
+
+    @contextmanager
+    def busy_lock(_target, _component_name):
+        raise RuntimeInstallLockError("busy")
+        yield
+
+    monkeypatch.setattr(installer, "runtime_install_lock", busy_lock)
+
+    request = CudaRuntimeInstallRequest(
+        packages=("nvidia-cublas-cu12==12.9.2.10",),
+        install_target=str(install_target),
+    )
+
+    with pytest.raises(RuntimeInstallLockError, match="busy"):
+        installer.ensure_cuda_runtime_installed(request, lambda _event: None, threading.Event())
+
+    assert install_calls == []
+
+
 def test_whisper_model_install_source_uses_pinned_revision():
     source = whisper_installer.resolve_whisper_model_install_source("small")
 
     assert source.repo_id == "Systran/faster-whisper-small"
     assert source.revision == "536b066"
     assert source.location == "https://huggingface.co/Systran/faster-whisper-small/tree/536b066"
+
+
+def test_whisper_model_installer_does_not_download_when_install_lock_is_busy(monkeypatch, workspace_tmp_path):
+    download_calls = []
+
+    @contextmanager
+    def busy_lock(_target, _component_name):
+        raise RuntimeInstallLockError("busy")
+        yield
+
+    monkeypatch.setattr(whisper_installer, "runtime_install_lock", busy_lock)
+    monkeypatch.setattr(whisper_installer, "_download_snapshot", lambda *_args, **_kwargs: download_calls.append(True))
+
+    request = WhisperModelInstallRequest(
+        model_size="small",
+        install_target=str(workspace_tmp_path / "runtime" / "models" / "faster-whisper-small"),
+    )
+
+    with pytest.raises(RuntimeInstallLockError, match="busy"):
+        whisper_installer.ensure_whisper_model_installed(request, lambda _event: None, threading.Event())
+
+    assert download_calls == []
 
 
 class _FakePipe:
@@ -207,6 +261,7 @@ class _FakePipe:
 class _FakeProcess:
     def __init__(self, *, returncode=0, stdout=(), stderr=()):
         self.returncode = returncode
+        self.pid = 1234
         self.stdout = _FakePipe(stdout)
         self.stderr = _FakePipe(stderr)
         self.terminated = False
@@ -254,7 +309,7 @@ def test_cuda_runtime_installer_cancel_event_terminates_process(monkeypatch):
             super().__init__(returncode=None)
 
         def poll(self):
-            return None
+            return self.returncode
 
         def wait(self, timeout=None):
             self.returncode = -15
@@ -262,7 +317,10 @@ def test_cuda_runtime_installer_cancel_event_terminates_process(monkeypatch):
 
     process = _RunningProcess()
     cancel_event = threading.Event()
+    taskkill_calls = []
+    monkeypatch.setattr(installer.os, "name", "nt", raising=False)
     monkeypatch.setattr(installer.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(installer.subprocess, "run", lambda command, **_kwargs: taskkill_calls.append(command))
     monkeypatch.setattr(installer.time, "sleep", lambda _seconds: cancel_event.set())
 
     with pytest.raises(installer.CudaRuntimeInstallCanceledError):
@@ -273,7 +331,43 @@ def test_cuda_runtime_installer_cancel_event_terminates_process(monkeypatch):
             cancel_event=cancel_event,
         )
 
-    assert process.terminated is True
+    assert taskkill_calls == [["taskkill", "/PID", "1234", "/T", "/F"]]
+
+
+def test_cuda_runtime_installer_signal_interrupt_terminates_process(monkeypatch):
+    class _RunningProcess(_FakeProcess):
+        def __init__(self):
+            super().__init__(returncode=None)
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            self.returncode = -15
+            return self.returncode
+
+    process = _RunningProcess()
+    cancel_event = threading.Event()
+    taskkill_calls = []
+    monkeypatch.setattr(installer.os, "name", "nt", raising=False)
+    monkeypatch.setattr(installer.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(installer.subprocess, "run", lambda command, **_kwargs: taskkill_calls.append(command))
+
+    def interrupt(_seconds):
+        cancel_event.set()
+        raise installer.CudaRuntimeInstallCanceledError("Interrupted by signal 15")
+
+    monkeypatch.setattr(installer.time, "sleep", interrupt)
+
+    with pytest.raises(installer.CudaRuntimeInstallCanceledError):
+        installer._run_install_command(
+            install_command=["python", "-m", "pip"],
+            reporter=SimpleNamespace(emit=lambda *_args, **_kwargs: None),
+            diagnostics=installer.BoundedLineBuffer(max_lines=20),
+            cancel_event=cancel_event,
+        )
+
+    assert taskkill_calls == [["taskkill", "/PID", "1234", "/T", "/F"]]
 
 
 def test_runtime_helper_main_invalid_stdin_emits_failed_event(monkeypatch):
