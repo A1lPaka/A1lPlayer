@@ -96,6 +96,7 @@ class SubtitleGenerationJobRunner(QObject):
             return
 
         self._suspend_before_start()
+        # Give Qt one tick to apply the UI suspend before the worker thread starts.
         QTimer.singleShot(
             0,
             lambda run_id=run_id, thread=thread, worker=worker: self._deferred_start_worker(
