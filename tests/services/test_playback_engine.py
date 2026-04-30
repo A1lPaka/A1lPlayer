@@ -47,6 +47,7 @@ class _FakePlayer:
         self.audio_track = -1
         self.audio_device = "__default__"
         self.audio_device_list = None
+        self.video_size = (0, 0)
 
     def set_media(self, media):
         self.media = media
@@ -61,6 +62,9 @@ class _FakePlayer:
         self.spu = int(track_id)
         self.spu_calls.append(int(track_id))
         return 0
+
+    def video_get_size(self, _index):
+        return self.video_size
 
     def add_slave(self, *_args):
         result = self.add_slave_results.pop(0) if self.add_slave_results else 0
@@ -256,6 +260,21 @@ def test_load_media_applies_start_time_option_in_seconds(monkeypatch):
     service.load_media("movie.mp4", start_position_ms=25_500)
 
     assert fake_instance.media[-1].options == [":start-time=25.5"]
+
+
+def test_video_dimensions_use_cache_until_new_media_load(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    service.load_media("A.mp4")
+
+    fake_instance.player.video_size = (1280, 720)
+    assert service.get_video_dimensions() == (1280, 720)
+
+    fake_instance.player.video_size = (0, 0)
+    assert service.get_video_dimensions() == (1280, 720)
+
+    service.load_media("B.mp4")
+    assert service.get_video_dimensions() is None
 
 
 @pytest.mark.parametrize("failure", ["media_new", "set_media"])

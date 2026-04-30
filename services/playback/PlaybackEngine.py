@@ -64,6 +64,8 @@ class PlaybackService(QObject):
     _AUDIO_SYNC_DELAY_MS = 150
     _FAILED_RUNTIME_SUBTITLE_CLEANUP_DELAY_MS = 1500
     _MAX_VLC_LINKED_LIST_ITEMS = 512
+    _VIDEO_GEOMETRY_PROBE_ATTEMPTS = 25
+    _VIDEO_GEOMETRY_PROBE_DELAY_MS = 120
 
     playing = Signal(int)
     paused = Signal(int)
@@ -84,6 +86,7 @@ class PlaybackService(QObject):
         self._desired_audio_device_id: str | None = None
         self._current_media_path: str | None = None
         self._bound_win_id: int | None = None
+        self._cached_video_geometry: tuple[int, int] | None = None
         self._last_video_geometry: tuple[int, int] | None = None
         self._runtime_subtitle_copy_path: str | None = None
         self._current_request_id = 0
@@ -166,6 +169,7 @@ class PlaybackService(QObject):
         self._current_media_path = None
         self._current_playback_token = None
         self._bound_win_id = None
+        self._cached_video_geometry = None
         self._last_video_geometry = None
 
     def _release_backend(self):
@@ -327,6 +331,7 @@ class PlaybackService(QObject):
         self._current_request_id += 1
         self._current_media_path = media_path
         self._current_playback_token = _PlaybackToken(self._current_request_id, media_path)
+        self._cached_video_geometry = None
         self._last_video_geometry = None
         logger.info("Loading media into VLC | request_id=%s | media=%s", self._current_request_id, media_path)
         self._detach_current_media_event_handlers()
@@ -416,22 +421,27 @@ class PlaybackService(QObject):
         return int(self.player.get_length())
 
     def get_video_dimensions(self) -> tuple[int, int] | None:
+        return self._read_video_dimensions(use_cache=True)
+
+    def _read_video_dimensions(self, *, use_cache: bool) -> tuple[int, int] | None:
         if not self._has_backend():
             return None
         try:
             size = self.player.video_get_size(0)
         except _VLC_ERRORS:
             logger.debug("VLC video size is not available yet", exc_info=True)
-            return None
+            return self._cached_video_geometry if use_cache else None
 
         if not size or len(size) < 2:
-            return None
+            return self._cached_video_geometry if use_cache else None
 
         width = int(size[0] or 0)
         height = int(size[1] or 0)
         if width <= 0 or height <= 0:
-            return None
-        return width, height
+            return self._cached_video_geometry if use_cache else None
+        geometry = (width, height)
+        self._cached_video_geometry = geometry
+        return geometry
 
     def set_position(self, position: float):
         if not self._has_backend():
@@ -721,7 +731,12 @@ class PlaybackService(QObject):
         except _VLC_ERRORS:
             logger.debug("Failed to disable VLC key input", exc_info=True)
 
-    def _schedule_video_geometry_probe(self, request_id: int, attempts: int = 12, delay_ms: int = 120):
+    def _schedule_video_geometry_probe(
+        self,
+        request_id: int,
+        attempts: int = _VIDEO_GEOMETRY_PROBE_ATTEMPTS,
+        delay_ms: int = _VIDEO_GEOMETRY_PROBE_DELAY_MS,
+    ):
         if self._is_shutdown:
             return
         if request_id != self._current_request_id:
@@ -729,7 +744,7 @@ class PlaybackService(QObject):
         if attempts <= 0:
             return
 
-        geometry = self.get_video_dimensions()
+        geometry = self._read_video_dimensions(use_cache=False)
         if geometry is not None:
             if geometry != self._last_video_geometry:
                 self._last_video_geometry = geometry
