@@ -4,7 +4,6 @@ import importlib
 import os
 import shutil
 import threading
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -14,7 +13,7 @@ from utils.runtime_assets import configure_bundled_runtime_paths
 vlc = None
 _VLC_IMPORT_ERROR = None
 
-from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 from services.app.AppTempService import AppTempService
 
 VLC_AUDIO_CHANNEL_MONO = 7
@@ -60,6 +59,66 @@ class _PlaybackToken:
     media_path: str
 
 
+class _VlcMediaEventRelay(QObject):
+    _posted_event = Signal(str, int, str)
+    player_event = Signal(str, int, str)
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self._closed = False
+        self._lock = threading.Lock()
+        self._posted_event.connect(self._deliver_posted_event, Qt.QueuedConnection)
+
+    def post_player_event(self, event_name: str, request_id: int, media_path: str) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            self._posted_event.emit(event_name, int(request_id), str(media_path))
+            return True
+
+    def close(self):
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            self.player_event.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+
+    @Slot(str, int, str)
+    def _deliver_posted_event(self, event_name: str, request_id: int, media_path: str):
+        with self._lock:
+            if self._closed:
+                return
+        self.player_event.emit(event_name, request_id, media_path)
+
+    def is_closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+
+def _post_vlc_media_state_changed_event(event, relay: _VlcMediaEventRelay, token: _PlaybackToken):
+    state = int(event.u.new_state)
+    if state == int(vlc.State.Playing.value):
+        relay.post_player_event("playing", token.request_id, token.media_path)
+        return
+    if state == int(vlc.State.Paused.value):
+        relay.post_player_event("paused", token.request_id, token.media_path)
+        return
+    if state == int(vlc.State.Stopped.value):
+        relay.post_player_event("stopped", token.request_id, token.media_path)
+        return
+    if state == int(vlc.State.Ended.value):
+        relay.post_player_event("ended", token.request_id, token.media_path)
+        return
+    if state != int(vlc.State.Error.value):
+        return
+
+    logger.error("VLC reported playback error | request_id=%s | media=%s", token.request_id, token.media_path)
+    relay.post_player_event("error", token.request_id, token.media_path)
+
+
 class PlaybackService(QObject):
     _AUDIO_SYNC_DELAY_MS = 150
     _FAILED_RUNTIME_SUBTITLE_CLEANUP_DELAY_MS = 5000
@@ -96,10 +155,12 @@ class PlaybackService(QObject):
         self.instance = None
         self.player = None
         self._backend_error_message: str | None = None
-        self._queued_player_events: deque[tuple[str, int, str]] = deque()
-        self._queued_player_events_lock = threading.Lock()
-        self._player_events_flush_scheduled = False
         self._is_shutdown = False
+        # Keep the relay outside the PlaybackService QObject tree so late libVLC callbacks
+        # can still see its closed state after the service starts tearing down.
+        self._vlc_event_relay = _VlcMediaEventRelay()
+        self._vlc_event_relay.player_event.connect(self._handle_player_event_from_qt_thread)
+        self.destroyed.connect(self._vlc_event_relay.close)
         self._audio_modes = self._build_audio_modes()
         self._delayed_audio_sync_timer = QTimer(self)
         self._delayed_audio_sync_timer.setSingleShot(True)
@@ -154,9 +215,7 @@ class PlaybackService(QObject):
         logger.info("Shutting down VLC playback backend | media=%s", self._current_media_path or "<none>")
         self._is_shutdown = True
         self._delayed_audio_sync_timer.stop()
-        with self._queued_player_events_lock:
-            self._queued_player_events.clear()
-            self._player_events_flush_scheduled = False
+        self._vlc_event_relay.close()
         self._detach_current_media_event_handlers()
         player = getattr(self, "player", None)
         if player is not None:
@@ -229,7 +288,12 @@ class PlaybackService(QObject):
 
     def _attach_media_event_handlers(self, media, token: _PlaybackToken):
         event_manager = media.event_manager()
-        event_manager.event_attach(vlc.EventType.MediaStateChanged, self._on_vlc_media_state_changed_event, token)
+        event_manager.event_attach(
+            vlc.EventType.MediaStateChanged,
+            _post_vlc_media_state_changed_event,
+            self._vlc_event_relay,
+            token,
+        )
         self._current_media = media
         self._current_media_event_manager = event_manager
 
@@ -351,7 +415,7 @@ class PlaybackService(QObject):
                 self._detach_current_media_event_handlers()
             else:
                 self._release_media(media)
-            self._queue_player_event("error", self._current_request_id, media_path)
+            self._handle_player_event_from_qt_thread("error", self._current_request_id, media_path)
         return self._current_request_id
 
     def _apply_media_start_time_option(self, media, start_position_ms: int):
@@ -639,84 +703,41 @@ class PlaybackService(QObject):
         self._apply_desired_audio_state()
         self._delayed_audio_sync_timer.start()
 
-    def _on_vlc_media_state_changed_event(self, event, token: _PlaybackToken):
-        state = int(event.u.new_state)
-        if state == int(vlc.State.Playing.value):
-            self._queue_player_event("playing", token.request_id, token.media_path)
-            return
-        if state == int(vlc.State.Paused.value):
-            self._queue_player_event("paused", token.request_id, token.media_path)
-            return
-        if state == int(vlc.State.Stopped.value):
-            self._queue_player_event("stopped", token.request_id, token.media_path)
-            return
-        if state == int(vlc.State.Ended.value):
-            self._queue_player_event("ended", token.request_id, token.media_path)
-            return
-        if state != int(vlc.State.Error.value):
-            return
-
-        logger.error("VLC reported playback error | request_id=%s | media=%s", token.request_id, token.media_path)
-        self._queue_player_event("error", token.request_id, token.media_path)
-
-    @Slot()
-    def _flush_player_events_from_qt_thread(self):
-        while True:
-            with self._queued_player_events_lock:
-                if self._is_shutdown:
-                    self._queued_player_events.clear()
-                    self._player_events_flush_scheduled = False
-                    return
-                if not self._queued_player_events:
-                    self._player_events_flush_scheduled = False
-                    return
-                event_name, request_id, media_path = self._queued_player_events.popleft()
-            if self._is_shutdown:
-                with self._queued_player_events_lock:
-                    self._queued_player_events.clear()
-                    self._player_events_flush_scheduled = False
-                return
-            if event_name == "playing":
-                self.playing.emit(request_id)
-                if request_id == self._current_request_id:
-                    self._schedule_video_geometry_probe(request_id)
-                continue
-            if event_name == "paused":
-                self.paused.emit(request_id)
-                continue
-            if event_name == "stopped":
-                self.stopped.emit(request_id)
-                continue
-            if event_name == "ended":
-                self.media_ended.emit(request_id)
-                continue
-
-            if request_id != self._current_request_id:
-                logger.debug(
-                    "Ignoring stale playback failure event | request_id=%s | active_request_id=%s | media=%s",
-                    request_id,
-                    self._current_request_id,
-                    media_path or "<unknown>",
-                )
-                continue
-
-            self._cleanup_runtime_subtitle_copy()
-            logger.error("Playback failure path reached | request_id=%s | media=%s", request_id, media_path or "<unknown>")
-            self.playback_error.emit(
-                request_id,
-                media_path,
-                "Failed to open or play this media file. The file may be corrupted or unsupported.",
-            )
-
-    def _queue_player_event(self, event_name: str, request_id: int, media_path: str):
+    @Slot(str, int, str)
+    def _handle_player_event_from_qt_thread(self, event_name: str, request_id: int, media_path: str):
         if self._is_shutdown:
             return
-        with self._queued_player_events_lock:
-            self._queued_player_events.append((event_name, int(request_id), str(media_path)))
-            if self._player_events_flush_scheduled:
-                return
-            self._player_events_flush_scheduled = True
-        QMetaObject.invokeMethod(self, "_flush_player_events_from_qt_thread", Qt.QueuedConnection)
+        if event_name == "playing":
+            self.playing.emit(request_id)
+            if request_id == self._current_request_id:
+                self._schedule_video_geometry_probe(request_id)
+            return
+        if event_name == "paused":
+            self.paused.emit(request_id)
+            return
+        if event_name == "stopped":
+            self.stopped.emit(request_id)
+            return
+        if event_name == "ended":
+            self.media_ended.emit(request_id)
+            return
+
+        if request_id != self._current_request_id:
+            logger.debug(
+                "Ignoring stale playback failure event | request_id=%s | active_request_id=%s | media=%s",
+                request_id,
+                self._current_request_id,
+                media_path or "<unknown>",
+            )
+            return
+
+        self._cleanup_runtime_subtitle_copy()
+        logger.error("Playback failure path reached | request_id=%s | media=%s", request_id, media_path or "<unknown>")
+        self.playback_error.emit(
+            request_id,
+            media_path,
+            "Failed to open or play this media file. The file may be corrupted or unsupported.",
+        )
 
     def _disable_vout_input(self):
         if not self._has_backend():

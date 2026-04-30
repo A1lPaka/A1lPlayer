@@ -1,10 +1,11 @@
 import importlib.util
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QThread
 
 from tests.fakes import SignalRecorder
 
@@ -48,6 +49,10 @@ class _FakePlayer:
         self.audio_device = "__default__"
         self.audio_device_list = None
         self.video_size = (0, 0)
+        self.stop_calls = 0
+        self.rate = 1.0
+        self.volume = 100
+        self.muted = False
 
     def set_media(self, media):
         self.media = media
@@ -65,6 +70,20 @@ class _FakePlayer:
 
     def video_get_size(self, _index):
         return self.video_size
+
+    def stop(self):
+        self.stop_calls += 1
+
+    def set_rate(self, rate):
+        self.rate = float(rate)
+        return 0
+
+    def audio_set_volume(self, volume):
+        self.volume = int(volume)
+        return 0
+
+    def audio_set_mute(self, muted):
+        self.muted = bool(muted)
 
     def add_slave(self, *_args):
         result = self.add_slave_results.pop(0) if self.add_slave_results else 0
@@ -235,7 +254,7 @@ def test_late_media_error_is_ignored_after_new_media_load(monkeypatch):
 
     event = SimpleNamespace(u=SimpleNamespace(new_state=_FakeVlc.State.Error.value))
     old_callback(event, *old_args)
-    service._flush_player_events_from_qt_thread()
+    QCoreApplication.processEvents()
 
     assert second_request_id != first_request_id
     assert errors.calls == []
@@ -290,7 +309,6 @@ def test_load_media_vlc_exception_emits_playback_error(monkeypatch, failure):
         monkeypatch.setattr(fake_instance.player, "set_media", lambda _media: (_ for _ in ()).throw(OSError("boom")))
 
     request_id = service.load_media("broken.mp4")
-    service._flush_player_events_from_qt_thread()
 
     assert errors.calls == [
         (
@@ -383,7 +401,7 @@ def test_late_media_error_keeps_current_runtime_subtitle_copy(monkeypatch, works
 
     event = SimpleNamespace(u=SimpleNamespace(new_state=_FakeVlc.State.Error.value))
     old_callback(event, *old_args)
-    service._flush_player_events_from_qt_thread()
+    QCoreApplication.processEvents()
 
     assert second_request_id != first_request_id
     assert service._runtime_subtitle_copy_path == str(runtime_copy)
@@ -464,21 +482,117 @@ def test_subtitle_attach_vlc_exception_returns_false_and_cleans_failed_copy(monk
     assert failed_runtime.exists() is False
 
 
-def test_queued_player_events_are_discarded_after_shutdown(monkeypatch):
+def test_late_vlc_event_after_relay_shutdown_is_dropped(monkeypatch):
     module, _fake_instance = _load_real_playback_engine(monkeypatch)
     service = module.PlaybackService()
     playing = SignalRecorder()
     service.playing.connect(playing)
+    relay = service._vlc_event_relay
 
-    service._queued_player_events.append(("playing", 1, "A.mp4"))
-    service._player_events_flush_scheduled = True
-    service._is_shutdown = True
+    relay.close()
 
-    service._flush_player_events_from_qt_thread()
+    assert relay.post_player_event("playing", 1, "A.mp4") is False
+    QCoreApplication.processEvents()
 
     assert playing.calls == []
-    assert list(service._queued_player_events) == []
-    assert service._player_events_flush_scheduled is False
+    assert relay.is_closed() is True
+
+
+def test_pending_relay_event_is_dropped_after_close(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    relay = module._VlcMediaEventRelay()
+    delivered = []
+    relay.player_event.connect(lambda *args: delivered.append(args))
+
+    assert relay.post_player_event("playing", 1, "A.mp4") is True
+    relay.close()
+    QCoreApplication.processEvents()
+
+    assert delivered == []
+    assert relay.is_closed() is True
+
+
+def test_vlc_event_reaches_playback_service_signal_in_qt_thread(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    calls = []
+
+    def record(request_id):
+        calls.append((request_id, QThread.currentThread() is QCoreApplication.instance().thread()))
+
+    service.playing.connect(record)
+
+    request_id = service.load_media("movie.mp4")
+    media = fake_instance.media[-1]
+    callback, args = media.event_manager().callbacks[_FakeVlc.EventType.MediaStateChanged]
+    callback(SimpleNamespace(u=SimpleNamespace(new_state=_FakeVlc.State.Playing.value)), *args)
+    QCoreApplication.processEvents()
+
+    assert calls == [(request_id, True)]
+
+
+def test_vlc_event_posted_from_worker_thread_reaches_service_in_qt_thread(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    calls = []
+
+    def record(request_id):
+        calls.append((request_id, QThread.currentThread() is QCoreApplication.instance().thread()))
+
+    service.playing.connect(record)
+    service._current_request_id = 1
+
+    worker = threading.Thread(
+        target=service._vlc_event_relay.post_player_event,
+        args=("playing", 1, "movie.mp4"),
+    )
+    worker.start()
+    worker.join(timeout=2)
+    QCoreApplication.processEvents()
+
+    assert worker.is_alive() is False
+    assert calls == [(1, True)]
+
+
+def test_stale_request_id_error_event_does_not_clear_current_state(monkeypatch, workspace_tmp_path):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    errors = SignalRecorder()
+    service.playback_error.connect(errors)
+
+    first_request_id = service.load_media("A.mp4")
+    service.load_media("B.mp4")
+    runtime_copy = workspace_tmp_path / "current-runtime.srt"
+    runtime_copy.write_text("subtitle", encoding="utf-8")
+    service._runtime_subtitle_copy_path = str(runtime_copy)
+
+    service._vlc_event_relay.post_player_event("error", first_request_id, "A.mp4")
+    QCoreApplication.processEvents()
+
+    assert errors.calls == []
+    assert service._runtime_subtitle_copy_path == str(runtime_copy)
+    assert runtime_copy.is_file()
+
+
+def test_shutdown_closes_and_disconnects_relay_without_delivery(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    playing = SignalRecorder()
+    service.playing.connect(playing)
+
+    service.load_media("movie.mp4")
+    media = fake_instance.media[-1]
+    callback, args = media.event_manager().callbacks[_FakeVlc.EventType.MediaStateChanged]
+
+    service.shutdown()
+    callback(SimpleNamespace(u=SimpleNamespace(new_state=_FakeVlc.State.Playing.value)), *args)
+    QCoreApplication.processEvents()
+
+    assert playing.calls == []
+    assert service._vlc_event_relay.is_closed() is True
+    assert _FakeVlc.EventType.MediaStateChanged not in media.event_manager().callbacks
+    assert media.release_calls == 1
+    assert fake_instance.player.stop_calls == 1
 
 
 def test_video_geometry_probe_callback_stops_after_shutdown(monkeypatch):
