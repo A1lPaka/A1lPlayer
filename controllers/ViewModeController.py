@@ -166,7 +166,9 @@ class ViewModeController(QObject):
         return self._pip_window
 
     def _take_player_widget_from_pip(self) -> PlayerWindow | None:
-        pip_window = self._ensure_pip_window()
+        pip_window = self._pip_window
+        if pip_window is None:
+            return None
         player_widget = pip_window.takeCentralWidget()
         self._player_window.set_pip_active(False)
         pip_window.hide()

@@ -153,9 +153,10 @@ class _FakeHostWindow(QMainWindow):
         self.show_normal_calls = 0
         self.raise_calls = 0
         self.activate_calls = 0
+        self.init_pip_shortcuts_calls = 0
 
     def init_pip_shortcuts(self, _pip_window):
-        return None
+        self.init_pip_shortcuts_calls += 1
 
     def _take_player_window_for_view_mode(self):
         self.take_player_widget_calls += 1
@@ -401,6 +402,17 @@ def test_exit_pip_restores_host_window_and_starts_rebind(monkeypatch):
     assert controller._host_window.raise_calls == 1
     assert controller._host_window.activate_calls == 1
     assert rebind_calls == [False]
+
+
+def test_take_player_widget_from_pip_does_not_create_missing_pip_window():
+    player_window = _FakePlayerWindow()
+    controller = _make_controller(player_window)
+
+    assert controller._take_player_widget_from_pip() is None
+
+    assert controller._pip_window is None
+    assert controller._host_window.init_pip_shortcuts_calls == 0
+    assert player_window.is_pip_active() is False
 
 
 def test_toggle_pip_enters_and_exits_through_single_controller_owner(monkeypatch):
