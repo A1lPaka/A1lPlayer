@@ -1,4 +1,5 @@
 import logging
+import ctypes
 import importlib
 import os
 import shutil
@@ -62,6 +63,7 @@ class _PlaybackToken:
 class PlaybackService(QObject):
     _AUDIO_SYNC_DELAY_MS = 150
     _FAILED_RUNTIME_SUBTITLE_CLEANUP_DELAY_MS = 1500
+    _MAX_VLC_LINKED_LIST_ITEMS = 512
 
     playing = Signal(int)
     paused = Signal(int)
@@ -266,10 +268,29 @@ class PlaybackService(QObject):
 
     def _iter_vlc_linked_list(self, head):
         node = head
-        while node:
+        seen_nodes = set()
+        count = 0
+        while node and count < self._MAX_VLC_LINKED_LIST_ITEMS:
             item = node.contents
+            node_id = self._vlc_linked_list_node_id(node, item)
+            if node_id in seen_nodes:
+                logger.warning("Stopped VLC linked list traversal after detecting a cycle")
+                break
+            seen_nodes.add(node_id)
             yield item
             node = item.next
+            count += 1
+        if node and count >= self._MAX_VLC_LINKED_LIST_ITEMS:
+            logger.warning(
+                "Stopped VLC linked list traversal after %s items",
+                self._MAX_VLC_LINKED_LIST_ITEMS,
+            )
+
+    def _vlc_linked_list_node_id(self, node, item):
+        try:
+            return ctypes.addressof(item)
+        except TypeError:
+            return id(node)
 
     def bind_video_output(self, win_id: int):
         if not self._has_backend():

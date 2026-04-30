@@ -46,6 +46,7 @@ class _FakePlayer:
         self.subtitle_file_results = []
         self.audio_track = -1
         self.audio_device = "__default__"
+        self.audio_device_list = None
 
     def set_media(self, media):
         self.media = media
@@ -81,7 +82,7 @@ class _FakePlayer:
         return 0
 
     def audio_output_device_enum(self):
-        return None
+        return self.audio_device_list
 
     def audio_output_device_get(self):
         return self.audio_device
@@ -136,9 +137,13 @@ class _FakeVlc:
 
     def __init__(self, instance):
         self._instance = instance
+        self.released_audio_device_lists = []
 
     def Instance(self):
         return self._instance
+
+    def libvlc_audio_output_device_list_release(self, device_list):
+        self.released_audio_device_lists.append(device_list)
 
 
 def _load_real_playback_engine(monkeypatch):
@@ -302,6 +307,21 @@ def test_vlc_menu_queries_and_setters_return_safe_fallbacks(monkeypatch):
     assert service.get_subtitle_tracks() == []
     assert service.get_current_subtitle_track() == -1
     assert service.set_subtitle_track(1) is False
+
+
+def test_audio_device_list_cycle_does_not_hang(monkeypatch):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+
+    node = SimpleNamespace()
+    item = SimpleNamespace(device="speakers", description="Speakers", next=node)
+    node.contents = item
+    fake_instance.player.audio_device_list = node
+
+    assert service.get_audio_devices() == [
+        (module.AUDIO_DEVICE_DEFAULT_ID, "Default Device"),
+        ("speakers", "Speakers"),
+    ]
 
 
 def test_backend_creation_failure_emits_playback_error(monkeypatch):
