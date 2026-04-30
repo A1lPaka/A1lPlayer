@@ -110,10 +110,7 @@ class PlayerWindow(QWidget):
         self.controls.speed_button.clicked.connect(self.toggle_speed_popup)
         self.controls.speed_label.clicked.connect(self.toggle_speed_popup)
         self.speed_popup.speed_changed.connect(self.on_speed_changed)
-        self._install_local_event_filters(self)
-        self._install_local_event_filters(self.video_frame)
-        self._install_local_event_filters(self.controls)
-        self.speed_popup.installEventFilter(self)
+        self._install_local_event_filters()
 
         self.playback_view_state.view_state_changed.connect(self._apply_playback_view_state)
         self.playback_view_state.playback_error.connect(self.playback_error.emit)
@@ -214,10 +211,27 @@ class PlayerWindow(QWidget):
             self._emit_video_host_ready_if_possible()
         return super().eventFilter(watched, event)
 
-    def _install_local_event_filters(self, widget: QWidget):
-        widget.installEventFilter(self)
-        for child in widget.findChildren(QWidget):
-            child.installEventFilter(self)
+    def _install_local_event_filters(self):
+        filtered_widgets = (
+            self,
+            self.video_frame,
+            self.video_placeholder,
+            self.controls,
+            self.controls.current_time,
+            self.controls.progress_bar,
+            self.controls.total_time,
+            *self.controls.buttons,
+            self.controls.speed_label,
+            self.controls.speed_button,
+            self.controls.volume_controls,
+            self.controls.volume_controls.volume_button,
+            self.controls.volume_controls.volume_bar,
+            self.speed_popup,
+            self.speed_popup.speed_label,
+            self.speed_popup.speed_slider,
+        )
+        for widget in dict.fromkeys(filtered_widgets):
+            widget.installEventFilter(self)
 
     def set_fullscreen_mode(self, fullscreen: bool):
         self._apply_fullscreen_ui(fullscreen)
