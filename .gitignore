@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+tests/_tmp/
 
 # Local OS/editor noise
 desktop.ini
