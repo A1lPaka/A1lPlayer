@@ -68,7 +68,7 @@ def try_run_runtime_installer(argv: list[str] | None = None) -> int | None:
 
 def run_cuda_runtime_installer() -> int:
     cancel_event = threading.Event()
-    _install_signal_handlers(cancel_event, CudaRuntimeInstallCanceledError)
+    _install_signal_handlers(cancel_event)
 
     request: CudaRuntimeInstallRequest | None = None
     try:
@@ -95,7 +95,7 @@ def run_cuda_runtime_installer() -> int:
 
 def run_whisper_model_installer() -> int:
     cancel_event = threading.Event()
-    _install_signal_handlers(cancel_event, WhisperModelInstallCanceledError)
+    _install_signal_handlers(cancel_event)
 
     request: WhisperModelInstallRequest | None = None
     try:
@@ -132,11 +132,10 @@ def _read_stdin_payload() -> str:
     return payload
 
 
-def _install_signal_handlers(cancel_event: threading.Event, canceled_error_type=RuntimeError):
+def _install_signal_handlers(cancel_event: threading.Event):
     def _handle_signal(signum, _frame):
         logger.warning("Runtime installer subsystem received termination signal | signal=%s", signum)
         cancel_event.set()
-        raise canceled_error_type(f"Interrupted by signal {signum}")
 
     for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
         signal_value = getattr(signal, signal_name, None)

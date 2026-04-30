@@ -533,6 +533,21 @@ def test_runtime_installer_main_invalid_stdin_emits_failed_event(monkeypatch):
     assert "payload is missing" in events[-1]["diagnostics"]
 
 
+def test_runtime_installer_signal_handler_only_requests_cancel(monkeypatch):
+    handlers = {}
+    cancel_event = threading.Event()
+
+    def capture_handler(signal_value, handler):
+        handlers[signal_value] = handler
+
+    monkeypatch.setattr(installer_main.signal, "signal", capture_handler)
+
+    installer_main._install_signal_handlers(cancel_event)
+    handlers[installer_main.signal.SIGTERM](installer_main.signal.SIGTERM, None)
+
+    assert cancel_event.is_set() is True
+
+
 def test_runtime_installer_main_success_failed_and_canceled_events(monkeypatch, workspace_tmp_path):
     request = CudaRuntimeInstallRequest(
         packages=("nvidia-runtime",),
