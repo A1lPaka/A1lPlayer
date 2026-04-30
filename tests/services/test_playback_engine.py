@@ -53,6 +53,7 @@ class _FakePlayer:
         self.rate = 1.0
         self.volume = 100
         self.muted = False
+        self.add_slave_calls = []
 
     def set_media(self, media):
         self.media = media
@@ -86,6 +87,7 @@ class _FakePlayer:
         self.muted = bool(muted)
 
     def add_slave(self, *_args):
+        self.add_slave_calls.append(_args)
         result = self.add_slave_results.pop(0) if self.add_slave_results else 0
         if result == 0:
             self.spu = 1
@@ -427,6 +429,31 @@ def test_failed_subtitle_load_restores_previous_runtime_track(monkeypatch, works
     assert service.player.spu_calls[-1] == -1
     assert service.player.spu == -1
     assert service._runtime_subtitle_copy_path == str(previous_runtime)
+
+
+def test_vlc_file_uri_keeps_windows_drive_separator(monkeypatch):
+    module, _fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+
+    uri = service._build_vlc_file_uri(Path(r"C:\Users\danii\subtitle.srt"))
+
+    assert uri.startswith("file:///")
+    assert "C:" in uri
+    assert "C%3A" not in uri
+
+
+def test_subtitle_attach_continues_when_spu_reset_fails(monkeypatch, workspace_tmp_path):
+    module, fake_instance = _load_real_playback_engine(monkeypatch)
+    service = module.PlaybackService()
+    service.load_media("movie.mp4")
+    subtitle = workspace_tmp_path / "subtitle.srt"
+    subtitle.write_text("subtitle", encoding="utf-8")
+
+    monkeypatch.setattr(service, "_prepare_runtime_subtitle_copy", lambda _path: str(subtitle))
+    monkeypatch.setattr(fake_instance.player, "video_set_spu", lambda _track_id: 1)
+
+    assert service.open_subtitle_file(str(subtitle)) is True
+    assert len(fake_instance.player.add_slave_calls) == 1
 
 
 def test_failed_subtitle_load_schedules_cleanup_for_failed_runtime_copy(monkeypatch, workspace_tmp_path):

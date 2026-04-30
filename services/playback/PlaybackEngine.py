@@ -802,10 +802,13 @@ class PlaybackService(QObject):
 
     def _build_vlc_file_uri(self, path: str | Path) -> str:
         resolved_path = Path(path).resolve()
-        normalized_posix_path = resolved_path.as_posix()
-        if not normalized_posix_path.startswith("/"):
-            normalized_posix_path = f"/{normalized_posix_path}"
-        return f"file://{quote(normalized_posix_path)}"
+        try:
+            return resolved_path.as_uri()
+        except ValueError:
+            normalized_posix_path = resolved_path.as_posix()
+            if not normalized_posix_path.startswith("/"):
+                normalized_posix_path = f"/{normalized_posix_path}"
+            return f"file://{quote(normalized_posix_path, safe='/:')}"
 
     def _attach_subtitle_file(self, subtitle_path: str | Path, *, subtitle_path_for_logs: str | None = None) -> bool:
         if not self._has_backend():
@@ -815,7 +818,11 @@ class PlaybackService(QObject):
 
         # Reset the active SPU track before attaching a fresh external subtitle file.
         if not self.set_subtitle_track(-1):
-            return False
+            logger.debug(
+                "Failed to reset active subtitle track before external subtitle attach; continuing | subtitle=%s | media=%s",
+                subtitle_path_for_logs or subtitle_runtime_path,
+                self._current_media_path or "<none>",
+            )
         subtitle_load_result = self._safe_vlc_call(
             "attach subtitle file",
             1,
