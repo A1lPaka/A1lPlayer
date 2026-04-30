@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import logging
 import os
 from pathlib import Path
 from typing import Iterator, TextIO
+
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeInstallLockError(RuntimeError):
@@ -27,6 +31,7 @@ def runtime_install_lock(target: Path, component_name: str) -> Iterator[None]:
             _unlock_file(lock_file)
         finally:
             lock_file.close()
+            _remove_lock_file(lock_path)
 
 
 def _try_lock_file(lock_file: TextIO) -> bool:
@@ -61,3 +66,10 @@ def _unlock_file(lock_file: TextIO) -> None:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     except OSError:
         pass
+
+
+def _remove_lock_file(lock_path: Path) -> None:
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Failed to remove runtime install lock file | path=%s", lock_path, exc_info=True)

@@ -23,3 +23,13 @@ def test_runtime_install_lock_blocks_second_holder_for_same_target(workspace_tmp
 
     with install_lock.runtime_install_lock(target, "CUDA runtime"):
         pass
+
+
+def test_runtime_install_lock_removes_lock_file_after_release(workspace_tmp_path):
+    target = workspace_tmp_path / "runtime" / "cuda"
+    lock_path = target.with_name("cuda.install.lock")
+
+    with install_lock.runtime_install_lock(target, "CUDA runtime"):
+        assert lock_path.is_file()
+
+    assert lock_path.exists() is False
