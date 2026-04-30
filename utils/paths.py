@@ -37,7 +37,20 @@ def compact_path_for_display(path: str, max_chars: int = 80) -> str:
         if len(compact) <= max_chars:
             return compact
 
-        keep = max(1, max_chars - len(prefix) - 3)
-        return f"{prefix}...{filename[-keep:]}"
+        return _compact_filename_for_display(filename, max_chars)
 
     return f"...{text[-(max_chars - 3):]}"
+
+
+def _compact_filename_for_display(filename: str, max_chars: int) -> str:
+    if len(filename) <= max_chars:
+        return filename
+
+    ellipsis = "..."
+    suffix = Path(filename).suffix
+    if suffix and len(suffix) + len(ellipsis) < max_chars:
+        stem = filename[: -len(suffix)]
+        keep = max(1, max_chars - len(ellipsis) - len(suffix))
+        return f"{ellipsis}{stem[-keep:]}{suffix}"
+
+    return f"{ellipsis}{filename[-(max_chars - len(ellipsis)):]}"
