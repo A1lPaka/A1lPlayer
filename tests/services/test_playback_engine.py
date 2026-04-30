@@ -1,5 +1,4 @@
 import importlib.util
-import builtins
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -156,16 +155,33 @@ def _load_playback_engine_without_vlc(monkeypatch):
     module_path = Path(__file__).parents[2] / "services" / "playback" / "PlaybackEngine.py"
     spec = importlib.util.spec_from_file_location("real_playback_engine_missing_vlc_test", module_path)
     module = importlib.util.module_from_spec(spec)
-    original_import = builtins.__import__
+    original_import_module = importlib.import_module
 
-    def import_without_vlc(name, *args, **kwargs):
+    def import_without_vlc(name, *_args, **_kwargs):
         if name == "vlc":
             raise ImportError("python-vlc is not installed")
-        return original_import(name, *args, **kwargs)
+        return original_import_module(name)
 
-    monkeypatch.setattr(builtins, "__import__", import_without_vlc)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module.importlib, "import_module", import_without_vlc)
     return module
+
+
+def test_module_import_does_not_configure_runtime_paths(monkeypatch):
+    import utils.runtime_assets as runtime_assets
+
+    module_path = Path(__file__).parents[2] / "services" / "playback" / "PlaybackEngine.py"
+    spec = importlib.util.spec_from_file_location("real_playback_engine_import_only_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+
+    def fail_configure():
+        raise RuntimeError("runtime paths should not be configured at import time")
+
+    monkeypatch.setattr(runtime_assets, "configure_bundled_runtime_paths", fail_configure)
+
+    spec.loader.exec_module(module)
+
+    assert module.vlc is None
 
 
 def test_module_import_survives_missing_vlc(monkeypatch):

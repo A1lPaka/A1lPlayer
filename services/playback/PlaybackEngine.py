@@ -1,4 +1,5 @@
 import logging
+import importlib
 import os
 import shutil
 import threading
@@ -9,15 +10,8 @@ from urllib.parse import quote
 
 from utils.runtime_assets import configure_bundled_runtime_paths
 
-configure_bundled_runtime_paths()
-
-try:
-    import vlc
-except (ImportError, OSError) as exc:
-    vlc = None
-    _VLC_IMPORT_ERROR = exc
-else:
-    _VLC_IMPORT_ERROR = None
+vlc = None
+_VLC_IMPORT_ERROR = None
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
 from services.app.AppTempService import AppTempService
@@ -28,12 +22,35 @@ PLAYBACK_BACKEND_UNAVAILABLE_MESSAGE = (
     "The VLC playback backend is unavailable. Please install VLC or check that libVLC is available on PATH."
 )
 
-_VLC_ERRORS = (AttributeError, TypeError, ValueError, OSError)
-if vlc is not None:
-    _VLC_ERRORS = (*_VLC_ERRORS, getattr(vlc, "VLCException", Exception))
+_BASE_VLC_ERRORS = (AttributeError, TypeError, ValueError, OSError)
+_VLC_ERRORS = _BASE_VLC_ERRORS
 
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_vlc_backend_loaded():
+    global vlc, _VLC_IMPORT_ERROR, _VLC_ERRORS
+
+    if vlc is not None:
+        return
+
+    try:
+        configure_bundled_runtime_paths()
+        vlc_module = importlib.import_module("vlc")
+    except (ImportError, OSError) as exc:
+        _VLC_IMPORT_ERROR = exc
+        vlc = None
+        return
+    except Exception as exc:
+        _VLC_IMPORT_ERROR = exc
+        vlc = None
+        logger.exception("Failed to configure bundled playback runtime paths")
+        return
+
+    vlc = vlc_module
+    _VLC_IMPORT_ERROR = None
+    _VLC_ERRORS = (*_BASE_VLC_ERRORS, getattr(vlc, "VLCException", Exception))
 
 
 @dataclass(frozen=True)
@@ -55,6 +72,7 @@ class PlaybackService(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
+        _ensure_vlc_backend_loaded()
         AppTempService.cleanup_startup_orphans()
         self._desired_volume = 100
         self._desired_muted = False
