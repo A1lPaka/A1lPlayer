@@ -320,9 +320,12 @@ def _startup_media_paths_from_args(args: list[str]) -> list[str]:
             continue
         _, extension = os.path.splitext(candidate)
         if extension.lower() not in MEDIA_EXTENSIONS:
+            logger.info("Ignoring startup argument with unsupported media extension | arg=%s", candidate)
             continue
         if os.path.isfile(candidate):
             media_paths.append(candidate)
+        else:
+            logger.warning("Ignoring startup media argument because file is unavailable | media=%s", candidate)
     return media_paths
 
 
