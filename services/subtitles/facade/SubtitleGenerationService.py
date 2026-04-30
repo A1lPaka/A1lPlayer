@@ -10,6 +10,10 @@ from services.app.MediaSettingsStore import MediaSettingsStore
 from services.subtitles.composition.SubtitleGenerationComposition import (
     SubtitleGenerationComposition,
     SubtitleGenerationCompositionCallbacks,
+    SubtitleGenerationDialogCallbacks,
+    SubtitleGenerationPipelineCallbacks,
+    SubtitleGenerationShutdownCallbacks,
+    SubtitleGenerationWorkerCallbacks,
 )
 from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelinePhase,
@@ -143,31 +147,39 @@ class SubtitleGenerationService(QObject):
 
     def _composition_callbacks(self) -> SubtitleGenerationCompositionCallbacks:
         return SubtitleGenerationCompositionCallbacks(
-            current_theme_color=self._current_theme_color,
-            dialog_media_path_for_audio_probe=self._dialog_media_path_for_audio_probe,
-            dialog_lifecycle_state_name=self._dialog_lifecycle_state_name,
-            complete_run=self._dispatch_complete_run,
-            launch_subtitle_generation=self._dispatch_launch_subtitle_generation,
-            retry_whisper_model_install=self._retry_whisper_model_install,
-            can_start_subtitle_worker=self._can_start_subtitle_worker,
-            on_subtitle_worker_start_aborted=self._on_subtitle_worker_start_aborted,
-            suspend_player_ui_for_generation=self._suspend_player_ui_for_generation,
-            on_worker_status_changed_from_worker=self._on_worker_status_changed_from_worker,
-            on_worker_progress_changed_from_worker=self._on_worker_progress_changed_from_worker,
-            on_worker_details_changed_from_worker=self._on_worker_details_changed_from_worker,
-            on_subtitle_generation_finished_from_worker=self._on_subtitle_generation_finished_from_worker,
-            on_subtitle_generation_failed_from_worker=self._on_subtitle_generation_failed_from_worker,
-            on_subtitle_generation_canceled_from_worker=self._on_subtitle_generation_canceled_from_worker,
-            on_subtitle_worker_thread_finished=self._on_subtitle_worker_thread_finished,
-            assert_pipeline_thread=self._assert_pipeline_thread,
-            emit_shutdown_finished=self.shutdown_finished.emit,
-            request_active_task_stop=self._request_active_task_stop,
-            complete_shutdown_if_possible=self._complete_shutdown_if_possible,
-            on_worker_status_changed=self._on_worker_status_changed,
-            on_worker_details_changed=self._on_worker_details_changed,
-            on_cuda_runtime_flow_thread_finished=self._on_cuda_runtime_flow_thread_finished,
-            on_whisper_model_flow_thread_finished=self._on_whisper_model_flow_thread_finished,
-            log_dialog_confirm_timing=self._log_dialog_confirm_timing,
+            dialog=SubtitleGenerationDialogCallbacks(
+                current_theme_color=self._current_theme_color,
+                dialog_media_path_for_audio_probe=self._dialog_media_path_for_audio_probe,
+                dialog_lifecycle_state_name=self._dialog_lifecycle_state_name,
+                log_dialog_confirm_timing=self._log_dialog_confirm_timing,
+            ),
+            pipeline=SubtitleGenerationPipelineCallbacks(
+                assert_pipeline_thread=self._assert_pipeline_thread,
+                complete_run=self._dispatch_complete_run,
+                launch_subtitle_generation=self._dispatch_launch_subtitle_generation,
+                retry_whisper_model_install=self._retry_whisper_model_install,
+                request_active_task_stop=self._request_active_task_stop,
+            ),
+            worker=SubtitleGenerationWorkerCallbacks(
+                can_start_subtitle_worker=self._can_start_subtitle_worker,
+                on_subtitle_worker_start_aborted=self._on_subtitle_worker_start_aborted,
+                suspend_player_ui_for_generation=self._suspend_player_ui_for_generation,
+                on_worker_status_changed_from_worker=self._on_worker_status_changed_from_worker,
+                on_worker_progress_changed_from_worker=self._on_worker_progress_changed_from_worker,
+                on_worker_details_changed_from_worker=self._on_worker_details_changed_from_worker,
+                on_subtitle_generation_finished_from_worker=self._on_subtitle_generation_finished_from_worker,
+                on_subtitle_generation_failed_from_worker=self._on_subtitle_generation_failed_from_worker,
+                on_subtitle_generation_canceled_from_worker=self._on_subtitle_generation_canceled_from_worker,
+                on_subtitle_worker_thread_finished=self._on_subtitle_worker_thread_finished,
+                on_worker_status_changed=self._on_worker_status_changed,
+                on_worker_details_changed=self._on_worker_details_changed,
+            ),
+            shutdown=SubtitleGenerationShutdownCallbacks(
+                emit_shutdown_finished=self.shutdown_finished.emit,
+                complete_shutdown_if_possible=self._complete_shutdown_if_possible,
+                on_cuda_runtime_flow_thread_finished=self._on_cuda_runtime_flow_thread_finished,
+                on_whisper_model_flow_thread_finished=self._on_whisper_model_flow_thread_finished,
+            ),
         )
 
     def _retry_whisper_model_install(self, run: SubtitlePipelineRun, model_size: str):
