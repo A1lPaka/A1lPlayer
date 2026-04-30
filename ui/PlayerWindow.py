@@ -36,6 +36,8 @@ class PlayerWindow(QWidget):
     pip_requested = Signal()
     pip_exit_requested = Signal()
     SPEED_POPUP_AUTOHIDE_MS = 4000
+    POSITION_TIMER_PLAYING_MS = 250
+    POSITION_TIMER_PAUSED_MS = 1000
 
     def __init__(self, metrics: Metrics | None, theme_color: ThemeState):
         super().__init__()
@@ -137,7 +139,7 @@ class PlayerWindow(QWidget):
 
     def _init_timer(self):
         self.position_timer = QTimer(self)
-        self.position_timer.setInterval(200)
+        self.position_timer.setInterval(self.POSITION_TIMER_PLAYING_MS)
         self.position_timer.timeout.connect(self.update_timing)
         self.position_timer.start()
         self.update_timing()
@@ -475,6 +477,7 @@ class PlayerWindow(QWidget):
             return False
 
     def _apply_playback_view_state(self, view_state: PlaybackViewState):
+        self.position_timer.setInterval(self._position_timer_interval_for_state(view_state))
         self._set_position_timer_active(view_state.position_timer_active)
         if view_state.placeholder_visible:
             self.video_placeholder.show_placeholder()
@@ -484,6 +487,11 @@ class PlayerWindow(QWidget):
         self.controls.toggle_play_pause(view_state.play_pause_shows_playing)
         if not view_state.position_timer_active:
             self.update_timing()
+
+    def _position_timer_interval_for_state(self, view_state: PlaybackViewState) -> int:
+        if view_state.phase == self.playback.STATE_PAUSED:
+            return self.POSITION_TIMER_PAUSED_MS
+        return self.POSITION_TIMER_PLAYING_MS
 
     def _apply_fullscreen_ui(self, fullscreen: bool):
         self.fullscreen_controller.set_fullscreen_mode(fullscreen)
