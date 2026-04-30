@@ -59,6 +59,10 @@ class MediaSettingsStore:
             json.dumps(theme_color.base_colors(), ensure_ascii=True),
         )
 
+    def sync(self):
+        if self._settings is not None:
+            self._settings.sync()
+
     def get_last_open_dir(self) -> str:
         if self._settings is None:
             return ""

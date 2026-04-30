@@ -103,6 +103,7 @@ class MediaLibraryService(QObject):
     def shutdown(self):
         self._session_autosave_timer.stop()
         self.save_time_session()
+        self._store.sync()
 
     def open_file(self):
         file_paths = self._dialogs.choose_media_files(self._store.get_last_open_dir())
