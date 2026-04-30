@@ -206,6 +206,38 @@ def test_playlist_navigation_and_media_end_skip_unplayable_items(workspace_tmp_p
     assert controller.playback_state() == controller.STATE_OPENING
 
 
+def test_playlist_load_rejects_when_all_items_are_unavailable():
+    controller = PlayerPlaybackController()
+
+    assert controller.load_playlist(["Z:/missing/first.mp4", "Z:/missing/second.mp4"]) is False
+    assert controller.playlist.paths == []
+    assert controller.playlist.current_index == -1
+    assert controller.has_assigned_media() is False
+
+
+def test_playlist_navigation_with_single_unavailable_item_does_not_wrap_forever():
+    controller = PlayerPlaybackController()
+    missing_path = "Z:/missing/only.mp4"
+
+    assert controller.playlist.load([missing_path], start_index=0) is True
+    assert controller._load_from_playlist_index(0, step=1, wrap=True) is False
+    assert controller.current_request_id() == 0
+
+
+def test_playlist_linear_advance_from_last_index_does_not_wrap(workspace_tmp_path):
+    controller = PlayerPlaybackController()
+    first_path, second_path = _make_media_files(workspace_tmp_path, ["first.mp4", "second.mp4"])
+
+    assert controller.open_paths([first_path, second_path], start_index=1) is True
+    request_id = controller.current_request_id()
+    controller.engine.playing.emit(request_id)
+    controller.engine.media_ended.emit(request_id)
+
+    assert controller.current_media_path() == second_path
+    assert controller.engine.stop_calls == 1
+    assert controller.playback_state() == controller.STATE_STOPPED
+
+
 def test_shutdown_is_idempotent_and_resets_controller_state(workspace_tmp_path):
     controller = PlayerPlaybackController()
     media_path = _make_media_files(workspace_tmp_path, ["shutdown.mp4"])[0]
