@@ -166,8 +166,8 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     assert worker.canceled.connections[:2] == [callbacks["canceled"], thread.quit]
     assert thread.started.connections == [worker.run]
     assert len(thread.finished.connections) == 3
-    assert len(single_shots) == 2
-    assert len(can_start_calls) == 2
+    assert len(single_shots) == 1
+    assert len(can_start_calls) == 1
     assert suspend_calls == [True]
     assert thread.start_calls == 1
 

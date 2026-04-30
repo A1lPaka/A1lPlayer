@@ -69,7 +69,7 @@ class SubtitleGenerationJobRunner(QObject):
         run.subtitle_cancel_requested = False
         QTimer.singleShot(
             0,
-            lambda run_id=run.run_id, thread=thread, worker=worker: self._deferred_suspend_and_start_worker(
+            lambda run_id=run.run_id, thread=thread, worker=worker: self._deferred_start_worker(
                 run_id,
                 thread,
                 worker,
@@ -83,27 +83,6 @@ class SubtitleGenerationJobRunner(QObject):
             run_id=run.run_id,
             media=run.context.media_path,
             output=options.output_path,
-        )
-
-    def _deferred_suspend_and_start_worker(
-        self,
-        run_id: int,
-        thread: QThread,
-        worker: SubtitleGenerationWorker,
-    ):
-        if not self._can_start_worker(run_id, thread, worker):
-            self._abort_unstarted_worker(run_id, thread, worker)
-            return
-
-        self._suspend_before_start()
-        # Give Qt one tick to apply the UI suspend before the worker thread starts.
-        QTimer.singleShot(
-            0,
-            lambda run_id=run_id, thread=thread, worker=worker: self._deferred_start_worker(
-                run_id,
-                thread,
-                worker,
-            ),
         )
 
     def _deferred_start_worker(
@@ -120,6 +99,7 @@ class SubtitleGenerationJobRunner(QObject):
             logger.debug("Skipping deferred subtitle worker thread start because thread is already running | run_id=%s", run_id)
             return
 
+        self._suspend_before_start()
         thread.start()
 
     def _abort_unstarted_worker(
