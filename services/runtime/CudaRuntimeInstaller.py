@@ -322,10 +322,12 @@ def _run_install_command(
     stdout_thread.start()
     stderr_thread.start()
 
+    termination_requested = False
     try:
         while True:
             if cancel_event.is_set():
                 logger.warning("CUDA installer subsystem cancel requested; terminating active installer process")
+                termination_requested = True
                 _terminate_install_process(process)
                 raise CudaRuntimeInstallCanceledError("Installation canceled by request.")
 
@@ -334,12 +336,13 @@ def _run_install_command(
                 break
             time.sleep(0.2)
     except BaseException:
-        if process.poll() is None:
+        if not termination_requested and process.poll() is None:
             logger.warning("CUDA installer subsystem interrupted; terminating active installer process")
+            termination_requested = True
             _terminate_install_process(process)
         raise
     finally:
-        if cancel_event.is_set() and process.poll() is None:
+        if not termination_requested and cancel_event.is_set() and process.poll() is None:
             logger.warning("CUDA installer subsystem cancel observed during cleanup; terminating active installer process")
             _terminate_install_process(process)
         if stdout_thread.is_alive():
@@ -375,16 +378,37 @@ def _terminate_install_process(process: subprocess.Popen[str]):
         return
     if os.name == "nt":
         _kill_install_process_tree(process)
-        process.wait(timeout=1.0)
+        _wait_for_install_process_stop(process, timeout=1.0, action="taskkill")
         return
     try:
         _request_graceful_install_stop(process)
-        process.wait(timeout=1.5)
-        return
-    except subprocess.TimeoutExpired:
+        if _wait_for_install_process_stop(process, timeout=1.5, action="graceful stop"):
+            return
         logger.warning("CUDA installer subprocess did not terminate gracefully; killing it")
+    except OSError:
+        logger.warning("CUDA installer subprocess graceful stop failed; killing it", exc_info=True)
     _kill_install_process_tree(process)
-    process.wait(timeout=1.0)
+    _wait_for_install_process_stop(process, timeout=1.0, action="kill")
+
+
+def _wait_for_install_process_stop(
+    process: subprocess.Popen[str],
+    *,
+    timeout: float,
+    action: str,
+) -> bool:
+    try:
+        process.wait(timeout=timeout)
+        return True
+    except subprocess.TimeoutExpired:
+        if process.poll() is not None:
+            return True
+        logger.warning(
+            "CUDA installer subprocess did not stop after %s | pid=%s",
+            action,
+            process.pid,
+        )
+        return False
 
 
 def _request_graceful_install_stop(process: subprocess.Popen[str]) -> None:
