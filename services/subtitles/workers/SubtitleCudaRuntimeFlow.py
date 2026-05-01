@@ -128,25 +128,6 @@ class SubtitleCudaRuntimeFlow(QObject):
 
         thread.start()
 
-    def _is_worker_event_current(
-        self,
-        event_name: str,
-        run_id: int,
-        worker: CudaRuntimeInstallWorker,
-        *,
-        terminal: bool,
-    ) -> bool:
-        if not self._worker_events.accepts(run_id, worker, terminal=terminal):
-            logger.debug(
-                "Ignoring %s from stale CUDA runtime worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
-                event_name,
-                run_id,
-                self._run_id,
-                worker is self._worker,
-            )
-            return False
-        return True
-
     def _emit_active_worker_event(
         self,
         event_name: str,
@@ -156,11 +137,15 @@ class SubtitleCudaRuntimeFlow(QObject):
         *args,
         terminal: bool = False,
     ):
-        if not self._is_worker_event_current(event_name, run_id, worker, terminal=terminal):
+        if self._worker_events.emit_if_current(run_id, worker, signal, *args, terminal=terminal):
             return
-        if terminal:
-            self._worker_events.mark_terminal_emitted()
-        signal.emit(run_id, *args)
+        logger.debug(
+            "Ignoring %s from stale CUDA runtime worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
+            event_name,
+            run_id,
+            self._run_id,
+            worker is self._worker,
+        )
 
     def _on_worker_status_changed(self, run_id: int, worker: CudaRuntimeInstallWorker, text: str):
         self._emit_active_worker_event("CUDA runtime status update", run_id, worker, self.status_changed, text)

@@ -23,10 +23,26 @@ class WorkerEventGate:
             return True
         return self.active_run_id == run_id and worker is self.active_worker
 
+    def emit_if_current(self, run_id: int, worker: object, signal, *args, terminal: bool = False) -> bool:
+        if not self.accepts(run_id, worker, terminal=terminal):
+            return False
+        if terminal:
+            self.mark_terminal_emitted()
+        signal.emit(run_id, *args)
+        return True
+
     def mark_terminal_emitted(self) -> None:
         self.terminal_event_emitted = True
         self.finished_run_id = None
         self.finished_worker = None
+
+    def cancel_active(self, run_id: int, worker: object) -> None:
+        if self.active_run_id == run_id and worker is self.active_worker:
+            self.active_run_id = None
+            self.active_worker = None
+            self.finished_run_id = None
+            self.finished_worker = None
+            self.terminal_event_emitted = False
 
     def finish_thread(self, run_id: int, worker: object | None) -> None:
         if not self.terminal_event_emitted:
@@ -34,4 +50,3 @@ class WorkerEventGate:
             self.finished_worker = worker
         self.active_run_id = None
         self.active_worker = None
-

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QWidget
 
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
@@ -24,7 +23,11 @@ from services.subtitles.state.SubtitleShutdownCoordinator import SubtitleShutdow
 from services.subtitles.validation.SubtitleGenerationPreflight import SubtitleGenerationPreflight
 from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 from services.subtitles.workers.SubtitleGenerationAudioProbeFlow import SubtitleGenerationAudioProbeFlow
-from services.subtitles.workers.SubtitleGenerationJobRunner import SubtitleGenerationJobRunner
+from services.subtitles.workers.SubtitleGenerationJobRunner import (
+    SubtitleGenerationJobRunner,
+    SubtitleWorkerEventCallbacks,
+    SubtitleWorkerLaunchCallbacks,
+)
 from services.subtitles.workers.SubtitleWhisperModelFlow import SubtitleWhisperModelFlow
 from ui.PlayerWindow import PlayerWindow
 
@@ -51,15 +54,8 @@ class SubtitleGenerationPipelineCallbacks:
 
 @dataclass
 class SubtitleGenerationWorkerCallbacks:
-    can_start_subtitle_worker: Callable[[int, QThread, Any], bool]
-    on_subtitle_worker_start_aborted: Callable[[int, QThread, Any], None]
-    suspend_player_ui_for_generation: Callable[[], None]
-    on_worker_status_changed_from_worker: Callable[[int, Any, str], None]
-    on_worker_progress_changed_from_worker: Callable[[int, Any, int], None]
-    on_worker_details_changed_from_worker: Callable[[int, Any, str], None]
-    on_subtitle_generation_finished_from_worker: Callable[[int, Any, str, bool, bool], None]
-    on_subtitle_generation_failed_from_worker: Callable[[int, Any, str, str], None]
-    on_subtitle_generation_canceled_from_worker: Callable[[int, Any], None]
+    subtitle_launch: SubtitleWorkerLaunchCallbacks
+    subtitle_events: SubtitleWorkerEventCallbacks
     on_subtitle_worker_thread_finished: Callable[[int], None]
     on_worker_status_changed: Callable[[int, str], None]
     on_worker_details_changed: Callable[[int, str], None]
@@ -156,15 +152,8 @@ class SubtitleGenerationComposition:
 
         subtitle_job_runner = SubtitleGenerationJobRunner(
             parent,
-            can_start_worker=worker_callbacks.can_start_subtitle_worker,
-            on_start_aborted=worker_callbacks.on_subtitle_worker_start_aborted,
-            suspend_before_start=worker_callbacks.suspend_player_ui_for_generation,
-            on_status_changed=worker_callbacks.on_worker_status_changed_from_worker,
-            on_progress_changed=worker_callbacks.on_worker_progress_changed_from_worker,
-            on_details_changed=worker_callbacks.on_worker_details_changed_from_worker,
-            on_finished=worker_callbacks.on_subtitle_generation_finished_from_worker,
-            on_failed=worker_callbacks.on_subtitle_generation_failed_from_worker,
-            on_canceled=worker_callbacks.on_subtitle_generation_canceled_from_worker,
+            launch_callbacks=worker_callbacks.subtitle_launch,
+            event_callbacks=worker_callbacks.subtitle_events,
         )
         subtitle_job_runner.thread_finished.connect(worker_callbacks.on_subtitle_worker_thread_finished)
 

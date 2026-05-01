@@ -1,7 +1,26 @@
 import inspect
 
+from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.media.MediaLibraryService import MediaLibraryService
 from services.subtitles.facade.SubtitleGenerationService import SubtitleGenerationService
+from services.subtitles.state.SubtitlePipelineState import (
+    SubtitleGenerationContext,
+    SubtitlePipelinePhase,
+    SubtitlePipelineTask,
+)
+from tests.fakes import FakeSubtitleWorker
+
+
+def _options() -> SubtitleGenerationDialogResult:
+    return SubtitleGenerationDialogResult(
+        audio_stream_index=None,
+        audio_language=None,
+        device=None,
+        model_size="small",
+        output_format="srt",
+        output_path="C:/media/movie.srt",
+        auto_open_after_generation=True,
+    )
 
 
 def _make_service(parent, player, store):
@@ -128,3 +147,128 @@ def test_generate_subtitle_rejects_reentry_while_background_task_runs(
     assert service.generate_subtitle() is False
     assert focus_calls == [True]
     assert already_running_calls == [True]
+
+
+def test_subtitle_terminal_event_survives_thread_cleanup(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
+    worker = object()
+    thread = object()
+    terminal_calls = []
+
+    run = service._transitions.begin_run(
+        SubtitleGenerationContext("C:/media/movie.mkv", 7),
+        _options(),
+    )
+    run.phase = SubtitlePipelinePhase.RUNNING
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_thread = thread
+    run.subtitle_worker = worker
+    service._runtime.pending_subtitle_thread_run_ids.add(run.run_id)
+    service._runtime._subtitle_worker_events.start(run.run_id, worker)
+    monkeypatch.setattr(
+        service._completion_flow,
+        "handle_subtitle_generation_finished",
+        lambda run_id, output_path, auto_open, fallback: terminal_calls.append(
+            (run_id, output_path, auto_open, fallback)
+        ),
+    )
+
+    service._runtime.on_background_task_thread_finished(run.run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
+    service._on_subtitle_generation_finished_from_worker(run.run_id, worker, "C:/media/movie.srt", True, False)
+
+    assert terminal_calls == [(run.run_id, "C:/media/movie.srt", True, False)]
+
+
+def test_subtitle_worker_stale_terminal_identity_is_ignored(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
+    active_worker = object()
+    stale_worker = object()
+    terminal_calls = []
+
+    run = service._transitions.begin_run(
+        SubtitleGenerationContext("C:/media/movie.mkv", 7),
+        _options(),
+    )
+    run.phase = SubtitlePipelinePhase.RUNNING
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_thread = object()
+    run.subtitle_worker = active_worker
+    service._runtime._subtitle_worker_events.start(run.run_id, active_worker)
+    monkeypatch.setattr(
+        service._completion_flow,
+        "handle_subtitle_generation_failed",
+        lambda run_id, error, diagnostics: terminal_calls.append((run_id, error, diagnostics)),
+    )
+
+    service._on_subtitle_generation_failed_from_worker(run.run_id, stale_worker, "failed", "diagnostics")
+
+    assert terminal_calls == []
+
+
+def test_subtitle_worker_start_abort_releases_ui_suspend_lease(
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
+    worker = object()
+    thread = object()
+    run = service._transitions.begin_run(
+        SubtitleGenerationContext("C:/media/movie.mkv", 7),
+        _options(),
+    )
+    run.phase = SubtitlePipelinePhase.RUNNING
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_thread = thread
+    run.subtitle_worker = worker
+    service._runtime._subtitle_worker_events.start(run.run_id, worker)
+
+    service._runtime.suspend_player_ui_for_generation()
+    service._runtime.on_subtitle_worker_start_aborted(run.run_id, thread, worker)
+
+    assert fake_player_window.suspend_leases[-1].released is True
+    assert service._runtime.player_ui_suspend_lease is None
+    assert run.subtitle_thread is None
+    assert run.subtitle_worker is None
+
+
+def test_shutdown_completes_after_subtitle_worker_terminal_event(
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
+    shutdown_calls = []
+    service.shutdown_finished.connect(lambda: shutdown_calls.append(True))
+    worker = FakeSubtitleWorker()
+    thread = object()
+
+    run = service._transitions.begin_run(
+        SubtitleGenerationContext("C:/media/movie.mkv", 7),
+        _options(),
+    )
+    run.phase = SubtitlePipelinePhase.RUNNING
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_thread = thread
+    run.subtitle_worker = worker
+    service._runtime.pending_subtitle_thread_run_ids.add(run.run_id)
+    service._runtime._subtitle_worker_events.start(run.run_id, worker)
+
+    assert service.begin_shutdown() is True
+    service._on_subtitle_generation_canceled_from_worker(run.run_id, worker)
+
+    assert shutdown_calls == []
+
+    service._runtime.on_background_task_thread_finished(run.run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
+
+    assert shutdown_calls == [True]

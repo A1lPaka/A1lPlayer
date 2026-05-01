@@ -2,6 +2,8 @@ from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.subtitles.workers import SubtitleGenerationJobRunner as runner_module
 from services.subtitles.workers.SubtitleGenerationJobRunner import (
     SubtitleGenerationJobRunner,
+    SubtitleWorkerEventCallbacks,
+    SubtitleWorkerLaunchCallbacks,
     can_launch_subtitle_worker_run,
 )
 from services.subtitles.state.SubtitlePipelineState import (
@@ -143,15 +145,19 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
 
     runner = SubtitleGenerationJobRunner(
         None,
-        can_start_worker=can_start,
-        on_start_aborted=callbacks["start_aborted"],
-        suspend_before_start=lambda: suspend_calls.append(True),
-        on_status_changed=callbacks["status"],
-        on_progress_changed=callbacks["progress"],
-        on_details_changed=callbacks["details"],
-        on_finished=callbacks["finished"],
-        on_failed=callbacks["failed"],
-        on_canceled=callbacks["canceled"],
+        launch_callbacks=SubtitleWorkerLaunchCallbacks(
+            can_start_worker=can_start,
+            on_start_aborted=callbacks["start_aborted"],
+            suspend_before_start=lambda: suspend_calls.append(True),
+        ),
+        event_callbacks=SubtitleWorkerEventCallbacks(
+            on_status_changed=callbacks["status"],
+            on_progress_changed=callbacks["progress"],
+            on_details_changed=callbacks["details"],
+            on_finished=callbacks["finished"],
+            on_failed=callbacks["failed"],
+            on_canceled=callbacks["canceled"],
+        ),
     )
     run = _run()
 
@@ -205,15 +211,19 @@ def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
 
     runner = SubtitleGenerationJobRunner(
         None,
-        can_start_worker=lambda _run_id, _thread, _worker: False,
-        on_start_aborted=lambda run_id, thread, worker: aborted.append((run_id, thread, worker)),
-        suspend_before_start=lambda: None,
-        on_status_changed=lambda run_id, worker, text: None,
-        on_progress_changed=lambda run_id, worker, value: None,
-        on_details_changed=lambda run_id, worker, text: None,
-        on_finished=lambda run_id, worker, path, auto_open, fallback: None,
-        on_failed=lambda run_id, worker, error, diagnostics: None,
-        on_canceled=lambda run_id, worker: None,
+        launch_callbacks=SubtitleWorkerLaunchCallbacks(
+            can_start_worker=lambda _run_id, _thread, _worker: False,
+            on_start_aborted=lambda run_id, thread, worker: aborted.append((run_id, thread, worker)),
+            suspend_before_start=lambda: None,
+        ),
+        event_callbacks=SubtitleWorkerEventCallbacks(
+            on_status_changed=lambda run_id, worker, text: None,
+            on_progress_changed=lambda run_id, worker, value: None,
+            on_details_changed=lambda run_id, worker, text: None,
+            on_finished=lambda run_id, worker, path, auto_open, fallback: None,
+            on_failed=lambda run_id, worker, error, diagnostics: None,
+            on_canceled=lambda run_id, worker: None,
+        ),
     )
     run = _run()
 

@@ -20,6 +20,10 @@ from services.subtitles.state.SubtitlePipelineState import (
     SubtitlePipelineRun,
     SubtitlePipelineTask,
 )
+from services.subtitles.workers.SubtitleGenerationJobRunner import (
+    SubtitleWorkerEventCallbacks,
+    SubtitleWorkerLaunchCallbacks,
+)
 from services.subtitles.domain.SubtitleTiming import elapsed_ms_since, log_timing
 from ui.MessageBoxService import show_subtitle_generation_already_running
 from ui.PlayerWindow import PlayerWindow
@@ -161,15 +165,19 @@ class SubtitleGenerationService(QObject):
                 request_active_task_stop=self._request_active_task_stop,
             ),
             worker=SubtitleGenerationWorkerCallbacks(
-                can_start_subtitle_worker=self._can_start_subtitle_worker,
-                on_subtitle_worker_start_aborted=self._on_subtitle_worker_start_aborted,
-                suspend_player_ui_for_generation=self._suspend_player_ui_for_generation,
-                on_worker_status_changed_from_worker=self._on_worker_status_changed_from_worker,
-                on_worker_progress_changed_from_worker=self._on_worker_progress_changed_from_worker,
-                on_worker_details_changed_from_worker=self._on_worker_details_changed_from_worker,
-                on_subtitle_generation_finished_from_worker=self._on_subtitle_generation_finished_from_worker,
-                on_subtitle_generation_failed_from_worker=self._on_subtitle_generation_failed_from_worker,
-                on_subtitle_generation_canceled_from_worker=self._on_subtitle_generation_canceled_from_worker,
+                subtitle_launch=SubtitleWorkerLaunchCallbacks(
+                    can_start_worker=self._can_start_subtitle_worker,
+                    on_start_aborted=self._on_subtitle_worker_start_aborted,
+                    suspend_before_start=self._suspend_player_ui_for_generation,
+                ),
+                subtitle_events=SubtitleWorkerEventCallbacks(
+                    on_status_changed=self._on_worker_status_changed_from_worker,
+                    on_progress_changed=self._on_worker_progress_changed_from_worker,
+                    on_details_changed=self._on_worker_details_changed_from_worker,
+                    on_finished=self._on_subtitle_generation_finished_from_worker,
+                    on_failed=self._on_subtitle_generation_failed_from_worker,
+                    on_canceled=self._on_subtitle_generation_canceled_from_worker,
+                ),
                 on_subtitle_worker_thread_finished=self._on_subtitle_worker_thread_finished,
                 on_worker_status_changed=self._on_worker_status_changed,
                 on_worker_details_changed=self._on_worker_details_changed,
@@ -237,50 +245,6 @@ class SubtitleGenerationService(QObject):
     def _on_subtitle_worker_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
 
-    def _active_subtitle_worker_run_id(
-        self,
-        event_name: str,
-        run_id: int,
-        worker,
-        *,
-        allow_after_cleanup: bool,
-    ) -> int | None:
-        run = self._pipeline_state.active_job
-        if run is None:
-            logger.debug("Ignoring %s because no subtitle worker is active", event_name)
-            return None
-
-        if run.run_id != run_id:
-            logger.debug(
-                "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s",
-                event_name,
-                run_id,
-                run.run_id,
-            )
-            return None
-
-        if run.subtitle_worker is None:
-            if allow_after_cleanup and run.phase not in (
-                SubtitlePipelinePhase.SUCCEEDED,
-                SubtitlePipelinePhase.FAILED,
-                SubtitlePipelinePhase.CANCELED,
-            ):
-                return run.run_id
-            logger.debug("Ignoring %s because no subtitle worker is active", event_name)
-            return None
-
-        if worker is not run.subtitle_worker:
-            logger.debug(
-                "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
-                event_name,
-                run_id,
-                run.run_id,
-                worker is run.subtitle_worker,
-            )
-            return None
-
-        return run.run_id
-
     def _forward_active_subtitle_worker_event(
         self,
         event_name: str,
@@ -288,17 +252,16 @@ class SubtitleGenerationService(QObject):
         worker,
         handler,
         *args,
-        allow_after_cleanup: bool = False,
+        terminal: bool = False,
     ):
-        active_run_id = self._active_subtitle_worker_run_id(
+        self._runtime.forward_active_subtitle_worker_event(
             event_name,
             run_id,
             worker,
-            allow_after_cleanup=allow_after_cleanup,
+            handler,
+            *args,
+            terminal=terminal,
         )
-        if active_run_id is None:
-            return
-        handler(active_run_id, *args)
 
     def _on_worker_status_changed_from_worker(self, run_id: int, worker, text: str):
         self._forward_active_subtitle_worker_event("status update", run_id, worker, self._on_worker_status_changed, text)
@@ -325,7 +288,7 @@ class SubtitleGenerationService(QObject):
             output_path,
             auto_open,
             used_fallback_output_path,
-            allow_after_cleanup=True,
+            terminal=True,
         )
 
     def _on_subtitle_generation_failed_from_worker(self, run_id: int, worker, error_text: str, diagnostics: str):
@@ -336,7 +299,7 @@ class SubtitleGenerationService(QObject):
             self._completion_flow.handle_subtitle_generation_failed,
             error_text,
             diagnostics,
-            allow_after_cleanup=True,
+            terminal=True,
         )
 
     def _on_subtitle_generation_canceled_from_worker(self, run_id: int, worker):
@@ -345,7 +308,7 @@ class SubtitleGenerationService(QObject):
             run_id,
             worker,
             self._completion_flow.handle_subtitle_generation_canceled,
-            allow_after_cleanup=True,
+            terminal=True,
         )
 
     def _on_worker_status_changed(self, run_id: int, text: str):
