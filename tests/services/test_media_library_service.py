@@ -156,6 +156,25 @@ def test_save_and_restore_session_semantics(monkeypatch, workspace_tmp_path):
     assert prompt_calls.resume_calls == [(player, media_path, 3210)]
 
 
+def test_shutdown_is_idempotent(workspace_tmp_path):
+    player = FakePlayerWindow()
+    store = FakeMediaStore()
+    service = MediaLibraryService(QWidget(), player, store)
+    media_path = str(workspace_tmp_path / "shutdown.mp4")
+    media_snapshot = {
+        "path": media_path,
+        "position_ms": 3210,
+        "total_ms": 10000,
+    }
+    player.playback._session_snapshot = media_snapshot
+
+    service.shutdown()
+    service.shutdown()
+
+    assert store.saved_positions == [(media_path, 3210, 10000)]
+    assert store.sync_calls == 1
+
+
 def test_media_finished_clears_saved_position_and_stops_autosave(workspace_tmp_path):
     player = FakePlayerWindow()
     store = FakeMediaStore()

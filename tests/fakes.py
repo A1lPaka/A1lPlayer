@@ -259,6 +259,7 @@ class FakeMediaStore:
         self.saved_position_lookup = {}
         self.last_open_dir = ""
         self.shutdown_calls = 0
+        self.sync_calls = 0
 
     def save_last_open_dir(self, path: str):
         self.saved_last_open_dir.append(path)
@@ -286,6 +287,9 @@ class FakeMediaStore:
 
     def shutdown(self):
         self.shutdown_calls += 1
+
+    def sync(self):
+        self.sync_calls += 1
 
 
 class FakeMediaLibrary:

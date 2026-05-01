@@ -67,6 +67,7 @@ class MediaLibraryService(QObject):
         self._pending_recent_request_id: int | None = None
         self._pending_recent_paths: list[str] = []
         self._last_saved_snapshot_key: tuple[str, int, int] | None = None
+        self._is_shutdown = False
 
         self._session_autosave_timer = QTimer(self)
         self._session_autosave_timer.setInterval(self._SESSION_AUTOSAVE_INTERVAL_MS)
@@ -101,6 +102,9 @@ class MediaLibraryService(QObject):
         self._last_saved_snapshot_key = self._build_snapshot_key(snapshot)
 
     def shutdown(self):
+        if self._is_shutdown:
+            return
+        self._is_shutdown = True
         self._session_autosave_timer.stop()
         self.save_time_session()
         self._store.sync()
