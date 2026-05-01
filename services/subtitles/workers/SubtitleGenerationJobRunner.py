@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget
 
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
@@ -32,6 +32,45 @@ class SubtitleWorkerEventCallbacks:
     on_canceled: Callable[[int, SubtitleGenerationWorker], None]
 
 
+class _SubtitleWorkerSignalBridge(QObject):
+    def __init__(
+        self,
+        *,
+        run_id: int,
+        worker: SubtitleGenerationWorker,
+        callbacks: SubtitleWorkerEventCallbacks,
+        parent: QObject,
+    ):
+        super().__init__(parent)
+        self._run_id = run_id
+        self._worker = worker
+        self._callbacks = callbacks
+
+    @Slot(str)
+    def on_status_changed(self, text: str):
+        self._callbacks.on_status_changed(self._run_id, self._worker, text)
+
+    @Slot(int)
+    def on_progress_changed(self, value: int):
+        self._callbacks.on_progress_changed(self._run_id, self._worker, value)
+
+    @Slot(str)
+    def on_details_changed(self, text: str):
+        self._callbacks.on_details_changed(self._run_id, self._worker, text)
+
+    @Slot(str, bool, bool)
+    def on_finished(self, output_path: str, auto_open: bool, fallback: bool):
+        self._callbacks.on_finished(self._run_id, self._worker, output_path, auto_open, fallback)
+
+    @Slot(str, str)
+    def on_failed(self, error: str, diagnostics: str):
+        self._callbacks.on_failed(self._run_id, self._worker, error, diagnostics)
+
+    @Slot()
+    def on_canceled(self):
+        self._callbacks.on_canceled(self._run_id, self._worker)
+
+
 class SubtitleGenerationJobRunner(QObject):
     thread_finished = Signal(int)
 
@@ -51,49 +90,27 @@ class SubtitleGenerationJobRunner(QObject):
         launch_preparation_started_at = time.perf_counter()
         thread = QThread(self._parent)
         worker = SubtitleGenerationWorker(run.run_id, run.context.media_path, options)
+        bridge = _SubtitleWorkerSignalBridge(
+            run_id=run.run_id,
+            worker=worker,
+            callbacks=self._event_callbacks,
+            parent=self,
+        )
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
-        worker.status_changed.connect(
-            lambda text, run_id=run.run_id, worker=worker: self._event_callbacks.on_status_changed(run_id, worker, text),
-            Qt.QueuedConnection,
-        )
-        worker.progress_changed.connect(
-            lambda value, run_id=run.run_id, worker=worker: self._event_callbacks.on_progress_changed(run_id, worker, value),
-            Qt.QueuedConnection,
-        )
-        worker.details_changed.connect(
-            lambda text, run_id=run.run_id, worker=worker: self._event_callbacks.on_details_changed(run_id, worker, text),
-            Qt.QueuedConnection,
-        )
-        worker.finished.connect(
-            lambda output_path, auto_open, fallback, run_id=run.run_id, worker=worker: self._event_callbacks.on_finished(
-                run_id,
-                worker,
-                output_path,
-                auto_open,
-                fallback,
-            ),
-            Qt.QueuedConnection,
-        )
-        worker.failed.connect(
-            lambda error, diagnostics, run_id=run.run_id, worker=worker: self._event_callbacks.on_failed(
-                run_id,
-                worker,
-                error,
-                diagnostics,
-            ),
-            Qt.QueuedConnection,
-        )
-        worker.canceled.connect(
-            lambda run_id=run.run_id, worker=worker: self._event_callbacks.on_canceled(run_id, worker),
-            Qt.QueuedConnection,
-        )
+        worker.status_changed.connect(bridge.on_status_changed, Qt.QueuedConnection)
+        worker.progress_changed.connect(bridge.on_progress_changed, Qt.QueuedConnection)
+        worker.details_changed.connect(bridge.on_details_changed, Qt.QueuedConnection)
+        worker.finished.connect(bridge.on_finished, Qt.QueuedConnection)
+        worker.failed.connect(bridge.on_failed, Qt.QueuedConnection)
+        worker.canceled.connect(bridge.on_canceled, Qt.QueuedConnection)
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         worker.canceled.connect(thread.quit)
         thread.finished.connect(lambda run_id=run.run_id: self.thread_finished.emit(run_id))
+        thread.finished.connect(bridge.deleteLater)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
 

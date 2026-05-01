@@ -36,14 +36,6 @@ class WorkerEventGate:
         self.finished_run_id = None
         self.finished_worker = None
 
-    def cancel_active(self, run_id: int, worker: object) -> None:
-        if self.active_run_id == run_id and worker is self.active_worker:
-            self.active_run_id = None
-            self.active_worker = None
-            self.finished_run_id = None
-            self.finished_worker = None
-            self.terminal_event_emitted = False
-
     def finish_thread(self, run_id: int, worker: object | None) -> None:
         if not self.terminal_event_emitted:
             self.finished_run_id = run_id

@@ -1,6 +1,9 @@
+from PySide6.QtCore import QObject, QEventLoop, QThread, QTimer, Signal, Slot, Qt
+
 from models.SubtitleGenerationDialogResult import SubtitleGenerationDialogResult
 from services.subtitles.workers import SubtitleGenerationJobRunner as runner_module
 from services.subtitles.workers.SubtitleGenerationJobRunner import (
+    _SubtitleWorkerSignalBridge,
     SubtitleGenerationJobRunner,
     SubtitleWorkerEventCallbacks,
     SubtitleWorkerLaunchCallbacks,
@@ -74,6 +77,16 @@ class _FakeWorker:
         self.delete_later_calls += 1
 
 
+class _QtEmitter(QObject):
+    progress = Signal(int)
+    finished = Signal()
+
+    @Slot()
+    def run(self):
+        self.progress.emit(42)
+        self.finished.emit()
+
+
 def _options() -> SubtitleGenerationDialogResult:
     return SubtitleGenerationDialogResult(
         audio_stream_index=None,
@@ -108,6 +121,43 @@ def test_can_launch_subtitle_worker_run_checks_refs_and_phase():
 
     assert can_launch_subtitle_worker_run(run, thread, worker) is False
     assert can_launch_subtitle_worker_run(run, object(), worker) is False
+
+
+def test_worker_signal_bridge_dispatches_queued_worker_signal_on_main_thread():
+    thread = QThread()
+    emitter = _QtEmitter()
+    emitter.moveToThread(thread)
+    callback_threads = []
+    loop = QEventLoop()
+    worker_identity = object()
+    callbacks = SubtitleWorkerEventCallbacks(
+        on_status_changed=lambda run_id, worker, text: None,
+        on_progress_changed=lambda run_id, worker, value: callback_threads.append(QThread.isMainThread()),
+        on_details_changed=lambda run_id, worker, text: None,
+        on_finished=lambda run_id, worker, path, auto_open, fallback: None,
+        on_failed=lambda run_id, worker, error, diagnostics: None,
+        on_canceled=lambda run_id, worker: None,
+    )
+    bridge = _SubtitleWorkerSignalBridge(
+        run_id=7,
+        worker=worker_identity,
+        callbacks=callbacks,
+        parent=None,
+    )
+
+    thread.started.connect(emitter.run)
+    emitter.progress.connect(bridge.on_progress_changed, Qt.QueuedConnection)
+    emitter.finished.connect(thread.quit)
+    thread.finished.connect(loop.quit)
+    QTimer.singleShot(2000, loop.quit)
+
+    thread.start()
+    loop.exec()
+
+    thread.wait(1000)
+    emitter.deleteLater()
+    bridge.deleteLater()
+    assert callback_threads == [True]
 
 
 def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatch):
@@ -190,7 +240,7 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
         ("canceled", run.run_id, worker),
     ]
     assert thread.started.connections == [worker.run]
-    assert len(thread.finished.connections) == 3
+    assert len(thread.finished.connections) == 4
     assert len(single_shots) == 1
     assert len(can_start_calls) == 1
     assert suspend_calls == [True]

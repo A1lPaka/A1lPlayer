@@ -169,7 +169,6 @@ def test_subtitle_terminal_event_survives_thread_cleanup(
     run.subtitle_thread = thread
     run.subtitle_worker = worker
     service._runtime.pending_subtitle_thread_run_ids.add(run.run_id)
-    service._runtime._subtitle_worker_events.start(run.run_id, worker)
     monkeypatch.setattr(
         service._completion_flow,
         "handle_subtitle_generation_finished",
@@ -184,7 +183,7 @@ def test_subtitle_terminal_event_survives_thread_cleanup(
     assert terminal_calls == [(run.run_id, "C:/media/movie.srt", True, False)]
 
 
-def test_subtitle_terminal_event_survives_cleanup_even_if_worker_identity_was_not_recorded(
+def test_subtitle_progress_event_uses_active_worker_identity(
     monkeypatch,
     qt_parent,
     fake_player_window,
@@ -192,7 +191,7 @@ def test_subtitle_terminal_event_survives_cleanup_even_if_worker_identity_was_no
 ):
     service = _make_service(qt_parent, fake_player_window, fake_media_store)
     worker = object()
-    terminal_calls = []
+    progress_calls = []
 
     run = service._transitions.begin_run(
         SubtitleGenerationContext("C:/media/movie.mkv", 7),
@@ -200,19 +199,13 @@ def test_subtitle_terminal_event_survives_cleanup_even_if_worker_identity_was_no
     )
     run.phase = SubtitlePipelinePhase.RUNNING
     run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
-    run.subtitle_thread = None
-    run.subtitle_worker = None
-    monkeypatch.setattr(
-        service._completion_flow,
-        "handle_subtitle_generation_finished",
-        lambda run_id, output_path, auto_open, fallback: terminal_calls.append(
-            (run_id, output_path, auto_open, fallback)
-        ),
-    )
+    run.subtitle_thread = object()
+    run.subtitle_worker = worker
+    monkeypatch.setattr(service._ui, "update_progress", progress_calls.append)
 
-    service._on_subtitle_generation_finished_from_worker(run.run_id, worker, "C:/media/movie.srt", True, False)
+    service._on_worker_progress_changed_from_worker(run.run_id, worker, 42)
 
-    assert terminal_calls == [(run.run_id, "C:/media/movie.srt", True, False)]
+    assert progress_calls == [42]
 
 
 def test_subtitle_worker_stale_terminal_identity_is_ignored(
@@ -234,7 +227,6 @@ def test_subtitle_worker_stale_terminal_identity_is_ignored(
     run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
     run.subtitle_thread = object()
     run.subtitle_worker = active_worker
-    service._runtime._subtitle_worker_events.start(run.run_id, active_worker)
     monkeypatch.setattr(
         service._completion_flow,
         "handle_subtitle_generation_failed",
@@ -262,7 +254,6 @@ def test_subtitle_worker_start_abort_releases_ui_suspend_lease(
     run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
     run.subtitle_thread = thread
     run.subtitle_worker = worker
-    service._runtime._subtitle_worker_events.start(run.run_id, worker)
 
     service._runtime.suspend_player_ui_for_generation()
     service._runtime.on_subtitle_worker_start_aborted(run.run_id, thread, worker)
@@ -293,7 +284,6 @@ def test_shutdown_completes_after_subtitle_worker_terminal_event(
     run.subtitle_thread = thread
     run.subtitle_worker = worker
     service._runtime.pending_subtitle_thread_run_ids.add(run.run_id)
-    service._runtime._subtitle_worker_events.start(run.run_id, worker)
 
     assert service.begin_shutdown() is True
     service._on_subtitle_generation_canceled_from_worker(run.run_id, worker)
