@@ -401,7 +401,7 @@ def test_cuda_runtime_installer_cancel_event_terminates_process(monkeypatch):
     assert taskkill_calls == [["taskkill", "/PID", "1234", "/T", "/F"]]
 
 
-def test_cuda_runtime_installer_cancel_wait_timeout_stays_cancel(monkeypatch):
+def test_cuda_runtime_installer_cancel_wait_timeout_reports_unstopped_process(monkeypatch):
     class _SlowStoppingProcess(_FakeProcess):
         def __init__(self):
             super().__init__(returncode=None)
@@ -422,7 +422,7 @@ def test_cuda_runtime_installer_cancel_wait_timeout_stays_cancel(monkeypatch):
     monkeypatch.setattr(installer.subprocess, "run", lambda command, **_kwargs: taskkill_calls.append(command))
     monkeypatch.setattr(installer.time, "sleep", lambda _seconds: cancel_event.set())
 
-    with pytest.raises(installer.CudaRuntimeInstallCanceledError):
+    with pytest.raises(RuntimeError, match="subprocess did not stop"):
         installer._run_install_command(
             install_command=["python", "-m", "pip"],
             reporter=SimpleNamespace(emit=lambda *_args, **_kwargs: None),
@@ -430,8 +430,11 @@ def test_cuda_runtime_installer_cancel_wait_timeout_stays_cancel(monkeypatch):
             cancel_event=cancel_event,
         )
 
-    assert taskkill_calls == [["taskkill", "/PID", "1234", "/T", "/F"]]
-    assert process.wait_timeouts == [1.0]
+    assert taskkill_calls == [
+        ["taskkill", "/PID", "1234", "/T", "/F"],
+        ["taskkill", "/PID", "1234", "/T", "/F"],
+    ]
+    assert process.wait_timeouts == [1.0, 1.0]
 
 
 def test_cuda_runtime_installer_signal_interrupt_terminates_process(monkeypatch):
