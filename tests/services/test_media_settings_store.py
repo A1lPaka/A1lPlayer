@@ -64,6 +64,28 @@ def test_load_theme_ignores_rgb_channels_outside_qcolor_range():
     assert theme.get("panel_bg_color") == (10, 20, 30)
 
 
+def test_load_theme_ignores_non_finite_rgb_channels():
+    settings = _FakeSettings({
+        MediaSettingsStore._THEME_SETTINGS_KEY: '{"text_color": [NaN, 2, 3], "panel_bg_color": [10, 20, 30]}',
+    })
+    store = MediaSettingsStore(settings=settings)
+
+    theme = store.load_theme()
+
+    assert theme.get("text_color") == theme.DEFAULTS["text_color"]
+    assert theme.get("panel_bg_color") == (10, 20, 30)
+
+
+def test_session_positions_ignore_non_finite_values():
+    settings = _FakeSettings({
+        MediaSettingsStore._SESSION_POSITIONS_KEY: r'{"C:\\Media\\Broken.mkv": NaN, "C:\\Media\\Movie.mkv": 4500}',
+    })
+    store = MediaSettingsStore(settings=settings)
+
+    assert store.get_saved_position(r"C:\Media\Broken.mkv") == 0
+    assert store.get_saved_position(r"C:\Media\Movie.mkv") == 4500
+
+
 def test_save_position_updates_session_position_cache():
     settings = _FakeSettings({
         MediaSettingsStore._SESSION_POSITIONS_KEY: json.dumps({

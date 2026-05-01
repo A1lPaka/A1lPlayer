@@ -1,4 +1,5 @@
 import json
+import math
 import os
 
 from PySide6.QtCore import QSettings
@@ -41,9 +42,12 @@ class MediaSettingsStore:
                 continue
             if not isinstance(value, (list, tuple)) or len(value) != 3:
                 continue
-            if not all(isinstance(channel, (int, float)) for channel in value):
+            if not all(self._is_finite_number(channel) for channel in value):
                 continue
-            channels = tuple(int(channel) for channel in value)
+            try:
+                channels = tuple(int(channel) for channel in value)
+            except (TypeError, ValueError, OverflowError):
+                continue
             if not all(0 <= channel <= 255 for channel in channels):
                 continue
             base_colors[key] = channels
@@ -163,8 +167,12 @@ class MediaSettingsStore:
 
         result: dict[str, int] = {}
         for path, saved_ms in data.items():
-            if isinstance(path, str) and path and isinstance(saved_ms, (int, float)):
+            if not isinstance(path, str) or not path or not self._is_finite_number(saved_ms):
+                continue
+            try:
                 result[self._storage_path(path)] = int(saved_ms)
+            except (TypeError, ValueError, OverflowError):
+                continue
         return result
 
     def _save_session_positions(self, data: dict[str, int]):
@@ -235,3 +243,7 @@ class MediaSettingsStore:
 
     def _storage_path(self, path: str) -> str:
         return canonical_path(path)
+
+    @staticmethod
+    def _is_finite_number(value) -> bool:
+        return isinstance(value, (int, float)) and math.isfinite(value)
