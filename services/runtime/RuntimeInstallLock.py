@@ -20,18 +20,22 @@ def runtime_install_lock(target: Path, component_name: str) -> Iterator[None]:
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_name(f"{target.name}.install.lock")
     lock_file = lock_path.open("a+", encoding="utf-8")
+    acquired = False
     try:
         if not _try_lock_file(lock_file):
             raise RuntimeInstallLockError(
                 f"Another {component_name} installation is already running for:\n{target}"
             )
+        acquired = True
         yield
     finally:
         try:
-            _unlock_file(lock_file)
+            if acquired:
+                _unlock_file(lock_file)
         finally:
             lock_file.close()
-            _remove_lock_file(lock_path)
+            if acquired:
+                _remove_lock_file(lock_path)
 
 
 def _try_lock_file(lock_file: TextIO) -> bool:
