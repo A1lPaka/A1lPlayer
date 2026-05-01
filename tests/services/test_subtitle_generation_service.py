@@ -184,6 +184,37 @@ def test_subtitle_terminal_event_survives_thread_cleanup(
     assert terminal_calls == [(run.run_id, "C:/media/movie.srt", True, False)]
 
 
+def test_subtitle_terminal_event_survives_cleanup_even_if_worker_identity_was_not_recorded(
+    monkeypatch,
+    qt_parent,
+    fake_player_window,
+    fake_media_store,
+):
+    service = _make_service(qt_parent, fake_player_window, fake_media_store)
+    worker = object()
+    terminal_calls = []
+
+    run = service._transitions.begin_run(
+        SubtitleGenerationContext("C:/media/movie.mkv", 7),
+        _options(),
+    )
+    run.phase = SubtitlePipelinePhase.RUNNING
+    run.task = SubtitlePipelineTask.SUBTITLE_GENERATION
+    run.subtitle_thread = None
+    run.subtitle_worker = None
+    monkeypatch.setattr(
+        service._completion_flow,
+        "handle_subtitle_generation_finished",
+        lambda run_id, output_path, auto_open, fallback: terminal_calls.append(
+            (run_id, output_path, auto_open, fallback)
+        ),
+    )
+
+    service._on_subtitle_generation_finished_from_worker(run.run_id, worker, "C:/media/movie.srt", True, False)
+
+    assert terminal_calls == [(run.run_id, "C:/media/movie.srt", True, False)]
+
+
 def test_subtitle_worker_stale_terminal_identity_is_ignored(
     monkeypatch,
     qt_parent,

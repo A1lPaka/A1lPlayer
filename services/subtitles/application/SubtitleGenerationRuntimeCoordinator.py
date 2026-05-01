@@ -270,14 +270,21 @@ class SubtitleGenerationRuntimeCoordinator:
     ) -> None:
         self._assert_pipeline_thread()
         if not self._subtitle_worker_events.accepts(run_id, worker, terminal=terminal):
-            active_run_id = self._pipeline_state.active_job.run_id if self._pipeline_state.active_job is not None else None
-            logger.debug(
-                "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s",
-                event_name,
-                run_id,
-                active_run_id,
-            )
-            return
+            if terminal and self._can_accept_subtitle_terminal_after_cleanup(run_id):
+                logger.debug(
+                    "Accepting %s after subtitle worker cleanup by run id | run_id=%s",
+                    event_name,
+                    run_id,
+                )
+            else:
+                active_run_id = self._pipeline_state.active_job.run_id if self._pipeline_state.active_job is not None else None
+                logger.debug(
+                    "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s",
+                    event_name,
+                    run_id,
+                    active_run_id,
+                )
+                return
 
         run = self._require_active_job(run_id, event_name)
         if run is None:
@@ -286,6 +293,20 @@ class SubtitleGenerationRuntimeCoordinator:
         if terminal:
             self._subtitle_worker_events.mark_terminal_emitted()
         handler(run.run_id, *args)
+
+    def _can_accept_subtitle_terminal_after_cleanup(self, run_id: int) -> bool:
+        run = self._pipeline_state.active_job
+        if run is None or run.run_id != run_id:
+            return False
+        if run.subtitle_worker is not None:
+            return False
+        if run.phase in (
+            SubtitlePipelinePhase.SUCCEEDED,
+            SubtitlePipelinePhase.FAILED,
+            SubtitlePipelinePhase.CANCELED,
+        ):
+            return False
+        return True
 
     def complete_run(self, run_id: int, terminal_phase: SubtitlePipelinePhase, *, close_progress: bool) -> None:
         self._assert_pipeline_thread()
