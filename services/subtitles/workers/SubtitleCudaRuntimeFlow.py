@@ -110,7 +110,7 @@ class SubtitleCudaRuntimeFlow(QObject):
         return True
 
     def is_active(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
+        return self._thread is not None
 
     def _current_run_id(self) -> int | None:
         return self._run_id

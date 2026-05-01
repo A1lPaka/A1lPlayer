@@ -1,6 +1,13 @@
 from services.subtitles.workers.SubtitleWhisperModelFlow import SubtitleWhisperModelFlow
 
 
+def test_whisper_model_flow_treats_assigned_thread_as_active(qt_parent):
+    flow = SubtitleWhisperModelFlow(qt_parent)
+    flow._thread = object()
+
+    assert flow.is_active() is True
+
+
 def test_whisper_model_flow_delivers_terminal_event_after_thread_cleanup(qt_parent):
     flow = SubtitleWhisperModelFlow(qt_parent)
     thread = object()

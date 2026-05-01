@@ -90,7 +90,7 @@ class SubtitleWhisperModelFlow(QObject):
         return True
 
     def is_active(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
+        return self._thread is not None
 
     def _deferred_start(self, run_id: int, thread: QThread):
         if self._run_id != run_id or self._thread is not thread or self._worker is None:

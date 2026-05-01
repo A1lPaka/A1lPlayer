@@ -1,6 +1,13 @@
 from services.subtitles.workers.SubtitleCudaRuntimeFlow import SubtitleCudaRuntimeFlow
 
 
+def test_cuda_runtime_flow_treats_assigned_thread_as_active(qt_parent):
+    flow = SubtitleCudaRuntimeFlow(qt_parent)
+    flow._thread = object()
+
+    assert flow.is_active() is True
+
+
 def test_cuda_runtime_flow_ignores_stale_thread_finish(qt_parent):
     flow = SubtitleCudaRuntimeFlow(qt_parent)
     old_thread = object()
