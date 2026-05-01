@@ -312,6 +312,9 @@ def test_load_media_vlc_exception_emits_playback_error(monkeypatch, failure):
 
     request_id = service.load_media("broken.mp4")
 
+    assert errors.calls == []
+    QCoreApplication.processEvents()
+
     assert errors.calls == [
         (
             request_id,

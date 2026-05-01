@@ -415,7 +415,7 @@ class PlaybackService(QObject):
                 self._detach_current_media_event_handlers()
             else:
                 self._release_media(media)
-            self._handle_player_event_from_qt_thread("error", self._current_request_id, media_path)
+            self._vlc_event_relay.post_player_event("error", self._current_request_id, media_path)
         return self._current_request_id
 
     def _apply_media_start_time_option(self, media, start_position_ms: int):
