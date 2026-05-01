@@ -5,6 +5,7 @@ import logging
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 
 from services.runtime.WhisperModelInstallWorker import WhisperModelInstallWorker
+from services.subtitles.workers.WorkerEventGate import WorkerEventGate
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class SubtitleWhisperModelFlow(QObject):
         self._worker: WhisperModelInstallWorker | None = None
         self._cancel_requested = False
         self._run_id: int | None = None
+        self._worker_events = WorkerEventGate()
 
     def start(self, run_id: int, model_size: str) -> bool:
         if self.is_active():
@@ -39,11 +41,26 @@ class SubtitleWhisperModelFlow(QObject):
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
-        worker.status_changed.connect(self._on_worker_status_changed, Qt.QueuedConnection)
-        worker.details_changed.connect(self._on_worker_details_changed, Qt.QueuedConnection)
-        worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
-        worker.failed.connect(self._on_worker_failed, Qt.QueuedConnection)
-        worker.canceled.connect(self._on_worker_canceled, Qt.QueuedConnection)
+        worker.status_changed.connect(
+            lambda text, run_id=run_id, worker=worker: self._on_worker_status_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.details_changed.connect(
+            lambda text, run_id=run_id, worker=worker: self._on_worker_details_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.finished.connect(
+            lambda run_id=run_id, worker=worker: self._on_worker_finished(run_id, worker),
+            Qt.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda error_text, run_id=run_id, worker=worker: self._on_worker_failed(run_id, worker, error_text),
+            Qt.QueuedConnection,
+        )
+        worker.canceled.connect(
+            lambda run_id=run_id, worker=worker: self._on_worker_canceled(run_id, worker),
+            Qt.QueuedConnection,
+        )
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -56,6 +73,7 @@ class SubtitleWhisperModelFlow(QObject):
         self._worker = worker
         self._cancel_requested = False
         self._run_id = run_id
+        self._worker_events.start(run_id, worker)
         QTimer.singleShot(0, lambda run_id=run_id, thread=thread: self._deferred_start(run_id, thread))
         return True
 
@@ -80,38 +98,60 @@ class SubtitleWhisperModelFlow(QObject):
         if not thread.isRunning():
             thread.start()
 
-    def _emit_active_worker_event(self, event_name: str, signal, *args):
-        if self.sender() is not self._worker:
-            logger.debug("Ignoring %s from stale Whisper model worker", event_name)
+    def _worker_event_is_current(
+        self,
+        event_name: str,
+        run_id: int,
+        worker: WhisperModelInstallWorker,
+        *,
+        terminal: bool,
+    ) -> bool:
+        if not self._worker_events.accepts(run_id, worker, terminal=terminal):
+            logger.debug(
+                "Ignoring %s from stale Whisper model worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
+                event_name,
+                run_id,
+                self._run_id,
+                worker is self._worker,
+            )
+            return False
+        return True
+
+    def _emit_active_worker_event(
+        self,
+        event_name: str,
+        run_id: int,
+        worker: WhisperModelInstallWorker,
+        signal,
+        *args,
+        terminal: bool = False,
+    ):
+        if not self._worker_event_is_current(event_name, run_id, worker, terminal=terminal):
             return
-        run_id = self._run_id
-        if run_id is not None:
-            signal.emit(run_id, *args)
+        if terminal:
+            self._worker_events.mark_terminal_emitted()
+        signal.emit(run_id, *args)
 
-    @Slot(str)
-    def _on_worker_status_changed(self, text: str):
-        self._emit_active_worker_event("Whisper model status update", self.status_changed, text)
+    def _on_worker_status_changed(self, run_id: int, worker: WhisperModelInstallWorker, text: str):
+        self._emit_active_worker_event("Whisper model status update", run_id, worker, self.status_changed, text)
 
-    @Slot(str)
-    def _on_worker_details_changed(self, text: str):
-        self._emit_active_worker_event("Whisper model details update", self.details_changed, text)
+    def _on_worker_details_changed(self, run_id: int, worker: WhisperModelInstallWorker, text: str):
+        self._emit_active_worker_event("Whisper model details update", run_id, worker, self.details_changed, text)
 
-    @Slot()
-    def _on_worker_finished(self):
-        self._emit_active_worker_event("Whisper model finished", self.finished)
+    def _on_worker_finished(self, run_id: int, worker: WhisperModelInstallWorker):
+        self._emit_active_worker_event("Whisper model finished", run_id, worker, self.finished, terminal=True)
 
-    @Slot(str)
-    def _on_worker_failed(self, error_text: str):
-        self._emit_active_worker_event("Whisper model failed", self.failed, error_text)
+    def _on_worker_failed(self, run_id: int, worker: WhisperModelInstallWorker, error_text: str):
+        self._emit_active_worker_event("Whisper model failed", run_id, worker, self.failed, error_text, terminal=True)
 
-    @Slot()
-    def _on_worker_canceled(self):
-        self._emit_active_worker_event("Whisper model canceled", self.canceled)
+    def _on_worker_canceled(self, run_id: int, worker: WhisperModelInstallWorker):
+        self._emit_active_worker_event("Whisper model canceled", run_id, worker, self.canceled, terminal=True)
 
     @Slot(int, QThread)
     def _on_thread_finished(self, run_id: int, thread: QThread):
         if self._thread is not thread or self._run_id != run_id:
             return
+        self._worker_events.finish_thread(run_id, self._worker)
         self._thread = None
         self._worker = None
         self._cancel_requested = False

@@ -237,65 +237,115 @@ class SubtitleGenerationService(QObject):
     def _on_subtitle_worker_thread_finished(self, run_id: int):
         self._on_background_task_thread_finished(run_id, SubtitlePipelineTask.SUBTITLE_GENERATION)
 
-    def _current_run_id_for_active_subtitle_worker(self, event_name: str) -> int | None:
+    def _active_subtitle_worker_run_id(
+        self,
+        event_name: str,
+        run_id: int,
+        worker,
+        *,
+        allow_after_cleanup: bool,
+    ) -> int | None:
         run = self._pipeline_state.active_job
-        if run is None or run.subtitle_worker is None:
+        if run is None:
             logger.debug("Ignoring %s because no subtitle worker is active", event_name)
             return None
 
-        sender = self.sender()
-        if sender is not run.subtitle_worker:
+        if run.run_id != run_id:
             logger.debug(
-                "Ignoring %s from stale subtitle worker | sender_matches_active=%s",
+                "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s",
                 event_name,
-                sender is run.subtitle_worker,
+                run_id,
+                run.run_id,
+            )
+            return None
+
+        if run.subtitle_worker is None:
+            if allow_after_cleanup and run.phase not in (
+                SubtitlePipelinePhase.SUCCEEDED,
+                SubtitlePipelinePhase.FAILED,
+                SubtitlePipelinePhase.CANCELED,
+            ):
+                return run.run_id
+            logger.debug("Ignoring %s because no subtitle worker is active", event_name)
+            return None
+
+        if worker is not run.subtitle_worker:
+            logger.debug(
+                "Ignoring %s from stale subtitle worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
+                event_name,
+                run_id,
+                run.run_id,
+                worker is run.subtitle_worker,
             )
             return None
 
         return run.run_id
 
-    def _forward_active_subtitle_worker_event(self, event_name: str, handler, *args):
-        run_id = self._current_run_id_for_active_subtitle_worker(event_name)
-        if run_id is None:
+    def _forward_active_subtitle_worker_event(
+        self,
+        event_name: str,
+        run_id: int,
+        worker,
+        handler,
+        *args,
+        allow_after_cleanup: bool = False,
+    ):
+        active_run_id = self._active_subtitle_worker_run_id(
+            event_name,
+            run_id,
+            worker,
+            allow_after_cleanup=allow_after_cleanup,
+        )
+        if active_run_id is None:
             return
-        handler(run_id, *args)
+        handler(active_run_id, *args)
 
-    @Slot(str)
-    def _on_worker_status_changed_from_worker(self, text: str):
-        self._forward_active_subtitle_worker_event("status update", self._on_worker_status_changed, text)
+    def _on_worker_status_changed_from_worker(self, run_id: int, worker, text: str):
+        self._forward_active_subtitle_worker_event("status update", run_id, worker, self._on_worker_status_changed, text)
 
-    @Slot(int)
-    def _on_worker_progress_changed_from_worker(self, value: int):
-        self._forward_active_subtitle_worker_event("progress update", self._on_worker_progress_changed, value)
+    def _on_worker_progress_changed_from_worker(self, run_id: int, worker, value: int):
+        self._forward_active_subtitle_worker_event("progress update", run_id, worker, self._on_worker_progress_changed, value)
 
-    @Slot(str)
-    def _on_worker_details_changed_from_worker(self, text: str):
-        self._forward_active_subtitle_worker_event("details update", self._on_worker_details_changed, text)
+    def _on_worker_details_changed_from_worker(self, run_id: int, worker, text: str):
+        self._forward_active_subtitle_worker_event("details update", run_id, worker, self._on_worker_details_changed, text)
 
-    @Slot(str, bool, bool)
-    def _on_subtitle_generation_finished_from_worker(self, output_path: str, auto_open: bool, used_fallback_output_path: bool):
+    def _on_subtitle_generation_finished_from_worker(
+        self,
+        run_id: int,
+        worker,
+        output_path: str,
+        auto_open: bool,
+        used_fallback_output_path: bool,
+    ):
         self._forward_active_subtitle_worker_event(
             "subtitle generation finished",
+            run_id,
+            worker,
             self._completion_flow.handle_subtitle_generation_finished,
             output_path,
             auto_open,
             used_fallback_output_path,
+            allow_after_cleanup=True,
         )
 
-    @Slot(str, str)
-    def _on_subtitle_generation_failed_from_worker(self, error_text: str, diagnostics: str):
+    def _on_subtitle_generation_failed_from_worker(self, run_id: int, worker, error_text: str, diagnostics: str):
         self._forward_active_subtitle_worker_event(
             "subtitle generation failed",
+            run_id,
+            worker,
             self._completion_flow.handle_subtitle_generation_failed,
             error_text,
             diagnostics,
+            allow_after_cleanup=True,
         )
 
-    @Slot()
-    def _on_subtitle_generation_canceled_from_worker(self):
+    def _on_subtitle_generation_canceled_from_worker(self, run_id: int, worker):
         self._forward_active_subtitle_worker_event(
             "subtitle generation canceled",
+            run_id,
+            worker,
             self._completion_flow.handle_subtitle_generation_canceled,
+            allow_after_cleanup=True,
         )
 
     def _on_worker_status_changed(self, run_id: int, text: str):

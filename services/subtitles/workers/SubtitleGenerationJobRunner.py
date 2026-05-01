@@ -24,12 +24,12 @@ class SubtitleGenerationJobRunner(QObject):
         can_start_worker: Callable[[int, QThread, SubtitleGenerationWorker], bool],
         on_start_aborted: Callable[[int, QThread, SubtitleGenerationWorker], None],
         suspend_before_start: Callable[[], None],
-        on_status_changed: Callable[[str], None],
-        on_progress_changed: Callable[[int], None],
-        on_details_changed: Callable[[str], None],
-        on_finished: Callable[[str, bool, bool], None],
-        on_failed: Callable[[str, str], None],
-        on_canceled: Callable[[], None],
+        on_status_changed: Callable[[int, SubtitleGenerationWorker, str], None],
+        on_progress_changed: Callable[[int, SubtitleGenerationWorker, int], None],
+        on_details_changed: Callable[[int, SubtitleGenerationWorker, str], None],
+        on_finished: Callable[[int, SubtitleGenerationWorker, str, bool, bool], None],
+        on_failed: Callable[[int, SubtitleGenerationWorker, str, str], None],
+        on_canceled: Callable[[int, SubtitleGenerationWorker], None],
     ):
         super().__init__(parent)
         self._parent = parent
@@ -50,12 +50,41 @@ class SubtitleGenerationJobRunner(QObject):
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
-        worker.status_changed.connect(self._on_status_changed, Qt.QueuedConnection)
-        worker.progress_changed.connect(self._on_progress_changed, Qt.QueuedConnection)
-        worker.details_changed.connect(self._on_details_changed, Qt.QueuedConnection)
-        worker.finished.connect(self._on_finished, Qt.QueuedConnection)
-        worker.failed.connect(self._on_failed, Qt.QueuedConnection)
-        worker.canceled.connect(self._on_canceled, Qt.QueuedConnection)
+        worker.status_changed.connect(
+            lambda text, run_id=run.run_id, worker=worker: self._on_status_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.progress_changed.connect(
+            lambda value, run_id=run.run_id, worker=worker: self._on_progress_changed(run_id, worker, value),
+            Qt.QueuedConnection,
+        )
+        worker.details_changed.connect(
+            lambda text, run_id=run.run_id, worker=worker: self._on_details_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.finished.connect(
+            lambda output_path, auto_open, fallback, run_id=run.run_id, worker=worker: self._on_finished(
+                run_id,
+                worker,
+                output_path,
+                auto_open,
+                fallback,
+            ),
+            Qt.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda error, diagnostics, run_id=run.run_id, worker=worker: self._on_failed(
+                run_id,
+                worker,
+                error,
+                diagnostics,
+            ),
+            Qt.QueuedConnection,
+        )
+        worker.canceled.connect(
+            lambda run_id=run.run_id, worker=worker: self._on_canceled(run_id, worker),
+            Qt.QueuedConnection,
+        )
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)

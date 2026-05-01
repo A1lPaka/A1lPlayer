@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass
+class WorkerEventGate:
+    active_run_id: int | None = None
+    active_worker: object | None = None
+    finished_run_id: int | None = None
+    finished_worker: object | None = None
+    terminal_event_emitted: bool = False
+
+    def start(self, run_id: int, worker: object) -> None:
+        self.active_run_id = run_id
+        self.active_worker = worker
+        self.finished_run_id = None
+        self.finished_worker = None
+        self.terminal_event_emitted = False
+
+    def accepts(self, run_id: int, worker: object, *, terminal: bool = False) -> bool:
+        if terminal and self.finished_run_id == run_id and worker is self.finished_worker:
+            return True
+        return self.active_run_id == run_id and worker is self.active_worker
+
+    def mark_terminal_emitted(self) -> None:
+        self.terminal_event_emitted = True
+        self.finished_run_id = None
+        self.finished_worker = None
+
+    def finish_thread(self, run_id: int, worker: object | None) -> None:
+        if not self.terminal_event_emitted:
+            self.finished_run_id = run_id
+            self.finished_worker = worker
+        self.active_run_id = None
+        self.active_worker = None
+

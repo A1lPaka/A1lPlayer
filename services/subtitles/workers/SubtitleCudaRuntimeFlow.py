@@ -5,6 +5,7 @@ import logging
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 
 from services.runtime.CudaRuntimeInstallWorker import CudaRuntimeInstallWorker
+from services.subtitles.workers.WorkerEventGate import WorkerEventGate
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class SubtitleCudaRuntimeFlow(QObject):
         self._worker: CudaRuntimeInstallWorker | None = None
         self._cancel_requested = False
         self._run_id: int | None = None
+        self._worker_events = WorkerEventGate()
 
     def start(
         self,
@@ -52,11 +54,26 @@ class SubtitleCudaRuntimeFlow(QObject):
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
-        worker.status_changed.connect(self._on_worker_status_changed, Qt.QueuedConnection)
-        worker.details_changed.connect(self._on_worker_details_changed, Qt.QueuedConnection)
-        worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
-        worker.failed.connect(self._on_worker_failed, Qt.QueuedConnection)
-        worker.canceled.connect(self._on_worker_canceled, Qt.QueuedConnection)
+        worker.status_changed.connect(
+            lambda text, run_id=run_id, worker=worker: self._on_worker_status_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.details_changed.connect(
+            lambda text, run_id=run_id, worker=worker: self._on_worker_details_changed(run_id, worker, text),
+            Qt.QueuedConnection,
+        )
+        worker.finished.connect(
+            lambda run_id=run_id, worker=worker: self._on_worker_finished(run_id, worker),
+            Qt.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda error_text, run_id=run_id, worker=worker: self._on_worker_failed(run_id, worker, error_text),
+            Qt.QueuedConnection,
+        )
+        worker.canceled.connect(
+            lambda run_id=run_id, worker=worker: self._on_worker_canceled(run_id, worker),
+            Qt.QueuedConnection,
+        )
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -69,6 +86,7 @@ class SubtitleCudaRuntimeFlow(QObject):
         self._worker = worker
         self._cancel_requested = False
         self._run_id = run_id
+        self._worker_events.start(run_id, worker)
         QTimer.singleShot(0, lambda run_id=run_id, thread=thread: self._deferred_start(run_id, thread))
         return True
 
@@ -110,47 +128,54 @@ class SubtitleCudaRuntimeFlow(QObject):
 
         thread.start()
 
-    def _is_active_worker_sender(self, event_name: str) -> bool:
-        if self._worker is None:
-            logger.debug("Ignoring %s because no CUDA runtime worker is active", event_name)
-            return False
-
-        sender = self.sender()
-        if sender is not self._worker:
+    def _is_worker_event_current(
+        self,
+        event_name: str,
+        run_id: int,
+        worker: CudaRuntimeInstallWorker,
+        *,
+        terminal: bool,
+    ) -> bool:
+        if not self._worker_events.accepts(run_id, worker, terminal=terminal):
             logger.debug(
-                "Ignoring %s from stale CUDA runtime worker | sender_matches_active=%s",
+                "Ignoring %s from stale CUDA runtime worker | run_id=%s | active_run_id=%s | worker_matches_active=%s",
                 event_name,
-                sender is self._worker,
+                run_id,
+                self._run_id,
+                worker is self._worker,
             )
             return False
         return True
 
-    def _emit_active_worker_event(self, event_name: str, signal, *args):
-        if not self._is_active_worker_sender(event_name):
+    def _emit_active_worker_event(
+        self,
+        event_name: str,
+        run_id: int,
+        worker: CudaRuntimeInstallWorker,
+        signal,
+        *args,
+        terminal: bool = False,
+    ):
+        if not self._is_worker_event_current(event_name, run_id, worker, terminal=terminal):
             return
-        run_id = self._current_run_id()
-        if run_id is not None:
-            signal.emit(run_id, *args)
+        if terminal:
+            self._worker_events.mark_terminal_emitted()
+        signal.emit(run_id, *args)
 
-    @Slot(str)
-    def _on_worker_status_changed(self, text: str):
-        self._emit_active_worker_event("CUDA runtime status update", self.status_changed, text)
+    def _on_worker_status_changed(self, run_id: int, worker: CudaRuntimeInstallWorker, text: str):
+        self._emit_active_worker_event("CUDA runtime status update", run_id, worker, self.status_changed, text)
 
-    @Slot(str)
-    def _on_worker_details_changed(self, text: str):
-        self._emit_active_worker_event("CUDA runtime details update", self.details_changed, text)
+    def _on_worker_details_changed(self, run_id: int, worker: CudaRuntimeInstallWorker, text: str):
+        self._emit_active_worker_event("CUDA runtime details update", run_id, worker, self.details_changed, text)
 
-    @Slot()
-    def _on_worker_finished(self):
-        self._emit_active_worker_event("CUDA runtime finished", self.finished)
+    def _on_worker_finished(self, run_id: int, worker: CudaRuntimeInstallWorker):
+        self._emit_active_worker_event("CUDA runtime finished", run_id, worker, self.finished, terminal=True)
 
-    @Slot(str)
-    def _on_worker_failed(self, error_text: str):
-        self._emit_active_worker_event("CUDA runtime failed", self.failed, error_text)
+    def _on_worker_failed(self, run_id: int, worker: CudaRuntimeInstallWorker, error_text: str):
+        self._emit_active_worker_event("CUDA runtime failed", run_id, worker, self.failed, error_text, terminal=True)
 
-    @Slot()
-    def _on_worker_canceled(self):
-        self._emit_active_worker_event("CUDA runtime canceled", self.canceled)
+    def _on_worker_canceled(self, run_id: int, worker: CudaRuntimeInstallWorker):
+        self._emit_active_worker_event("CUDA runtime canceled", run_id, worker, self.canceled, terminal=True)
 
     @Slot(int, QThread)
     def _on_thread_finished(self, run_id: int, thread: QThread):
@@ -159,6 +184,7 @@ class SubtitleCudaRuntimeFlow(QObject):
             logger.debug("Ignoring stale CUDA runtime flow thread finish | run_id=%s", run_id)
             return
 
+        self._worker_events.finish_thread(run_id, self._worker)
         self._thread = None
         self._worker = None
         self._cancel_requested = False

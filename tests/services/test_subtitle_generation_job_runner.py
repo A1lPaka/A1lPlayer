@@ -113,15 +113,20 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     _FakeWorker.instances = []
     single_shots = []
     can_start_calls = []
+    callback_calls = []
     suspend_calls = []
     callbacks = {
         "start_aborted": lambda run_id, thread, worker: None,
-        "status": lambda text: None,
-        "progress": lambda value: None,
-        "details": lambda text: None,
-        "finished": lambda path, auto_open, fallback: None,
-        "failed": lambda error, diagnostics: None,
-        "canceled": lambda: None,
+        "status": lambda run_id, worker, text: callback_calls.append(("status", run_id, worker, text)),
+        "progress": lambda run_id, worker, value: callback_calls.append(("progress", run_id, worker, value)),
+        "details": lambda run_id, worker, text: callback_calls.append(("details", run_id, worker, text)),
+        "finished": lambda run_id, worker, path, auto_open, fallback: callback_calls.append(
+            ("finished", run_id, worker, path, auto_open, fallback)
+        ),
+        "failed": lambda run_id, worker, error, diagnostics: callback_calls.append(
+            ("failed", run_id, worker, error, diagnostics)
+        ),
+        "canceled": lambda run_id, worker: callback_calls.append(("canceled", run_id, worker)),
     }
 
     def fake_single_shot(_delay, callback):
@@ -158,12 +163,26 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
     assert run.subtitle_worker is worker
     assert run.subtitle_cancel_requested is False
     assert worker.move_to_thread_calls == [thread]
-    assert worker.status_changed.connections == [callbacks["status"]]
-    assert worker.progress_changed.connections == [callbacks["progress"]]
-    assert worker.details_changed.connections == [callbacks["details"]]
-    assert worker.finished.connections[:2] == [callbacks["finished"], thread.quit]
-    assert worker.failed.connections[:2] == [callbacks["failed"], thread.quit]
-    assert worker.canceled.connections[:2] == [callbacks["canceled"], thread.quit]
+    assert len(worker.status_changed.connections) == 1
+    assert len(worker.progress_changed.connections) == 1
+    assert len(worker.details_changed.connections) == 1
+    assert len(worker.finished.connections) == 2
+    assert len(worker.failed.connections) == 2
+    assert len(worker.canceled.connections) == 2
+    worker.status_changed.connections[0]("Loading")
+    worker.progress_changed.connections[0](42)
+    worker.details_changed.connections[0]("Details")
+    worker.finished.connections[0]("out.srt", True, False)
+    worker.failed.connections[0]("error", "diagnostics")
+    worker.canceled.connections[0]()
+    assert callback_calls == [
+        ("status", run.run_id, worker, "Loading"),
+        ("progress", run.run_id, worker, 42),
+        ("details", run.run_id, worker, "Details"),
+        ("finished", run.run_id, worker, "out.srt", True, False),
+        ("failed", run.run_id, worker, "error", "diagnostics"),
+        ("canceled", run.run_id, worker),
+    ]
     assert thread.started.connections == [worker.run]
     assert len(thread.finished.connections) == 3
     assert len(single_shots) == 1
@@ -189,12 +208,12 @@ def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
         can_start_worker=lambda _run_id, _thread, _worker: False,
         on_start_aborted=lambda run_id, thread, worker: aborted.append((run_id, thread, worker)),
         suspend_before_start=lambda: None,
-        on_status_changed=lambda text: None,
-        on_progress_changed=lambda value: None,
-        on_details_changed=lambda text: None,
-        on_finished=lambda path, auto_open, fallback: None,
-        on_failed=lambda error, diagnostics: None,
-        on_canceled=lambda: None,
+        on_status_changed=lambda run_id, worker, text: None,
+        on_progress_changed=lambda run_id, worker, value: None,
+        on_details_changed=lambda run_id, worker, text: None,
+        on_finished=lambda run_id, worker, path, auto_open, fallback: None,
+        on_failed=lambda run_id, worker, error, diagnostics: None,
+        on_canceled=lambda run_id, worker: None,
     )
     run = _run()
 

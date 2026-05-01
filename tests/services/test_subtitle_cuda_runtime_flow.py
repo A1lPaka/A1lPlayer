@@ -41,3 +41,20 @@ def test_cuda_runtime_flow_clears_matching_thread_finish(qt_parent):
     assert flow._cancel_requested is False
     assert flow._run_id is None
     assert emitted_run_ids == [1]
+
+
+def test_cuda_runtime_flow_delivers_terminal_event_after_thread_cleanup(qt_parent):
+    flow = SubtitleCudaRuntimeFlow(qt_parent)
+    thread = object()
+    worker = object()
+    finished_run_ids = []
+    flow.finished.connect(finished_run_ids.append)
+
+    flow._thread = thread
+    flow._worker = worker
+    flow._run_id = 3
+
+    flow._on_thread_finished(3, thread)
+    flow._on_worker_finished(3, worker)
+
+    assert finished_run_ids == [3]
