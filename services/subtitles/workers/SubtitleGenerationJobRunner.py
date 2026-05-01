@@ -119,10 +119,11 @@ class SubtitleGenerationJobRunner(QObject):
         run.subtitle_cancel_requested = False
         QTimer.singleShot(
             0,
-            lambda run_id=run.run_id, thread=thread, worker=worker: self._deferred_start_worker(
+            lambda run_id=run.run_id, thread=thread, worker=worker, bridge=bridge: self._deferred_start_worker(
                 run_id,
                 thread,
                 worker,
+                bridge,
             ),
         )
         log_timing(
@@ -140,9 +141,10 @@ class SubtitleGenerationJobRunner(QObject):
         run_id: int,
         thread: QThread,
         worker: SubtitleGenerationWorker,
+        bridge: _SubtitleWorkerSignalBridge,
     ):
         if not self._launch_callbacks.can_start_worker(run_id, thread, worker):
-            self._abort_unstarted_worker(run_id, thread, worker)
+            self._abort_unstarted_worker(run_id, thread, worker, bridge)
             return
 
         if thread.isRunning():
@@ -157,12 +159,14 @@ class SubtitleGenerationJobRunner(QObject):
         run_id: int,
         thread: QThread,
         worker: SubtitleGenerationWorker,
+        bridge: _SubtitleWorkerSignalBridge,
     ):
         if thread.isRunning():
             return
 
         logger.debug("Cleaning up subtitle worker whose deferred start was canceled | run_id=%s", run_id)
         self._launch_callbacks.on_start_aborted(run_id, thread, worker)
+        bridge.deleteLater()
         worker.deleteLater()
         thread.deleteLater()
 

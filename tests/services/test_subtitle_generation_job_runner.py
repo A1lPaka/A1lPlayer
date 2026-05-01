@@ -77,6 +77,39 @@ class _FakeWorker:
         self.delete_later_calls += 1
 
 
+class _FakeBridge:
+    instances = []
+
+    def __init__(self, *, run_id, worker, callbacks, parent):
+        self.run_id = run_id
+        self.worker = worker
+        self.callbacks = callbacks
+        self.parent = parent
+        self.delete_later_calls = 0
+        self.__class__.instances.append(self)
+
+    def on_status_changed(self, text):
+        self.callbacks.on_status_changed(self.run_id, self.worker, text)
+
+    def on_progress_changed(self, value):
+        self.callbacks.on_progress_changed(self.run_id, self.worker, value)
+
+    def on_details_changed(self, text):
+        self.callbacks.on_details_changed(self.run_id, self.worker, text)
+
+    def on_finished(self, output_path, auto_open, fallback):
+        self.callbacks.on_finished(self.run_id, self.worker, output_path, auto_open, fallback)
+
+    def on_failed(self, error, diagnostics):
+        self.callbacks.on_failed(self.run_id, self.worker, error, diagnostics)
+
+    def on_canceled(self):
+        self.callbacks.on_canceled(self.run_id, self.worker)
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
+
+
 class _QtEmitter(QObject):
     progress = Signal(int)
     finished = Signal()
@@ -250,6 +283,7 @@ def test_job_runner_wires_worker_and_starts_after_deferred_validation(monkeypatc
 def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
     _FakeThread.instances = []
     _FakeWorker.instances = []
+    _FakeBridge.instances = []
     aborted = []
 
     def fake_single_shot(_delay, callback):
@@ -257,6 +291,7 @@ def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
 
     monkeypatch.setattr(runner_module, "QThread", _FakeThread)
     monkeypatch.setattr(runner_module, "SubtitleGenerationWorker", _FakeWorker)
+    monkeypatch.setattr(runner_module, "_SubtitleWorkerSignalBridge", _FakeBridge)
     monkeypatch.setattr(runner_module.QTimer, "singleShot", fake_single_shot)
 
     runner = SubtitleGenerationJobRunner(
@@ -281,7 +316,9 @@ def test_job_runner_cleans_up_when_deferred_start_is_rejected(monkeypatch):
 
     thread = _FakeThread.instances[0]
     worker = _FakeWorker.instances[0]
+    bridge = _FakeBridge.instances[0]
     assert aborted == [(run.run_id, thread, worker)]
     assert thread.start_calls == 0
+    assert bridge.delete_later_calls == 1
     assert worker.delete_later_calls == 1
     assert thread.delete_later_calls == 1
