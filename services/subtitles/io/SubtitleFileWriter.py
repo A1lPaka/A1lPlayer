@@ -252,13 +252,13 @@ class SubtitleFileWriter:
                     with os.fdopen(reserved_fd, "wb") as candidate_file:
                         reserved_fd = None
                         shutil.copyfileobj(temp_file, candidate_file)
-                os.remove(temp_path)
             except OSError as exc:
                 if reserved_fd is not None:
                     os.close(reserved_fd)
                 self._remove_file_if_exists(candidate)
                 raise RuntimeError(f"Failed to write fallback subtitle file: {exc}") from exc
 
+            self._remove_file_if_exists(temp_path)
             return candidate
 
         raise RuntimeError(f"Could not allocate a fallback subtitle output path for {requested_output_path}")

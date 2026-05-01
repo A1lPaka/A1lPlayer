@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 import sys
 import threading
 
@@ -100,6 +101,27 @@ def test_subtitle_file_writer_uses_fallback_name_when_unconfirmed_output_appears
     assert saved_path == str(fallback_path)
     assert output_path.read_text(encoding="utf-8") == "existing"
     assert "Generated" in fallback_path.read_text(encoding="utf-8")
+
+
+def test_subtitle_file_writer_keeps_fallback_when_temp_cleanup_fails(workspace_tmp_path, monkeypatch):
+    temp_path = workspace_tmp_path / "subtitle.tmp"
+    output_path = workspace_tmp_path / "movie.srt"
+    temp_path.write_text("Generated", encoding="utf-8")
+    writer = SubtitleFileWriter(_not_canceled)
+    original_unlink = Path.unlink
+
+    def fail_temp_unlink(self, *args, **kwargs):
+        if self == temp_path:
+            raise OSError("cleanup blocked")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    fallback_path = writer._write_temp_file_to_fallback(str(temp_path), output_path)
+
+    assert fallback_path == workspace_tmp_path / "movie (1).srt"
+    assert fallback_path.read_text(encoding="utf-8") == "Generated"
+    assert temp_path.exists()
 
 
 def test_subtitle_file_writer_empty_segments_creates_empty_srt(workspace_tmp_path):
